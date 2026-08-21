@@ -4,10 +4,11 @@ from flask import Flask, request, jsonify
 from anthropic import Anthropic
 
 # ==== НАСТРОЙКИ ====
-VK_TOKEN = os.environ.get("VK_TOKEN", "ВАШ_ТОКЕН_СООБЩЕСТВА_ВК")
-VK_CONFIRMATION_CODE = os.environ.get("VK_CONFIRMATION_CODE", "СТРОКА_ПОДТВЕРЖДЕНИЯ_ИЗ_ВК")
+VK_TOKEN = os.environ.get("VK_TOKEN", "vk1.a.KG4nW1LR4LHDNR_J_u_U1iGAoj9Aa48n6KxrVF95bibnoatshXV57finEWLCxCvIUYU2HYzoFiJzUIVcJD7MdS-WnBSYAFNYcdZrV1xPh-InFXJ2WednojQ2qqYNHa-EN4TGkBGaMJ8OivB0CB4L2wQAHLCn2DLGB8ei6DFpoVZ0bbhCfBxqLyGpCOfvFHOhn9glR8RDbS68_3-pHPPddQ")
+VK_CONFIRMATION_CODE = os.environ.get("VK_CONFIRMATION_CODE", "ec409dba")
+# Сюда вместо "ВАШ_КЛЮЧ_ANTHROPIC" нужно будет вставить ваш API-ключ Claude (начинается с sk-ant...)
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "ВАШ_КЛЮЧ_ANTHROPIC")
-VK_GROUP_SECRET = os.environ.get("VK_GROUP_SECRET", "")
+VK_GROUP_SECRET = os.environ.get("VK_GROUP_SECRET", "aaQ13axAPQEcczQa")
 
 SYSTEM_PROMPT = (
     "Ты — дружелюбный помощник сообщества ВКонтакте. "
@@ -17,13 +18,13 @@ SYSTEM_PROMPT = (
 app = Flask(__name__)
 client = Anthropic(api_key=ANTHROPIC_API_KEY)
 
-VK_API_URL = "https://api.vk.com/method/messages.send"
+VK_API_URL = "https://vk.com"
 VK_API_VERSION = "5.199"
 
 
 def ask_claude(user_message: str) -> str:
     response = client.messages.create(
-        model="claude-sonnet-4-6",
+        model="claude-3-5-sonnet-20241022",  # Актуальное имя модели для API
         max_tokens=500,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_message}],
