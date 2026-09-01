@@ -75,7 +75,7 @@ def callback():
                 reply = ask_groq(text)
             except Exception as e:
                 reply = "Извините, произошла ошибка. Попробуйте позже."
-                print("Ошибка при обращении к Groq:", e)
+                print("Ошибка при обращении к Groq:", e, flush=True)
 
             send_vk_message(user_id, reply)
 
