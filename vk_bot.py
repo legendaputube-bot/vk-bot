@@ -38,7 +38,7 @@ SYSTEM_PROMPT = (
     "Отвечай коротко, живо, по делу. Не хами по-настоящему и не переходи на личности — "
     "дерзость должна быть смешной, а не обидной."
 )
-`
+
 app = Flask(__name__)
 client = Groq(api_key=GROQ_API_KEY)
 
@@ -48,7 +48,7 @@ VK_API_VERSION = "5.199"
 
 def ask_groq(user_message: str) -> str:
     completion = client.chat.completions.create(
-        model="openai/gpt-oss-20b",
+        model="openai/gpt-oss-120b",
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_message},
