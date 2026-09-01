@@ -1,44 +1,41 @@
 import os
 import requests
 from flask import Flask, request
+from groq import Groq
 
-# ==== НАСТРОЙКИ ====
 VK_TOKEN = os.environ.get("VK_TOKEN", "")
 VK_CONFIRMATION_CODE = os.environ.get("VK_CONFIRMATION_CODE", "")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 VK_GROUP_SECRET = os.environ.get("VK_GROUP_SECRET", "")
 
 SYSTEM_PROMPT = (
-    "Ты — дерзкий, языкастый помощник сообщества ВКонтакте, отвечаешь в стиле молодёжного сленга. "
+    "Ты — дерзкий, языкастый помощник сообщества ВКонтакте, посвящённого игре Tanks Blitz. "
+    "Ты отвечаешь ТОЛЬКО на вопросы про игру Tanks Blitz: танки, снаряжение, тактика, бонус-коды, "
+    "обновления, механики боя, ангар, командиры, экипажи и всё, что связано с игрой. "
     "Используешь неформальный тон, лёгкую иронию и подколки, но без грубости и оскорблений. "
     "Отвечай коротко, живо, по делу — без канцелярита и занудства. "
+    "Если пользователь спрашивает о чём-то, не связанном с Tanks Blitz, вежливо, но дерзко "
+    "отшучивайся и возвращай разговор к игре — например, намекни, что тут говорят только про танки. "
     "Не хами пользователям по-настоящему и не переходи на личности — дерзость должна быть смешной, а не обидной."
 )
 
 app = Flask(__name__)
+client = Groq(api_key=GROQ_API_KEY)
 
 VK_API_URL = "https://api.vk.com/method/messages.send"
 VK_API_VERSION = "5.199"
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 
 def ask_groq(user_message: str) -> str:
-    headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": "llama-3.1-8b-instant",
-        "messages": [
+    completion = client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_message},
         ],
-        "max_tokens": 500,
-    }
-    r = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=30)
-    r.raise_for_status()
-    data = r.json()
-    return data["choices"][0]["message"]["content"]
+        max_tokens=500,
+    )
+    return completion.choices[0].message.content
 
 
 def send_vk_message(user_id: int, text: str):
