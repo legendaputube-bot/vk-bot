@@ -1,16 +1,45 @@
 import os
 import requests
-from flask import Flask, request, jsonify
+from flask import Flask, request
 
 # ==== НАСТРОЙКИ ====
-VK_TOKEN = os.environ.get("VK_TOKEN", "vk1.a.KG4nW1LR4LHDNR_J_u_U1iGAoj9Aa48n6KxrVF95bibnoatshXV57finEWLCxCvIUYU2HYzoFiJzUIVcJD7MdS-WnBSYAFNYcdZrV1xPh-InFXJ2WednojQ2qqYNHa-EN4TGkBGaMJ8OivB0CB4L2wQAHLCn2DLGB8ei6DFpoVZ0bbhCfBxqLyGpCOfvFHOhn9glR8RDbS68_3-pHPPddQ")
-VK_CONFIRMATION_CODE = os.environ.get("VK_CONFIRMATION_CODE", "ec409dba")
-VK_GROUP_SECRET = os.environ.get("VK_GROUP_SECRET", "aaQ13axAPQEcczQa")
+VK_TOKEN = os.environ.get("VK_TOKEN", "")
+VK_CONFIRMATION_CODE = os.environ.get("VK_CONFIRMATION_CODE", "")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+VK_GROUP_SECRET = os.environ.get("VK_GROUP_SECRET", "")
+
+SYSTEM_PROMPT = (
+    "Ты — дерзкий, языкастый помощник сообщества ВКонтакте, отвечаешь в стиле молодёжного сленга. "
+    "Используешь неформальный тон, лёгкую иронию и подколки, но без грубости и оскорблений. "
+    "Отвечай коротко, живо, по делу — без канцелярита и занудства. "
+    "Не хами пользователям по-настоящему и не переходи на личности — дерзость должна быть смешной, а не обидной."
+)
 
 app = Flask(__name__)
 
-VK_API_URL = "https://vk.com"
+VK_API_URL = "https://api.vk.com/method/messages.send"
 VK_API_VERSION = "5.199"
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+
+def ask_groq(user_message: str) -> str:
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": "llama-3.3-70b-versatile",
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_message},
+        ],
+        "max_tokens": 500,
+    }
+    r = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=30)
+    r.raise_for_status()
+    data = r.json()
+    return data["choices"][0]["message"]["content"]
+
 
 def send_vk_message(user_id: int, text: str):
     params = {
@@ -22,6 +51,7 @@ def send_vk_message(user_id: int, text: str):
     }
     r = requests.post(VK_API_URL, data=params, timeout=15)
     return r.json()
+
 
 @app.route("/callback", methods=["POST"])
 def callback():
@@ -38,15 +68,21 @@ def callback():
     if event_type == "message_new":
         message = data["object"]["message"]
         user_id = message["from_id"]
-        
-        # Временно просто зеркалим текст пользователя, пока нет ключа ИИ
         text = message.get("text", "")
+
         if text.strip():
-            send_vk_message(user_id, f"Вы написали: {text}\n(Бот работает, скоро подключим ИИ!)")
+            try:
+                reply = ask_groq(text)
+            except Exception as e:
+                reply = "Извините, произошла ошибка. Попробуйте позже."
+                print("Ошибка при обращении к Groq:", e)
+
+            send_vk_message(user_id, reply)
 
         return "ok"
 
     return "ok"
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
