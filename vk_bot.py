@@ -31,7 +31,8 @@ SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY", "").strip()
 
 if SUPABASE_URL and not SUPABASE_URL.startswith(("http://", "https://")):
     SUPABASE_URL = "https://" + SUPABASE_URL
-
+print("SUPABASE_URL =", repr(SUPABASE_URL), flush=True)
+print("SUPABASE_SECRET_KEY есть =", bool(SUPABASE_SECRET_KEY), flush=True)
 supabase = create_client(
   SUPABASE_URL,
     SUPABASE_SECRET_KEY
