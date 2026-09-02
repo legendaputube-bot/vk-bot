@@ -7,7 +7,7 @@ from collections import defaultdict, deque
 import requests
 from flask import Flask, request
 from groq import Groq
-
+from supabase import create_client
 
 # =========================================================
 # CONFIG
