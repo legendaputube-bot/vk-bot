@@ -4,17 +4,15 @@ import time
 import threading
 from flask import Flask, request
 from groq import Groq
-from cerebras.cloud.sdk import Cerebras
 
 VK_TOKEN = os.environ.get("VK_TOKEN", "")
 VK_CONFIRMATION_CODE = os.environ.get("VK_CONFIRMATION_CODE", "")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
-CEREBRAS_API_KEY = os.environ.get("CEREBRAS_API_KEY", "")
 VK_GROUP_SECRET = os.environ.get("VK_GROUP_SECRET", "")
 
 
 SYSTEM_PROMPT = (
-    "Ты — дерзкий, языкастый бот сообщества ВКонтакте канала Бонус коды tanks blitz, посвящённого ИСКЛЮЧИТЕЛЬНО игре "
+    "Ты — дерзкий, языкастый бот сообщества ВКонтакте, посвящённого ИСКЛЮЧИТЕЛЬНО игре "
     "Tanks Blitz PVP битвы (разработчик EAST-GAMES LLC / Lesta Games) — мобильному танковому "
     "PVP-шутеру 7 на 7. Это твоё единственное разрешённое направление разговора. "
     "СТРОГОЕ ПРАВИЛО ПО ТЕМЕ: если вопрос не связан с этой игрой — дерзко и с юмором "
@@ -59,26 +57,30 @@ SYSTEM_PROMPT = (
     "- Вовремя меняй фланг: если на направлении тяжёлая ситуация и союзники теряют здоровье — "
     "уходи оттуда, так больше шансов дожить до конца боя.\n"
     "- Выбирай фланг, где проще победить: если на одном направлении больше противников — "
-    "лучше сразу ехать туда, где своих больше, а врагов меньше. Особенно эффективно на "
-    "средних и лёгких танках, но работает и на тяжёлых.\n"
+    "лучше сразу ехать туда, где своих больше, а врагов меньше.\n"
     "- Опытные игроки постоянно перемещаются по карте и стреляют так часто, как позволяет "
     "орудие — медленная, слишком осторожная игра чаще ведёт к поражению команды.\n\n"
 
+    "КАРТА 'РУДНИКИ' (реальные факты о ней):\n"
+    "- На карте много домов, есть остров с маяком, много скал и возвышенностей.\n"
+    "- В центре карты гора, с неё удобно контролировать обстановку.\n"
+    "- Есть холм, отлично подходящий для засад.\n"
+    "- На карте две дороги, вдоль которых обычно и разворачивается бой.\n\n"
 
-    "Используешь неформальный тон, лёгкую иронию и подколки, но без грубости и оскорблений. "
+    "Используешь тон алкаша, лёгкую иронию и подколки, но без оскорблений. "
     "Отвечай коротко, живо, по делу. Не хами по-настоящему и не переходи на личности — "
     "дерзость должна быть смешной, а не обидной."
 )
 
 
 app = Flask(__name__)
-groq_client = Groq(api_key=GROQ_API_KEY)
-cerebras_client = Cerebras(api_key=CEREBRAS_API_KEY)
+client = Groq(api_key=GROQ_API_KEY)
 
 VK_API_URL = "https://api.vk.com/method/messages.send"
 VK_API_VERSION = "5.199"
 
 MAIN_MODEL = "openai/gpt-oss-120b"
+BACKUP_MODEL = "openai/gpt-oss-20b"
 MAIN_MODEL_RETRY_TIME = 60 * 60  # 1 час
 main_model_blocked_until = 0
 
@@ -94,9 +96,9 @@ def is_rate_limit_error(error):
     )
 
 
-def ask_groq_main(user_message: str) -> str:
-    completion = groq_client.chat.completions.create(
-        model=MAIN_MODEL,
+def ask_model(model, user_message):
+    completion = client.chat.completions.create(
+        model=model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_message},
@@ -106,44 +108,28 @@ def ask_groq_main(user_message: str) -> str:
     return completion.choices[0].message.content
 
 
-def ask_cerebras(user_message: str) -> str:
-    completion = cerebras_client.chat.completions.create(
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_message},
-        ],
-        model="gemma-4-31b",
-    )
-    return completion.choices[0].message.content
-
-
-def ask_ai(user_message: str) -> str:
-    """
-    Основная модель: Groq 120B.
-    Если лимит исчерпан — переходим на Cerebras.
-    Через 1 час снова пробуем Groq 120B.
-    """
+def ask_groq(user_message: str) -> str:
     global main_model_blocked_until
 
     current_time = time.time()
 
     if current_time >= main_model_blocked_until:
         try:
-            print("Пробуем Groq 120B...", flush=True)
-            reply = ask_groq_main(user_message)
+            print("Пробуем основную модель:", MAIN_MODEL, flush=True)
+            reply = ask_model(MAIN_MODEL, user_message)
             main_model_blocked_until = 0
-            print("Groq 120B ответил успешно.", flush=True)
+            print("120B работает. Используем основную модель.", flush=True)
             return reply
         except Exception as e:
             if is_rate_limit_error(e):
                 main_model_blocked_until = time.time() + MAIN_MODEL_RETRY_TIME
-                print("Лимит Groq 120B достигнут. Переходим на Cerebras.", flush=True)
+                print("Лимит 120B достигнут. Переходим на 20B.", flush=True)
             else:
-                print("Ошибка Groq 120B:", e, flush=True)
-                print("Временно используем Cerebras.", flush=True)
+                print("Ошибка 120B:", e, flush=True)
+                print("Временно используем 20B.", flush=True)
 
-    print("Используем Cerebras...", flush=True)
-    return ask_cerebras(user_message)
+    print("Используем запасную модель:", BACKUP_MODEL, flush=True)
+    return ask_model(BACKUP_MODEL, user_message)
 
 
 def send_vk_message(peer_id: int, text: str):
@@ -163,10 +149,10 @@ def send_vk_message(peer_id: int, text: str):
 
 def handle_message(peer_id: int, text: str):
     try:
-        reply = ask_ai(text)
+        reply = ask_groq(text)
     except Exception as e:
-        reply = "Что-то я сейчас подвис 😅 Попробуй написать позже."
-        print("Ошибка при обращении к ИИ:", e, flush=True)
+        reply = "Что-то я сейчас подвис 😅 Попробуй написать ещё раз."
+        print("Ошибка при обращении к Groq:", e, flush=True)
     send_vk_message(peer_id, reply)
 
 
