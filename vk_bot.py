@@ -7,75 +7,101 @@ from flask import Flask, request
 from groq import Groq
 
 
+# =========================================================
+# НАСТРОЙКИ
+# =========================================================
+
 VK_TOKEN = os.environ.get("VK_TOKEN", "")
 VK_CONFIRMATION_CODE = os.environ.get("VK_CONFIRMATION_CODE", "")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 VK_GROUP_SECRET = os.environ.get("VK_GROUP_SECRET", "")
-
-
-SYSTEM_PROMPT = (
-    "Ты — дерзкий, языкастый бот сообщества ВКонтакте, посвящённого ИСКЛЮЧИТЕЛЬНО игре "
-    "Tanks Blitz PVP битвы (разработчик EAST-GAMES LLC / Lesta Games) — мобильному танковому "
-    "PVP-шутеру. Это твоё единственное разрешённое направление разговора. "
-    "Если вопрос не связан с этой игрой — дерзко и с юмором отказывайся отвечать по существу, "
-    "напоминай, что тут говорят только про танки.\n\n"
-
-    "ОБРАЩЕНИЕ ПО ИМЕНИ: тебе в начале сообщения передаётся имя пользователя в формате "
-    "'[Имя: ...]'. Обращайся к человеку по этому имени, естественно вписывая его в ответ. "
-    "Саму пометку '[Имя: ...]' в ответе не показывай.\n\n"
-
-    "ВАЖНО: каждый пользователь имеет отдельную историю общения. "
-    "Никогда не смешивай информацию, вопросы или контекст разных пользователей.\n\n"
-
-    "ЗАПРЕТ НА ВЫДУМЫВАНИЕ ТОЧНЫХ ЦИФР: не придумывай точные характеристики техники, "
-    "калибры, урон, броню, названия валюты и другие конкретные цифры — ты их не знаешь. "
-    "Если спрашивают про конкретные характеристики техники или что качать — отвечай в общих "
-    "чертах и советуй посмотреть актуальные гайды и обзоры техники на YouTube, там всё "
-    "наглядно показывают с цифрами и геймплеем.\n\n"
-
-    "ФОРМАТ ОТВЕТА: отвечай КОРОТКО, максимум 2-3 предложения или максимум 3 пункта списком. "
-    "Никаких длинных портянок текста.\n\n"
-
-    "Используешь неформальный тон, лёгкую иронию и подколки, но без грубости и оскорблений. "
-    "Не хами по-настоящему и не переходи на личности — дерзость должна быть смешной, "
-    "а не обидной."
-)
-
-
-app = Flask(__name__)
-client = Groq(api_key=GROQ_API_KEY)
 
 VK_API_URL = "https://api.vk.com/method/messages.send"
 VK_USERS_GET_URL = "https://api.vk.com/method/users.get"
 VK_API_VERSION = "5.199"
 
 
+# =========================================================
+# МОДЕЛИ
+# =========================================================
+
 MAIN_MODEL = "openai/gpt-oss-120b"
 BACKUP_MODEL = "openai/gpt-oss-20b"
 
-# Модель для обработки изображений
 VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
-MAIN_MODEL_RETRY_TIME = 60 * 60
-main_model_blocked_until = 0
+# Быстрое распознавание голоса
+VOICE_TRANSCRIPTION_MODEL = "whisper-large-v3-turbo"
+
+# Groq TTS
+TTS_MODEL = "canopylabs/orpheus-v1-english"
+TTS_VOICE = "autumn"
 
 
 # =========================================================
-# ПАМЯТЬ ПОЛЬЗОВАТЕЛЕЙ
+# ЛИМИТЫ ТОКЕНОВ
 # =========================================================
 
-# Максимум 25 сообщений НА КАЖДОГО пользователя
-MAX_HISTORY_MESSAGES = 25
+# Обычный текст
+TEXT_MAX_TOKENS = 80
+
+# Голосовое
+VOICE_MAX_TOKENS = 140
+
+# Изображение
+IMAGE_MAX_TOKENS = 170
+
+
+# =========================================================
+# ПАМЯТЬ
+# =========================================================
+
+# Только 3 последних сообщения НА КАЖДОГО пользователя
+MAX_HISTORY_MESSAGES = 3
 
 users_memory = {}
 memory_lock = threading.Lock()
 
 
+# =========================================================
+# SYSTEM PROMPT
+# =========================================================
+
+SYSTEM_PROMPT = (
+    "Ты — дерзкий, языкастый бот сообщества ВКонтакте, посвящённого ИСКЛЮЧИТЕЛЬНО игре "
+    "Tanks Blitz PVP битвы (разработчик EAST-GAMES LLC / Lesta Games) — мобильному танковому "
+    "PVP-шутеру. Это твоё главное направление разговора.\n\n"
+
+    "Если вопрос не связан с Tanks Blitz — можешь коротко и с юмором сказать, "
+    "что бот заточен под танки.\n\n"
+
+    "ОБРАЩЕНИЕ ПО ИМЕНИ: тебе в начале сообщения передаётся имя пользователя в формате "
+    "'[Имя: ...]'. Обращайся к человеку по имени естественно. Саму пометку "
+    "'[Имя: ...]' в ответе не показывай.\n\n"
+
+    "ВАЖНО: каждый пользователь имеет отдельную историю общения. "
+    "Никогда не смешивай информацию разных пользователей.\n\n"
+
+    "НЕ ВЫДУМЫВАЙ ТОЧНЫЕ ЦИФРЫ: если не уверен в характеристиках техники, "
+    "уроне, броне, калибре и других точных значениях — не придумывай их.\n\n"
+
+    "ОТВЕЧАЙ КОРОТКО. Обычно 1-3 коротких предложения. "
+    "Не пиши длинные тексты.\n\n"
+
+    "Используй неформальный тон, лёгкую иронию и дружеские подколки. "
+    "Без настоящих оскорблений и перехода на личности."
+)
+
+
+app = Flask(__name__)
+client = Groq(api_key=GROQ_API_KEY)
+
+
+# =========================================================
+# ПАМЯТЬ ПОЛЬЗОВАТЕЛЯ
+# =========================================================
+
 def get_user_memory(user_id: int):
-    """
-    Получает отдельную память конкретного пользователя.
-    У каждого user_id своя история.
-    """
 
     with memory_lock:
 
@@ -105,7 +131,7 @@ def add_to_history(
             "content": content
         })
 
-        # Оставляем только последние 25 сообщений
+        # Оставляем только последние 3 сообщения
         if len(user_memory["history"]) > MAX_HISTORY_MESSAGES:
 
             user_memory["history"] = (
@@ -123,60 +149,6 @@ def get_history(user_id: int):
 
 
 # =========================================================
-# ПРОВЕРКА: ПРИВЕТСТВИЕ
-# =========================================================
-
-def is_greeting(text: str) -> bool:
-
-    text = text.strip().lower()
-
-    greetings = (
-        "привет",
-        "прив",
-        "здарова",
-        "здорово",
-        "здравствуй",
-        "здравствуйте",
-        "доброе утро",
-        "добрый день",
-        "добрый вечер",
-        "хай",
-        "хелло",
-        "hello",
-        "ку",
-        "салют"
-    )
-
-    # Убираем простую пунктуацию в конце
-    cleaned = text.rstrip("!., ")
-
-    return cleaned in greetings
-
-
-# =========================================================
-# ПРОВЕРКА: НУЖНО ЛИ ОТВЕЧАТЬ
-# =========================================================
-
-def should_answer(text: str) -> bool:
-
-    if not text:
-        return False
-
-    text = text.strip()
-
-    # Приветствия — отвечаем без вопросительного знака
-    if is_greeting(text):
-        return True
-
-    # Всё остальное — только если есть ?
-    if "?" in text:
-        return True
-
-    # Нет ? — игнорируем
-    return False
-
-
-# =========================================================
 # ИМЯ ПОЛЬЗОВАТЕЛЯ
 # =========================================================
 
@@ -184,7 +156,6 @@ def get_user_name(user_id: int) -> str:
 
     user_memory = get_user_memory(user_id)
 
-    # Если имя уже получали — повторно VK не дёргаем
     if user_memory["name"]:
         return user_memory["name"]
 
@@ -213,7 +184,7 @@ def get_user_name(user_id: int) -> str:
     except Exception as e:
 
         print(
-            "Не удалось получить имя пользователя:",
+            "Не удалось получить имя:",
             e,
             flush=True
         )
@@ -222,14 +193,15 @@ def get_user_name(user_id: int) -> str:
 
 
 # =========================================================
-# ОБЫЧНАЯ МОДЕЛЬ
+# МОДЕЛЬ
 # =========================================================
 
 def ask_model(
     model,
     user_id: int,
     user_message: str,
-    user_name: str
+    user_name: str,
+    max_tokens: int
 ):
 
     message_with_name = (
@@ -238,7 +210,6 @@ def ask_model(
         else user_message
     )
 
-    # Получаем ИМЕННО историю этого пользователя
     history = get_history(user_id)
 
     messages = [
@@ -248,10 +219,8 @@ def ask_model(
         }
     ]
 
-    # Добавляем прошлую историю конкретного пользователя
     messages.extend(history)
 
-    # Добавляем текущее сообщение
     messages.append({
         "role": "user",
         "content": message_with_name
@@ -260,12 +229,13 @@ def ask_model(
     completion = client.chat.completions.create(
         model=model,
         messages=messages,
-        max_tokens=300,
+        max_tokens=max_tokens,
     )
 
     reply = completion.choices[0].message.content
 
     if not reply:
+
         raise RuntimeError(
             "Модель вернула пустой ответ"
         )
@@ -274,13 +244,18 @@ def ask_model(
 
 
 # =========================================================
-# GROQ — ОСНОВНАЯ / ЗАПАСНАЯ МОДЕЛЬ
+# GROQ
 # =========================================================
+
+MAIN_MODEL_RETRY_TIME = 60 * 60
+main_model_blocked_until = 0
+
 
 def ask_groq(
     user_id: int,
     user_message: str,
-    user_name: str
+    user_name: str,
+    max_tokens: int
 ) -> str:
 
     global main_model_blocked_until
@@ -292,26 +267,18 @@ def ask_groq(
         try:
 
             print(
-                "Пробуем основную модель:",
+                "Пробуем:",
                 MAIN_MODEL,
                 flush=True
             )
 
-            reply = ask_model(
+            return ask_model(
                 MAIN_MODEL,
                 user_id,
                 user_message,
-                user_name
+                user_name,
+                max_tokens
             )
-
-            main_model_blocked_until = 0
-
-            print(
-                "120B работает. Используем основную модель.",
-                flush=True
-            )
-
-            return reply
 
         except Exception as e:
 
@@ -323,8 +290,7 @@ def ask_groq(
                 )
 
                 print(
-                    "Лимит 120B достигнут. "
-                    "Переходим на 20B.",
+                    "Лимит 120B достигнут. Переходим на 20B.",
                     flush=True
                 )
 
@@ -336,13 +302,8 @@ def ask_groq(
                     flush=True
                 )
 
-                print(
-                    "Временно используем 20B.",
-                    flush=True
-                )
-
     print(
-        "Используем запасную модель:",
+        "Используем:",
         BACKUP_MODEL,
         flush=True
     )
@@ -351,7 +312,8 @@ def ask_groq(
         BACKUP_MODEL,
         user_id,
         user_message,
-        user_name
+        user_name,
+        max_tokens
     )
 
 
@@ -373,7 +335,7 @@ def is_rate_limit_error(error):
 
 
 # =========================================================
-# ГОЛОСОВЫЕ
+# РАСПОЗНАВАНИЕ ГОЛОСА
 # =========================================================
 
 def transcribe_voice(audio_url: str) -> str:
@@ -390,7 +352,7 @@ def transcribe_voice(audio_url: str) -> str:
             "voice.ogg",
             audio_response.content
         ),
-        model="whisper-large-v3",
+        model=VOICE_TRANSCRIPTION_MODEL,
         language="ru",
     )
 
@@ -398,137 +360,154 @@ def transcribe_voice(audio_url: str) -> str:
 
 
 # =========================================================
-# СКАЧИВАНИЕ ИЗОБРАЖЕНИЯ VK
+# GROQ TTS
 # =========================================================
 
-def download_image_as_base64(image_url: str):
+def generate_voice(text: str):
 
-    print(
-        "Скачиваем изображение из VK...",
-        flush=True
+    # TTS-модели имеют ограничение длины.
+    # Обрезаем слишком длинный ответ.
+    text = text.strip()[:200]
+
+    response = client.audio.speech.create(
+        model=TTS_MODEL,
+        voice=TTS_VOICE,
+        input=text,
+        response_format="wav"
     )
 
-    response = requests.get(
-        image_url,
-        timeout=20
-    )
+    voice_data = response.read()
 
-    response.raise_for_status()
+    if not voice_data:
 
-    image_data = response.content
-
-    if not image_data:
         raise RuntimeError(
-            "VK вернул пустое изображение"
+            "TTS вернул пустой файл"
         )
 
-    if len(image_data) > 20 * 1024 * 1024:
+    return voice_data
+
+
+# =========================================================
+# ОТПРАВКА ГОЛОСОВОГО В VK
+# =========================================================
+
+def send_vk_voice(
+    peer_id: int,
+    voice_data: bytes
+):
+
+    # Получаем URL загрузки голосового
+    params = {
+        "access_token": VK_TOKEN,
+        "v": VK_API_VERSION,
+        "type": "audio_message",
+        "peer_id": peer_id,
+    }
+
+    upload_response = requests.get(
+        "https://api.vk.com/method/docs.getMessagesUploadServer",
+        params=params,
+        timeout=15
+    )
+
+    upload_result = upload_response.json()
+
+    if "error" in upload_result:
+
         raise RuntimeError(
-            "Изображение больше 20 MB"
+            f"VK upload server error: {upload_result['error']}"
         )
 
-    content_type = response.headers.get(
-        "Content-Type",
-        "image/jpeg"
+    upload_url = upload_result["response"]["upload_url"]
+
+    # Загружаем WAV
+    upload = requests.post(
+        upload_url,
+        files={
+            "file": (
+                "voice.wav",
+                voice_data,
+                "audio/wav"
+            )
+        },
+        timeout=30
     )
 
-    if not content_type.startswith("image/"):
-        content_type = "image/jpeg"
+    upload_result = upload.json()
 
-    encoded_image = base64.b64encode(
-        image_data
-    ).decode("utf-8")
+    if "error" in upload_result:
 
-    data_url = (
-        f"data:{content_type};base64,{encoded_image}"
-    )
-
-    print(
-        "Изображение успешно загружено:",
-        round(len(image_data) / 1024, 1),
-        "KB",
-        flush=True
-    )
-
-    return data_url
-
-
-# =========================================================
-# АНАЛИЗ ИЗОБРАЖЕНИЯ
-# =========================================================
-
-def ask_about_image(
-    image_url: str,
-    user_name: str,
-    caption: str = ""
-) -> str:
-
-    if caption and caption.strip():
-
-        prompt_text = caption.strip()
-
-    else:
-
-        prompt_text = (
-            "Посмотри на этот скриншот из Tanks Blitz. "
-            "Коротко прокомментируй, что на нём происходит, "
-            "в своём дерзком и дружеском стиле."
-        )
-
-    message_with_name = (
-        f"[Имя: {user_name}] {prompt_text}"
-        if user_name
-        else prompt_text
-    )
-
-    image_data_url = download_image_as_base64(
-        image_url
-    )
-
-    print(
-        "Отправляем изображение в:",
-        VISION_MODEL,
-        flush=True
-    )
-
-    completion = client.chat.completions.create(
-        model=VISION_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": message_with_name
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": image_data_url
-                        }
-                    }
-                ]
-            }
-        ],
-        max_tokens=300,
-    )
-
-    reply = completion.choices[0].message.content
-
-    if not reply:
         raise RuntimeError(
-            "Vision-модель вернула пустой ответ"
+            f"VK upload error: {upload_result['error']}"
         )
 
-    return reply.strip()
+    # Сохраняем голосовое
+    save_params = {
+        "access_token": VK_TOKEN,
+        "v": VK_API_VERSION,
+        **upload_result
+    }
+
+    save_response = requests.post(
+        "https://api.vk.com/method/docs.save",
+        data=save_params,
+        timeout=15
+    )
+
+    save_result = save_response.json()
+
+    if "error" in save_result:
+
+        raise RuntimeError(
+            f"VK save error: {save_result['error']}"
+        )
+
+    doc = save_result["response"]
+
+    owner_id = doc["owner_id"]
+    doc_id = doc["id"]
+
+    access_key = doc.get(
+        "access_key"
+    )
+
+    attachment = (
+        f"audio_message{owner_id}_{doc_id}"
+    )
+
+    if access_key:
+
+        attachment += f"_{access_key}"
+
+    params = {
+        "access_token": VK_TOKEN,
+        "v": VK_API_VERSION,
+        "peer_id": peer_id,
+        "attachment": attachment,
+        "random_id": 0,
+    }
+
+    response = requests.post(
+        VK_API_URL,
+        data=params,
+        timeout=15
+    )
+
+    result = response.json()
+
+    if "error" in result:
+
+        print(
+            "Ошибка отправки голосового:",
+            result["error"],
+            flush=True
+        )
+
+    return result
 
 
 # =========================================================
-# ОТПРАВКА В VK
+# ОТПРАВКА ТЕКСТА В VK
 # =========================================================
 
 def send_vk_message(
@@ -540,7 +519,7 @@ def send_vk_message(
 
         text = (
             "Что-то я сейчас подвис 😅 "
-            "Попробуй ещё раз."
+            "Попробуй по позже."
         )
 
     params = {
@@ -564,7 +543,7 @@ def send_vk_message(
         if "error" in result:
 
             print(
-                "Ошибка VK API:",
+                "Ошибка VK:",
                 result["error"],
                 flush=True
             )
@@ -574,7 +553,7 @@ def send_vk_message(
     except Exception as e:
 
         print(
-            "Ошибка отправки VK:",
+            "Ошибка отправки:",
             e,
             flush=True
         )
@@ -583,7 +562,7 @@ def send_vk_message(
 
 
 # =========================================================
-# СОХРАНЕНИЕ СООБЩЕНИЙ
+# СОХРАНЕНИЕ
 # =========================================================
 
 def save_conversation(
@@ -606,7 +585,7 @@ def save_conversation(
 
 
 # =========================================================
-# ТЕКСТ
+# ОБЫЧНЫЙ ТЕКСТ
 # =========================================================
 
 def handle_message(
@@ -617,17 +596,6 @@ def handle_message(
 
     try:
 
-        # Дополнительная защита
-        if not should_answer(text):
-
-            print(
-                "Сообщение проигнорировано:",
-                text,
-                flush=True
-            )
-
-            return
-
         user_name = get_user_name(
             from_id
         )
@@ -635,33 +603,34 @@ def handle_message(
         reply = ask_groq(
             from_id,
             text,
-            user_name
+            user_name,
+            TEXT_MAX_TOKENS
         )
 
-        # Сохраняем только после успешного ответа
         save_conversation(
             from_id,
             text,
             reply
         )
 
-    except Exception as e:
-
-        reply = (
-            "Что-то я сейчас подвис 😅 "
-            "Попробуй написать ещё раз."
+        # Обычный текст отправляем текстом
+        send_vk_message(
+            peer_id,
+            reply
         )
 
+    except Exception as e:
+
         print(
-            "Ошибка при обращении к Groq:",
+            "Ошибка текста:",
             e,
             flush=True
         )
 
-    send_vk_message(
-        peer_id,
-        reply
-    )
+        send_vk_message(
+            peer_id,
+            "Что-то я сейчас подвис 😅 Попробуй ещё раз."
+        )
 
 
 # =========================================================
@@ -688,32 +657,18 @@ def handle_voice_message(
 
         if not text:
 
-            print(
-                "Голос пустой — игнорируем.",
-                flush=True
-            )
-
-            return
-
-        # После распознавания проверяем:
-        # приветствие ИЛИ вопрос с ?
-        if not should_answer(text):
-
-            print(
-                "Голос не является вопросом/приветствием — игнорируем.",
-                flush=True
-            )
-
             return
 
         user_name = get_user_name(
             from_id
         )
 
+        # Ответ модели — максимум 140 токенов
         reply = ask_groq(
             from_id,
             text,
-            user_name
+            user_name,
+            VOICE_MAX_TOKENS
         )
 
         save_conversation(
@@ -722,35 +677,148 @@ def handle_voice_message(
             reply
         )
 
-    except Exception as e:
-
-        reply = (
-            "Не смог разобрать голосовое 😅 "
-            "Попробуй написать текстом."
+        # Генерируем голосовой ответ
+        voice_data = generate_voice(
+            reply
         )
 
+        # Отправляем именно голосовое
+        send_vk_voice(
+            peer_id,
+            voice_data
+        )
+
+    except Exception as e:
+
         print(
-            "Ошибка при распознавании голоса:",
+            "Ошибка голосового:",
             e,
             flush=True
         )
 
-        send_vk_message(
-            peer_id,
-            reply
-        )
+        # Если TTS не сработал — отправляем текст,
+        # чтобы пользователь всё равно получил ответ.
+        try:
 
-        return
+            send_vk_message(
+                peer_id,
+                "Не смог отправить голос 😅 Но я тут."
+            )
 
-    send_vk_message(
-        peer_id,
-        reply
-    )
+        except Exception:
+            pass
 
 
 # =========================================================
 # ИЗОБРАЖЕНИЕ
 # =========================================================
+
+def download_image_as_base64(
+    image_url: str
+):
+
+    response = requests.get(
+        image_url,
+        timeout=20
+    )
+
+    response.raise_for_status()
+
+    image_data = response.content
+
+    if not image_data:
+
+        raise RuntimeError(
+            "Пустое изображение"
+        )
+
+    if len(image_data) > 20 * 1024 * 1024:
+
+        raise RuntimeError(
+            "Изображение больше 20 MB"
+        )
+
+    content_type = response.headers.get(
+        "Content-Type",
+        "image/jpeg"
+    )
+
+    if not content_type.startswith("image/"):
+
+        content_type = "image/jpeg"
+
+    encoded_image = base64.b64encode(
+        image_data
+    ).decode("utf-8")
+
+    return (
+        f"data:{content_type};base64,{encoded_image}"
+    )
+
+
+def ask_about_image(
+    image_url: str,
+    user_name: str,
+    caption: str = ""
+) -> str:
+
+    if caption.strip():
+
+        prompt_text = caption.strip()
+
+    else:
+
+        prompt_text = (
+            "Посмотри на этот скриншот из Tanks Blitz. "
+            "Коротко скажи, что здесь происходит."
+        )
+
+    message_with_name = (
+        f"[Имя: {user_name}] {prompt_text}"
+        if user_name
+        else prompt_text
+    )
+
+    image_data_url = download_image_as_base64(
+        image_url
+    )
+
+    completion = client.chat.completions.create(
+        model=VISION_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": message_with_name
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": image_data_url
+                        }
+                    }
+                ]
+            }
+        ],
+        max_tokens=IMAGE_MAX_TOKENS,
+    )
+
+    reply = completion.choices[0].message.content
+
+    if not reply:
+
+        raise RuntimeError(
+            "Vision вернула пустой ответ"
+        )
+
+    return reply.strip()
+
 
 def handle_image_message(
     peer_id: int,
@@ -760,16 +828,6 @@ def handle_image_message(
 ):
 
     try:
-
-        # Фото без вопроса не обрабатываем
-        if not should_answer(caption):
-
-            print(
-                "Фото без вопроса — игнорируем.",
-                flush=True
-            )
-
-            return
 
         user_name = get_user_name(
             from_id
@@ -783,31 +841,34 @@ def handle_image_message(
 
         save_conversation(
             from_id,
-            caption,
+            caption or "[изображение]",
+            reply
+        )
+
+        # Изображения отвечаем текстом
+        send_vk_message(
+            peer_id,
             reply
         )
 
     except Exception as e:
 
-        reply = (
-            "Не смог рассмотреть скриншот 😅 "
-            "Попробуй ещё раз или опиши словами."
-        )
-
         print(
-            "Ошибка при анализе изображения:",
+            "Ошибка изображения:",
             e,
             flush=True
         )
 
-    send_vk_message(
-        peer_id,
-        reply
-    )
+        send_vk_message(
+            peer_id,
+            "Не смог рассмотреть скриншот 😅 Попробуй ещё раз."
+
+
+        )
 
 
 # =========================================================
-# ВЫБОР САМОЙ БОЛЬШОЙ ФОТОГРАФИИ VK
+# ФОТО VK
 # =========================================================
 
 def get_best_photo_url(photo):
@@ -818,6 +879,7 @@ def get_best_photo_url(photo):
     )
 
     if not sizes:
+
         return None
 
     best_size = max(
@@ -850,44 +912,43 @@ def callback():
     except Exception as e:
 
         print(
-            "Ошибка получения JSON:",
+            "Ошибка JSON:",
             e,
             flush=True
         )
 
         return "bad request", 400
 
-    # -----------------------------------------------------
-    # Проверяем secret
-    # -----------------------------------------------------
+
+    # =====================================================
+    # SECRET
+    # =====================================================
 
     if (
         VK_GROUP_SECRET
         and data.get("secret") != VK_GROUP_SECRET
     ):
 
-        print(
-            "Неверный secret VK",
-            flush=True
-        )
-
         return "invalid secret", 403
+
 
     event_type = data.get(
         "type"
     )
 
-    # -----------------------------------------------------
-    # Подтверждение Callback API
-    # -----------------------------------------------------
+
+    # =====================================================
+    # CONFIRMATION
+    # =====================================================
 
     if event_type == "confirmation":
 
         return VK_CONFIRMATION_CODE
 
-    # -----------------------------------------------------
-    # Новое сообщение
-    # -----------------------------------------------------
+
+    # =====================================================
+    # НОВОЕ СООБЩЕНИЕ
+    # =====================================================
 
     if event_type == "message_new":
 
@@ -918,14 +979,17 @@ def callback():
         )
 
         if not peer_id or not from_id:
+
             return "ok"
+
 
         voice_url = None
         image_url = None
 
-        # -------------------------------------------------
-        # Ищем вложения
-        # -------------------------------------------------
+
+        # =================================================
+        # ВЛОЖЕНИЯ
+        # =================================================
 
         for att in attachments:
 
@@ -933,7 +997,11 @@ def callback():
                 "type"
             )
 
-            # Голосовое
+
+            # ---------------------------------------------
+            # ГОЛОС
+            # ---------------------------------------------
+
             if att_type == "audio_message":
 
                 audio_message = att.get(
@@ -947,7 +1015,11 @@ def callback():
                     audio_message.get("link_mp3")
                 )
 
-            # Фото
+
+            # ---------------------------------------------
+            # ФОТО
+            # ---------------------------------------------
+
             elif att_type == "photo":
 
                 photo = att.get(
@@ -959,9 +1031,10 @@ def callback():
                     photo
                 )
 
-        # -------------------------------------------------
-        # Голос
-        # -------------------------------------------------
+
+        # =================================================
+        # ГОЛОС
+        # =================================================
 
         if voice_url:
 
@@ -975,9 +1048,10 @@ def callback():
                 daemon=True
             ).start()
 
-        # -------------------------------------------------
-        # Фото
-        # -------------------------------------------------
+
+        # =================================================
+        # ФОТО
+        # =================================================
 
         elif image_url:
 
@@ -992,35 +1066,29 @@ def callback():
                 daemon=True
             ).start()
 
-        # -------------------------------------------------
-        # Текст
-        # -------------------------------------------------
+
+        # =================================================
+        # ОБЫЧНЫЙ ТЕКСТ
+        # =================================================
 
         elif text.strip():
 
-            # Сразу отсеиваем ненужные сообщения,
-            # чтобы вообще не запускать отдельный поток
-            if should_answer(text):
+            # Больше НЕТ проверки на ?
+            # Бот отвечает на любые сообщения
 
-                threading.Thread(
-                    target=handle_message,
-                    args=(
-                        peer_id,
-                        from_id,
-                        text
-                    ),
-                    daemon=True
-                ).start()
+            threading.Thread(
+                target=handle_message,
+                args=(
+                    peer_id,
+                    from_id,
+                    text
+                ),
+                daemon=True
+            ).start()
 
-            else:
-
-                print(
-                    "Сообщение без ? — игнорируем:",
-                    text,
-                    flush=True
-                )
 
         return "ok"
+
 
     return "ok"
 
@@ -1040,6 +1108,26 @@ if __name__ == "__main__":
 
     print(
         "VK AI бот запускается...",
+        flush=True
+    )
+
+    print(
+        f"Память: {MAX_HISTORY_MESSAGES} сообщения",
+        flush=True
+    )
+
+    print(
+        f"Текст: {TEXT_MAX_TOKENS} токенов",
+        flush=True
+    )
+
+    print(
+        f"Голос: {VOICE_MAX_TOKENS} токенов",
+        flush=True
+    )
+
+    print(
+        f"Изображение: {IMAGE_MAX_TOKENS} токенов",
         flush=True
     )
 
