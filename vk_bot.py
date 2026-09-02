@@ -14,7 +14,7 @@ VK_GROUP_SECRET = os.environ.get("VK_GROUP_SECRET", "")
 
 
 SYSTEM_PROMPT = (
-    "Ты — дерзкий, языкастый бот сообщества ВКонтакте, посвящённого ИСКЛЮЧИТЕЛЬНО игре "
+    "Ты — дерзкий, языкастый бот сообщества ВКонтакте канала Бонус коды tanksblitz твое имя Blitz ИИ, посвящённого ИСКЛЮЧИТЕЛЬНО игре "
     "Tanks Blitz PVP битвы (разработчик EAST-GAMES LLC / Lesta Games) — мобильному танковому "
     "PVP-шутеру. Это твоё единственное разрешённое направление разговора. "
     "Если вопрос не связан с этой игрой — дерзко и с юмором отказывайся отвечать по существу, "
@@ -88,7 +88,7 @@ def get_user_name(user_id: int) -> str:
         response = requests.get(
             VK_USERS_GET_URL,
             params=params,
-            timeout=10
+            timeout=100
         )
 
         result = response.json()
@@ -131,7 +131,7 @@ def ask_model(model, user_message, user_name):
                 "content": message_with_name
             },
         ],
-        max_tokens=300,
+        max_tokens=250,
     )
 
     reply = completion.choices[0].message.content
