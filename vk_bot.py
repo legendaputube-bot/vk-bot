@@ -6,7 +6,7 @@ import threading
 import re
 
 from html.parser import HTMLParser
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse, quote
 
 from flask import Flask, request
 from groq import Groq
@@ -44,20 +44,39 @@ SYSTEM_PROMPT = (
     "Обращайся к пользователю по имени естественно. "
     "Саму конструкцию '[Имя: ...]' никогда не показывай.\n\n"
 
-    "РАБОТА С ИНТЕРНЕТОМ:\n"
-    "Тебе может передаваться информация только с заранее разрешённых "
-    "страниц Tanks Blitz.\n"
-    "Используй только переданный текст этих страниц.\n"
-    "Нельзя придумывать информацию, которой в источнике нет.\n"
-    "Если информации на переданных страницах нет, честно скажи, "
-    "что на доступных страницах этого не найдено.\n"
-    "Не утверждай, что ты посмотрел другие сайты.\n\n"
+    "РАБОТА С РАЗРЕШЁННЫМИ СТРАНИЦАМИ:\n"
+    "Тебе может передаваться информация только с заранее "
+    "разрешённых страниц Tanks Blitz и WOTInspector.\n\n"
+
+    "WOTINSPECTOR:\n"
+    "Для вопросов о конкретных танках можно использовать "
+    "страницы WOTInspector с характеристиками этого танка.\n"
+    "Разрешено брать оттуда текстовые данные: "
+    "урон, пробитие, броню, скорость, ДПМ, орудие, "
+    "башню, корпус, модули, массу и другие характеристики, "
+    "если они присутствуют на странице.\n\n"
+
+    "ВАЖНО:\n"
+    "3D-модели, изображения, текстуры и визуальные материалы "
+    "WOTInspector не используются.\n"
+    "Не нужно анализировать или описывать 3D-модель, "
+    "если пользователь специально не прислал изображение.\n\n"
+
+    "WOTINSPECTOR ССЫЛКИ:\n"
+    "Можно использовать только разрешённые страницы "
+    "домена armor.wotinspector.com.\n"
+    "Нельзя переходить на другие сайты.\n"
+    "Нельзя использовать Google, Яндекс или другой поиск.\n"
+    "Нельзя переходить по сторонним ссылкам, найденным "
+    "на странице.\n\n"
 
     "ТОЧНОСТЬ:\n"
     "Никогда не выдумывай точные характеристики, цифры, "
     "урон, броню, пробитие, скорость, стоимость или другие данные.\n"
     "Если точное значение есть в предоставленном источнике — "
-    "его можно использовать.\n\n"
+    "его можно использовать.\n"
+    "Если данных нет — честно скажи, что точного значения "
+    "в доступных источниках нет.\n\n"
 
     "СТИЛЬ:\n"
     "Отвечай коротко и по существу.\n"
@@ -138,19 +157,7 @@ ADMIN_ID = 948950706
 
 
 # =========================================================
-# РАЗРЕШЁННЫЕ СТРАНИЦЫ
-#
-# ВАЖНО:
-#
-# БОТ МОЖЕТ ЗАПРАШИВАТЬ ТОЛЬКО ЭТИ URL.
-#
-# Он НЕ:
-# - ищет в Google;
-# - ищет в Яндексе;
-# - использует другие сайты;
-# - переходит по ссылкам внутри страниц;
-# - следует редиректам;
-# - открывает URL, которых нет в этом списке.
+# ОБЫЧНЫЕ РАЗРЕШЁННЫЕ СТРАНИЦЫ
 # =========================================================
 
 WEB_PAGES = [
@@ -158,7 +165,7 @@ WEB_PAGES = [
     # 1. Официальное обновление 26.9
     "https://tanksblitz.ru/ru/news/updates/update-26-9/",
 
-    # 2. Как пройти обучение
+    # 2. Обучение
     "https://wiki.lesta.ru/ru/Tanks_Blitz:%D0%9A%D0%B0%D0%BA_%D0%BF%D1%80%D0%BE%D0%B9%D1%82%D0%B8_%D0%BE%D0%B1%D1%83%D1%87%D0%B5%D0%BD%D0%B8%D0%B5_%D0%B2_%D0%B8%D0%B3%D1%80%D0%B5",
 
     # 3. Стрельба и прицеливание
@@ -173,10 +180,25 @@ WEB_PAGES = [
 
 
 # =========================================================
-# WEB CACHE
+# WOTINSPECTOR
 #
-# Страница повторно скачивается не чаще одного раза
-# в 10 минут.
+# ВАЖНО:
+#
+# Главная страница используется для поиска ссылок
+# на конкретные танки.
+#
+# Но изображения и 3D НЕ скачиваются.
+# =========================================================
+
+WOTINSPECTOR_HOST = "armor.wotinspector.com"
+
+WOTINSPECTOR_ROOT = (
+    "https://armor.wotinspector.com/ru/tanksblitz/"
+)
+
+
+# =========================================================
+# WEB CACHE
 # =========================================================
 
 WEB_CACHE_TTL = 10 * 60
@@ -189,14 +211,9 @@ web_cache_lock = threading.Lock()
 # =========================================================
 # HTML PARSER
 #
-# ВАЖНО:
-# Мы читаем только саму страницу.
+# Из HTML берём только текст.
 #
-# Никаких:
-# - <a href=...>
-# - переходов;
-# - дополнительных URL;
-# - внешних страниц.
+# Изображения, 3D, JS и iframe не используются.
 # =========================================================
 
 class PageTextParser(HTMLParser):
@@ -206,6 +223,8 @@ class PageTextParser(HTMLParser):
         super().__init__()
 
         self.parts = []
+
+        self.links = []
 
         self.skip_depth = 0
 
@@ -233,6 +252,33 @@ class PageTextParser(HTMLParser):
 
             self.skip_depth += 1
 
+        # -----------------------------------------
+        # Сохраняем только ссылки.
+        #
+        # Это НЕ означает переход.
+        #
+        # Они используются только для поиска
+        # страницы конкретного танка.
+        # -----------------------------------------
+
+        if tag == "a" and self.skip_depth == 0:
+
+            href = None
+
+            for key, value in attrs:
+
+                if key.lower() == "href":
+
+                    href = value
+
+                    break
+
+            if href:
+
+                self.links.append(
+                    href
+                )
+
     def handle_endtag(
         self,
         tag
@@ -240,7 +286,10 @@ class PageTextParser(HTMLParser):
 
         tag = tag.lower()
 
-        if tag in self.skip_tags and self.skip_depth > 0:
+        if (
+            tag in self.skip_tags
+            and self.skip_depth > 0
+        ):
 
             self.skip_depth -= 1
 
@@ -257,7 +306,9 @@ class PageTextParser(HTMLParser):
 
         if text:
 
-            self.parts.append(text)
+            self.parts.append(
+                text
+            )
 
     def get_text(self):
 
@@ -292,7 +343,7 @@ def clean_page_text(text):
 
 
 # =========================================================
-# URL WHITELIST
+# URL CHECK
 # =========================================================
 
 def is_allowed_url(url):
@@ -301,34 +352,95 @@ def is_allowed_url(url):
 
         return False
 
-    # Только полное совпадение.
-    #
-    # Например:
-    #
-    # разрешено:
-    # https://example.com/page
-    #
-    # запрещено:
-    # https://example.com/page/other
-    #
-    # запрещено:
-    # https://example.com/
-    #
-    # запрещено:
-    # https://google.com
-    #
-    return url in WEB_PAGES
+    # Обычные страницы
+    if url in WEB_PAGES:
+
+        return True
+
+    # WOTInspector
+    try:
+
+        parsed = urlparse(url)
+
+        if parsed.scheme != "https":
+
+            return False
+
+        if parsed.netloc.lower() != WOTINSPECTOR_HOST:
+
+            return False
+
+        path = parsed.path.rstrip("/")
+
+        root_path = "/ru/tanksblitz"
+
+        # Разрешаем:
+        #
+        # /ru/tanksblitz/
+        #
+        # /ru/tanksblitz/конкретный-танк
+        #
+        if (
+            path == root_path
+            or path.startswith(
+                root_path + "/"
+            )
+        ):
+
+            return True
+
+    except Exception:
+
+        return False
+
+    return False
 
 
 # =========================================================
-# ЗАГРУЗКА ОДНОЙ РАЗРЕШЁННОЙ СТРАНИЦЫ
+# ПРОВЕРКА WOTINSPECTOR URL
+# =========================================================
+
+def is_allowed_wotinspector_url(url):
+
+    if not url:
+
+        return False
+
+    try:
+
+        parsed = urlparse(url)
+
+        if parsed.scheme != "https":
+
+            return False
+
+        if parsed.netloc.lower() != WOTINSPECTOR_HOST:
+
+            return False
+
+        path = parsed.path.rstrip("/")
+
+        if not (
+            path == "/ru/tanksblitz"
+            or path.startswith(
+                "/ru/tanksblitz/"
+            )
+        ):
+
+            return False
+
+        return True
+
+    except Exception:
+
+        return False
+
+
+# =========================================================
+# ЗАГРУЗКА РАЗРЕШЁННОЙ СТРАНИЦЫ
 # =========================================================
 
 def fetch_allowed_page(url):
-
-    # ---------------------------------------------
-    # ЖЁСТКАЯ ПРОВЕРКА
-    # ---------------------------------------------
 
     if not is_allowed_url(url):
 
@@ -372,10 +484,6 @@ def fetch_allowed_page(url):
 
                 return cached_text
 
-    # ---------------------------------------------
-    # ОТКРЫВАЕМ ТОЛЬКО ЭТОТ URL
-    # ---------------------------------------------
-
     print(
         "🌐 WEB: открываем:",
         url,
@@ -387,12 +495,7 @@ def fetch_allowed_page(url):
         response = requests.get(
             url,
             timeout=20,
-
-            # КРИТИЧНО:
-            # запрещаем автоматический переход
-            # на другой URL.
             allow_redirects=False,
-
             headers={
                 "User-Agent": (
                     "Mozilla/5.0 "
@@ -402,7 +505,7 @@ def fetch_allowed_page(url):
         )
 
         # -----------------------------------------
-        # НЕ РАЗРЕШАЕМ REDIRECT
+        # REDIRECT ЗАПРЕЩЁН
         # -----------------------------------------
 
         if response.status_code in (
@@ -414,9 +517,7 @@ def fetch_allowed_page(url):
         ):
 
             print(
-                "🚫 WEB: сервер попросил "
-                "перейти на другой URL. "
-                "Переход запрещён.",
+                "🚫 WEB: redirect запрещён.",
                 flush=True
             )
 
@@ -433,24 +534,17 @@ def fetch_allowed_page(url):
             return ""
 
         # -----------------------------------------
-        # НЕ ДОВЕРЯЕМ URL ИЗ ОТВЕТА
+        # URL НЕ ДОЛЖЕН ИЗМЕНИТЬСЯ
         # -----------------------------------------
 
-        final_url = response.url
-
-        if final_url != url:
+        if response.url != url:
 
             print(
-                "🚫 WEB: URL изменился. "
-                "Страница отклонена.",
+                "🚫 WEB: URL изменился.",
                 flush=True
             )
 
             return ""
-
-        # -----------------------------------------
-        # ЧИТАЕМ ТОЛЬКО HTML
-        # -----------------------------------------
 
         content_type = response.headers.get(
             "Content-Type",
@@ -463,15 +557,11 @@ def fetch_allowed_page(url):
         ):
 
             print(
-                "⚠️ WEB: это не HTML.",
+                "⚠️ WEB: не HTML.",
                 flush=True
             )
 
             return ""
-
-        # -----------------------------------------
-        # HTML
-        # -----------------------------------------
 
         parser = PageTextParser()
 
@@ -488,16 +578,11 @@ def fetch_allowed_page(url):
         if len(text) < 100:
 
             print(
-                "⚠️ WEB: на странице "
-                "слишком мало текста.",
+                "⚠️ WEB: мало текста.",
                 flush=True
             )
 
             return ""
-
-        # -----------------------------------------
-        # CACHE
-        # -----------------------------------------
 
         with web_cache_lock:
 
@@ -526,44 +611,243 @@ def fetch_allowed_page(url):
 
 
 # =========================================================
-# КЛЮЧЕВЫЕ СЛОВА ДЛЯ WEB
+# ПОИСК СТРАНИЦЫ ТАНКА В WOTINSPECTOR
 #
-# WEB НЕ ОТКРЫВАЕТСЯ НА КАЖДЫЙ ВОПРОС.
+# ВАЖНО:
+#
+# Мы можем посмотреть HTML главной страницы,
+# найти ссылку на нужный танк,
+# но НЕ открываем никакие другие домены.
 # =========================================================
 
-WEB_TRIGGERS = [
+def find_wotinspector_tank_url(
+    tank_name
+):
 
-    "обновлен",
-    "обнова",
-    "патч",
-    "версия",
-    "ивент",
-    "событи",
-    "новост",
-    "актуаль",
-    "сейчас",
-    "текущ",
-    "обучен",
-    "прицел",
-    "стрельб",
-    "оборудован",
-    "термин",
-    "термины",
-    "пробит",
+    if not tank_name:
+
+        return None
+
+    tank_name = tank_name.strip()
+
+    if len(tank_name) < 2:
+
+        return None
+
+    print(
+        f"🔎 WOTInspector: ищем танк: {tank_name}",
+        flush=True
+    )
+
+    try:
+
+        response = requests.get(
+            WOTINSPECTOR_ROOT,
+            timeout=20,
+            allow_redirects=False,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 "
+                    "(compatible; VK-Tanks-Blitz-Bot/1.0)"
+                )
+            }
+        )
+
+        if response.status_code != 200:
+
+            print(
+                "⚠️ WOTInspector HTTP:",
+                response.status_code,
+                flush=True
+            )
+
+            return None
+
+        if response.url != WOTINSPECTOR_ROOT:
+
+            print(
+                "🚫 WOTInspector: redirect запрещён.",
+                flush=True
+            )
+
+            return None
+
+        parser = PageTextParser()
+
+        parser.feed(
+            response.text
+        )
+
+        links = parser.links
+
+        # -----------------------------------------
+        # Нормализуем название
+        # -----------------------------------------
+
+        normalized_name = re.sub(
+            r"[^а-яёa-z0-9]+",
+            "",
+            tank_name.lower()
+        )
+
+        candidates = []
+
+        for href in links:
+
+            absolute_url = urljoin(
+                WOTINSPECTOR_ROOT,
+                href
+            )
+
+            # -------------------------------------
+            # ЖЁСТКО:
+            # только WOTInspector
+            # -------------------------------------
+
+            if not is_allowed_wotinspector_url(
+                absolute_url
+            ):
+
+                continue
+
+            parsed = urlparse(
+                absolute_url
+            )
+
+            path = parsed.path.lower()
+
+            normalized_path = re.sub(
+                r"[^а-яёa-z0-9]+",
+                "",
+                path
+            )
+
+            # -------------------------------------
+            # Если название танка встречается
+            # в URL — хороший кандидат.
+            # -------------------------------------
+
+            if normalized_name in normalized_path:
+
+                candidates.append(
+                    absolute_url
+                )
+
+        if candidates:
+
+            # Убираем дубли
+            candidates = list(
+                dict.fromkeys(
+                    candidates
+                )
+            )
+
+            print(
+                "✅ WOTInspector: найден URL:",
+                candidates[0],
+                flush=True
+            )
+
+            return candidates[0]
+
+        print(
+            "⚠️ WOTInspector: танк по URL не найден.",
+            flush=True
+        )
+
+        return None
+
+    except Exception as e:
+
+        print(
+            "❌ WOTInspector search:",
+            e,
+            flush=True
+        )
+
+        return None
+
+
+# =========================================================
+# ИЗВЛЕЧЕНИЕ НАЗВАНИЯ ТАНКА
+#
+# Нужны только очевидные запросы о характеристиках.
+# =========================================================
+
+def extract_tank_name(query):
+
+    if not query:
+
+        return ""
+
+    text = query.strip()
+
+    patterns = [
+
+        r"(?:характеристик\w*|ттх)\s+(.+?)(?:\?|$)",
+
+        r"(?:стат\w*|брон\w*|урон\w*|дпм|пробит\w*|скорост\w*)"
+        r"\s+(?:у|на)\s+(.+?)(?:\?|$)",
+
+        r"(?:сколько|какой|какая|какое|какие)\s+"
+        r".*?\s+(?:у|на)\s+(.+?)(?:\?|$)",
+
+        r"(?:танк)\s+(.+?)(?:\?|$)",
+    ]
+
+    for pattern in patterns:
+
+        match = re.search(
+            pattern,
+            text,
+            flags=re.IGNORECASE
+        )
+
+        if match:
+
+            result = match.group(
+                1
+            ).strip()
+
+            if len(result) >= 2:
+
+                return result
+
+    return ""
+
+
+# =========================================================
+# WOTINSPECTOR ТРИГГЕР
+# =========================================================
+
+WOTINSPECTOR_TRIGGERS = [
+
+    "характеристик",
+    "ттх",
     "брон",
     "урон",
     "дпм",
-    "маскиров",
-    "обзор",
-    "дальность",
+    "пробит",
+    "скорост",
+    "мощност",
+    "масса",
+    "оруд",
+    "башн",
+    "корпус",
+    "боезапас",
+    "перезаряд",
+    "разброс",
+    "сведение",
+    "хп",
+    "прочност",
 ]
 
 
 # =========================================================
-# НУЖЕН ЛИ WEB
+# НУЖЕН ЛИ WOTINSPECTOR
 # =========================================================
 
-def should_use_web(text):
+def should_use_wotinspector(text):
 
     if not text:
 
@@ -571,7 +855,7 @@ def should_use_web(text):
 
     lower = text.lower()
 
-    for trigger in WEB_TRIGGERS:
+    for trigger in WOTINSPECTOR_TRIGGERS:
 
         if trigger in lower:
 
@@ -581,7 +865,7 @@ def should_use_web(text):
 
 
 # =========================================================
-# РАЗБИВАЕМ СТРАНИЦУ НА ФРАГМЕНТЫ
+# ФРАГМЕНТЫ
 # =========================================================
 
 def split_into_chunks(
@@ -605,11 +889,12 @@ def split_into_chunks(
 
     for paragraph in paragraphs:
 
-        if len(
-            current
-        ) + len(
-            paragraph
-        ) + 1 <= chunk_size:
+        if (
+            len(current)
+            + len(paragraph)
+            + 1
+            <= chunk_size
+        ):
 
             if current:
 
@@ -637,7 +922,7 @@ def split_into_chunks(
 
 
 # =========================================================
-# РЕЛЕВАНТНОСТЬ
+# SCORE
 # =========================================================
 
 def score_chunk(
@@ -663,13 +948,13 @@ def score_chunk(
 
 
 # =========================================================
-# ВЫБИРАЕМ ТОЛЬКО НУЖНЫЕ ФРАГМЕНТЫ
+# RELEVANT CHUNKS
 # =========================================================
 
 def find_relevant_chunks(
     page_text,
     query,
-    max_chars=5500
+    max_chars=4000
 ):
 
     chunks = split_into_chunks(
@@ -679,10 +964,6 @@ def find_relevant_chunks(
     if not chunks:
 
         return ""
-
-    # ---------------------------------------------
-    # Слова запроса
-    # ---------------------------------------------
 
     query_words = re.findall(
         r"[а-яА-ЯёЁa-zA-Z0-9]{3,}",
@@ -706,7 +987,6 @@ def find_relevant_chunks(
             )
         )
 
-    # Сначала самые подходящие
     scored.sort(
         key=lambda item: item[0],
         reverse=True
@@ -718,8 +998,6 @@ def find_relevant_chunks(
 
     for score, index, chunk in scored:
 
-        # Если вообще нет совпадений,
-        # берём только первые небольшие куски.
         if score == 0 and selected:
 
             continue
@@ -745,7 +1023,6 @@ def find_relevant_chunks(
 
             break
 
-    # Возвращаем в порядке страницы
     selected.sort(
         key=lambda item: item[0]
     )
@@ -757,87 +1034,195 @@ def find_relevant_chunks(
 
 
 # =========================================================
-# WEB CONTEXT
-#
-# ВАЖНО:
-#
-# БОТ МОЖЕТ ОТКРЫТЬ ТОЛЬКО WEB_PAGES.
-#
-# Он НЕ ищет новые URL.
+# WOTINSPECTOR CONTEXT
 # =========================================================
 
-def get_web_context(query):
+def get_wotinspector_context(query):
 
-    if not should_use_web(query):
+    if not should_use_wotinspector(query):
 
         return ""
 
-    print(
-        "🌐 WEB: вопрос похож на актуальный.",
-        flush=True
+    tank_name = extract_tank_name(
+        query
     )
 
-    all_context = []
-
-    # -----------------------------------------------------
-    # Проверяем ТОЛЬКО наши страницы.
-    #
-    # Не ищем новые страницы.
-    # -----------------------------------------------------
-
-    for url in WEB_PAGES:
-
-        page_text = fetch_allowed_page(
-            url
-        )
-
-        if not page_text:
-
-            continue
-
-        relevant = find_relevant_chunks(
-            page_text,
-            query,
-            max_chars=4000
-        )
-
-        if not relevant:
-
-            continue
-
-        all_context.append(
-            "РАЗРЕШЁННАЯ СТРАНИЦА:\n"
-            f"{url}\n\n"
-            "ФРАГМЕНТ:\n"
-            f"{relevant}"
-        )
-
-    if not all_context:
+    if not tank_name:
 
         print(
-            "🌐 WEB: подходящей информации "
-            "не найдено.",
+            "🔎 WOTInspector: название танка "
+            "не удалось определить.",
             flush=True
         )
 
         return ""
 
+    tank_url = find_wotinspector_tank_url(
+        tank_name
+    )
+
+    if not tank_url:
+
+        return ""
+
+    page_text = fetch_allowed_page(
+        tank_url
+    )
+
+    if not page_text:
+
+        return ""
+
+    relevant = find_relevant_chunks(
+        page_text,
+        query,
+        max_chars=5000
+    )
+
+    if not relevant:
+
+        return ""
+
+    context = (
+        "РАЗРЕШЁННАЯ СТРАНИЦА WOTINSPECTOR:\n"
+        f"{tank_url}\n\n"
+        "ТЕКСТОВЫЕ ДАННЫЕ:\n"
+        f"{relevant}"
+    )
+
+    print(
+        f"🔎 WOTInspector: передаём "
+        f"{len(context)} символов.",
+        flush=True
+    )
+
+    return context
+
+
+# =========================================================
+# ОБЫЧНЫЙ WEB CONTEXT
+# =========================================================
+
+WEB_TRIGGERS = [
+
+    "обновлен",
+    "обнова",
+    "патч",
+    "версия",
+    "ивент",
+    "событи",
+    "новост",
+    "актуаль",
+    "сейчас",
+    "текущ",
+    "обучен",
+    "прицел",
+    "стрельб",
+    "оборудован",
+    "термин",
+    "термины",
+    "маскиров",
+    "обзор",
+    "дальность",
+]
+
+
+def should_use_web(text):
+
+    if not text:
+
+        return False
+
+    lower = text.lower()
+
+    for trigger in WEB_TRIGGERS:
+
+        if trigger in lower:
+
+            return True
+
+    return False
+
+
+# =========================================================
+# ОБЫЧНЫЙ WEB CONTEXT
+# =========================================================
+
+def get_web_context(query):
+
+    contexts = []
+
     # -----------------------------------------------------
-    # Общий лимит контекста.
-    #
-    # Чтобы не отправлять модели огромные страницы.
+    # WOTINSPECTOR
     # -----------------------------------------------------
 
-    context = "\n\n====================\n\n".join(
-        all_context
+    wot_context = get_wotinspector_context(
+        query
     )
+
+    if wot_context:
+
+        contexts.append(
+            wot_context
+        )
+
+    # -----------------------------------------------------
+    # Обычные разрешённые страницы
+    # -----------------------------------------------------
+
+    if should_use_web(query):
+
+        print(
+            "🌐 WEB: проверяем разрешённые страницы.",
+            flush=True
+        )
+
+        for url in WEB_PAGES:
+
+            page_text = fetch_allowed_page(
+                url
+            )
+
+            if not page_text:
+
+                continue
+
+            relevant = find_relevant_chunks(
+                page_text,
+                query,
+                max_chars=3000
+            )
+
+            if not relevant:
+
+                continue
+
+            contexts.append(
+                "РАЗРЕШЁННАЯ СТРАНИЦА:\n"
+                f"{url}\n\n"
+                "ФРАГМЕНТ:\n"
+                f"{relevant}"
+            )
+
+    if not contexts:
+
+        return ""
+
+    context = (
+        "\n\n====================\n\n"
+        .join(contexts)
+    )
+
+    # -----------------------------------------------------
+    # Общий лимит
+    # -----------------------------------------------------
 
     context = context[
         :10000
     ]
 
     print(
-        f"🌐 WEB: передаём модели "
+        f"🌐 WEB: всего передаём "
         f"{len(context)} символов.",
         flush=True
     )
@@ -893,7 +1278,7 @@ def get_user_name(user_id):
 
 
 # =========================================================
-# RATE LIMIT ERROR
+# RATE LIMIT
 # =========================================================
 
 def is_rate_limit_error(error):
@@ -910,7 +1295,7 @@ def is_rate_limit_error(error):
 
 
 # =========================================================
-# TEXT MODEL
+# MODEL
 # =========================================================
 
 def ask_model(
@@ -920,10 +1305,6 @@ def ask_model(
     max_tokens,
     web_context=""
 ):
-
-    # -----------------------------------------------------
-    # USER PROMPT
-    # -----------------------------------------------------
 
     if user_name:
 
@@ -936,28 +1317,29 @@ def ask_model(
 
         user_content = user_message
 
-    # -----------------------------------------------------
-    # WEB CONTEXT
-    # -----------------------------------------------------
-
     if web_context:
 
         user_content = (
             "НИЖЕ ПЕРЕДАНА ИНФОРМАЦИЯ "
-            "С РАЗРЕШЁННЫХ СТРАНИЦ.\n"
-            "Используй только её для актуальных "
-            "фактов, если она относится к вопросу.\n"
-            "Не переходи никуда по ссылкам из этого текста.\n\n"
+            "С РАЗРЕШЁННЫХ СТРАНИЦ.\n\n"
+
+            "Используй её для точных данных, "
+            "если она относится к вопросу.\n\n"
+
+            "Особенно важно:\n"
+            "если данные относятся к конкретному "
+            "танку, используй информацию WOTInspector.\n\n"
+
+            "Не переходи никуда по ссылкам.\n"
+            "Не используй сторонние сайты.\n\n"
+
             "========== ИНФОРМАЦИЯ ==========\n"
             f"{web_context}\n"
             "========== КОНЕЦ ИНФОРМАЦИИ ==========\n\n"
+
             f"ВОПРОС ПОЛЬЗОВАТЕЛЯ:\n"
             f"{user_content}"
         )
-
-    # -----------------------------------------------------
-    # REQUEST
-    # -----------------------------------------------------
 
     completion = client.chat.completions.create(
 
@@ -978,7 +1360,6 @@ def ask_model(
 
         temperature=0.7,
 
-        # Экономнее для GPT-OSS
         reasoning_effort="low"
     )
 
@@ -1011,7 +1392,7 @@ def ask_groq(
     global main_model_blocked_until
 
     # -----------------------------------------------------
-    # WEB
+    # WEB CONTEXT
     # -----------------------------------------------------
 
     web_context = get_web_context(
@@ -1055,7 +1436,7 @@ def ask_groq(
                 )
 
                 print(
-                    "🔄 Переключаемся на 20B.",
+                    "🔄 Переходим на 20B.",
                     flush=True
                 )
 
@@ -1508,7 +1889,7 @@ def handle_message(
 
 
 # =========================================================
-# VOICE MESSAGE
+# VOICE
 # =========================================================
 
 def handle_voice_message(
@@ -1519,7 +1900,6 @@ def handle_voice_message(
 
     try:
 
-        # В беседе голосовые пока игнорируем.
         if is_chat(
             peer_id
         ):
@@ -1586,10 +1966,6 @@ def handle_image_message(
 ):
 
     try:
-
-        # -------------------------------------------------
-        # В БЕСЕДЕ ФОТО ТОЛЬКО С ?
-        # -------------------------------------------------
 
         if is_chat(
             peer_id
@@ -1844,7 +2220,7 @@ def callback():
                 )
 
                 # -----------------------------------------
-                # AUDIO MESSAGE
+                # AUDIO
                 # -----------------------------------------
 
                 if (
@@ -2050,12 +2426,35 @@ if __name__ == "__main__":
     )
 
     print(
+        "🔎 WOTInspector:",
+        WOTINSPECTOR_ROOT,
+        flush=True
+    )
+
+    print(
+        "🛡️ WOTInspector: только текстовые ТТХ",
+        flush=True
+    )
+
+    print(
+        "🚫 WOTInspector: 3D/изображения "
+        "не загружаются",
+        flush=True
+    )
+
+    print(
+        "======================================",
+        flush=True
+    )
+
+    print(
         "🔒 WEB: только разрешённые URL",
         flush=True
     )
 
     print(
-        "🚫 WEB: переходы по ссылкам запрещены",
+        "🚫 WEB: переходы по сторонним ссылкам "
+        "запрещены",
         flush=True
     )
 
