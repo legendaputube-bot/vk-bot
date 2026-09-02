@@ -46,6 +46,7 @@ VK_API_VERSION = "5.199"
 
 MAIN_MODEL = "openai/gpt-oss-120b"
 BACKUP_MODEL = "openai/gpt-oss-20b"
+VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 MAIN_MODEL_RETRY_TIME = 60 * 60  # 1 час
 main_model_blocked_until = 0
 
@@ -127,6 +128,27 @@ def transcribe_voice(audio_url: str) -> str:
     return transcription.text
 
 
+def ask_about_image(image_url: str, user_name: str, caption: str = "") -> str:
+    prompt_text = caption.strip() if caption.strip() else "Что на этом скриншоте? Прокомментируй в своём стиле."
+    message_with_name = f"[Имя: {user_name}] {prompt_text}" if user_name else prompt_text
+
+    completion = client.chat.completions.create(
+        model=VISION_MODEL,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": message_with_name},
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                ],
+            },
+        ],
+        max_tokens=300,
+    )
+    return completion.choices[0].message.content
+
+
 def send_vk_message(peer_id: int, text: str):
     params = {
         "access_token": VK_TOKEN,
@@ -164,6 +186,16 @@ def handle_voice_message(peer_id: int, from_id: int, voice_url: str):
     send_vk_message(peer_id, reply)
 
 
+def handle_image_message(peer_id: int, from_id: int, image_url: str, caption: str):
+    try:
+        user_name = get_user_name(from_id)
+        reply = ask_about_image(image_url, user_name, caption)
+    except Exception as e:
+        reply = "Не смог рассмотреть скриншот 😅 Попробуй ещё раз или опиши словами."
+        print("Ошибка при анализе изображения:", e, flush=True)
+    send_vk_message(peer_id, reply)
+
+
 @app.route("/callback", methods=["POST"])
 def callback():
     data = request.get_json(force=True)
@@ -184,15 +216,27 @@ def callback():
         attachments = message.get("attachments", [])
 
         voice_url = None
+        image_url = None
+
         for att in attachments:
             if att.get("type") == "audio_message":
                 audio_message = att.get("audio_message", {})
                 voice_url = audio_message.get("link_ogg") or audio_message.get("link_mp3")
+            elif att.get("type") == "photo":
+                photo = att.get("photo", {})
+                sizes = photo.get("sizes", [])
+                if sizes:
+                    image_url = sizes[-1]["url"]
 
         if voice_url:
             threading.Thread(
                 target=handle_voice_message,
                 args=(peer_id, from_id, voice_url)
+            ).start()
+        elif image_url:
+            threading.Thread(
+                target=handle_image_message,
+                args=(peer_id, from_id, image_url, text)
             ).start()
         elif text.strip():
             threading.Thread(
