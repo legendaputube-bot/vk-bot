@@ -21,31 +21,30 @@ VK_GROUP_SECRET = os.environ.get("VK_GROUP_SECRET", "")
 
 # =========================================================
 # ОСНОВНОЙ SYSTEM PROMPT
-# Используется ТОЛЬКО в ЛС
+# ИСПОЛЬЗУЕТСЯ ТОЛЬКО В ЛС
 # =========================================================
 
 SYSTEM_PROMPT = (
-    "Ты — дерзкий, языкастый бот сообщества ВКонтакте, посвящённого ИСКЛЮЧИТЕЛЬНО игре "
-    "Tanks Blitz PVP битвы (разработчик EAST-GAMES LLC / Lesta Games) — мобильному танковому "
-    "PVP-шутеру. Это твоё единственное разрешённое направление разговора. "
+    "Ты — дерзкий, языкастый бот сообщества ВКонтакте, посвящённого "
+    "ИСКЛЮЧИТЕЛЬНО игре Tanks Blitz PVP битвы (разработчик EAST-GAMES LLC / Lesta Games) — "
+    "мобильному танковому PVP-шутеру. Это твоё единственное разрешённое направление разговора. "
     "Если вопрос не связан с этой игрой — дерзко и с юмором отказывайся отвечать по существу, "
     "напоминай, что тут говорят только про танки.\n\n"
 
     "ОБРАЩЕНИЕ ПО ИМЕНИ: тебе в начале сообщения передаётся имя пользователя в формате "
-    "'[Имя: ...]'. Обращайся к человеку по этому имени, естественно вписывая его в дерзкий стиль. "
+    "'[Имя: ...]'. Обращайся к человеку по этому имени естественно. "
     "Саму пометку '[Имя: ...]' в ответе не показывай.\n\n"
 
     "ЗАПРЕТ НА ВЫДУМЫВАНИЕ ТОЧНЫХ ЦИФР: не придумывай точные характеристики техники, "
-    "калибры, урон, броню, названия валюты и другие конкретные цифры — ты их не знаешь. "
+    "калибры, урон, броню, названия валюты и другие конкретные цифры. "
     "Если спрашивают про конкретные характеристики техники или что качать — отвечай в общих "
     "чертах и советуй посмотреть актуальные гайды и обзоры техники на YouTube.\n\n"
 
-    "ФОРМАТ ОТВЕТА: отвечай КОРОТКО, максимум 2-3 предложения или максимум 3 пункта списком. "
-    "Никаких длинных портянок текста.\n\n"
+    "ФОРМАТ ОТВЕТА: отвечай КОРОТКО, максимум 2-3 предложения "
+    "или максимум 3 пункта списком. Никаких длинных портянок текста.\n\n"
 
     "Используй неформальный тон, лёгкую иронию и подколки, но без грубости и оскорблений. "
-    "Не хами по-настоящему и не переходи на личности — дерзость должна быть смешной, "
-    "а не обидной."
+    "Не хами по-настоящему и не переходи на личности."
 )
 
 
@@ -60,10 +59,15 @@ VK_API_URL = "https://api.vk.com/method/messages.send"
 VK_USERS_GET_URL = "https://api.vk.com/method/users.get"
 VK_API_VERSION = "5.199"
 
+# Обычный ИИ
 MAIN_MODEL = "openai/gpt-oss-120b"
 BACKUP_MODEL = "openai/gpt-oss-20b"
 
-VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+# Модерация
+MODERATION_MODEL = "openai/gpt-oss-20b"
+
+# Vision
+VISION_MODEL = "qwen/qwen3.6-27b"
 
 MAIN_MODEL_RETRY_TIME = 60 * 60
 main_model_blocked_until = 0
@@ -147,26 +151,37 @@ MODERATION_RULES = """
 
 RULES_TEXT = (
     "📋 ПРАВИЛА ЧАТА\n\n"
+
     "3.3. Реклама — запрещена реклама и приглашения "
     "в сторонние чаты, каналы и сообщества без согласования.\n\n"
+
     "4.1. Игровые аккаунты — запрещены покупка, продажа, "
     "обмен, передача и дарение аккаунтов, а также обсуждение "
     "таких действий в общем чате.\n\n"
+
     "4.2. Розыгрыши и конкурсы — только с предварительным "
     "согласованием главного администратора.\n\n"
+
     "4.3. Обсуждение розыгрышей — вопросы по проведению "
     "розыгрышей обсуждаются с администрацией в ЛС.\n\n"
+
     "5.1. Запрещено выдавать себя за администрацию, "
     "модератора или представителя сообщества.\n\n"
+
     "5.2. Запрещено публиковать чужие личные данные, "
     "переписки и другую личную информацию без согласия.\n\n"
+
     "6.1–6.4. Администрация поддерживает порядок, "
     "может удалять сообщения, выдавать предупреждения, "
     "муты и блокировки. Правила могут изменяться.\n\n"
+
     "7.1. Жалобы — обращаться к администрации.\n\n"
+
     "7.2. Обжалование наказания — в ЛС главному администратору.\n\n"
+
     "7.3. Запрещены публичные споры с администрацией "
     "и выяснение отношений в общем чате.\n\n"
+
     "👤 Главный администратор: [id948950706|администратор]"
 )
 
@@ -179,9 +194,7 @@ def load_moderation_memory():
 
     try:
 
-        if not os.path.exists(
-            MODERATION_MEMORY_FILE
-        ):
+        if not os.path.exists(MODERATION_MEMORY_FILE):
             return {}
 
         with open(
@@ -208,8 +221,6 @@ def load_moderation_memory():
 
 moderation_memory = load_moderation_memory()
 
-# RLock нужен, чтобы сохранение памяти
-# не блокировало само себя
 memory_lock = threading.RLock()
 
 
@@ -245,16 +256,14 @@ def get_user_moderation(user_id):
 
     user_id = str(user_id)
 
-    with memory_lock:
+    if user_id not in moderation_memory:
 
-        if user_id not in moderation_memory:
+        moderation_memory[user_id] = {
+            "warnings": 0,
+            "violations": []
+        }
 
-            moderation_memory[user_id] = {
-                "warnings": 0,
-                "violations": []
-            }
-
-        return moderation_memory[user_id]
+    return moderation_memory[user_id]
 
 
 def add_violation(
@@ -313,7 +322,7 @@ def is_chat(peer_id):
 
 
 # =========================================================
-# ПРОВЕРКА: СПРОСИЛИ ЛИ ПРО ПРАВИЛА
+# ПРОВЕРКА ЗАПРОСА ПРАВИЛ
 # =========================================================
 
 def is_rules_request(text):
@@ -339,7 +348,9 @@ def is_rules_request(text):
         "правила здесь",
         "что нельзя в чате",
         "что запрещено в чате",
-        "можно ли в чате",
+        "правила группы",
+        "правила беседы",
+        "правила беседы?",
     ]
 
     return any(
@@ -354,54 +365,70 @@ def is_rules_request(text):
 
 def moderate_message(text):
 
-    moderation_prompt = f"""
-Ты — строгая система модерации чата Tanks Blitz.
+    print(
+        "🛡️ МОДЕРАЦИЯ: проверяем сообщение:",
+        text[:300],
+        flush=True
+    )
 
-Твоя задача — определить, нарушает ли сообщение
-пользователя правила чата.
+    moderation_prompt = f"""
+Ты — система модерации чата Tanks Blitz.
+
+Твоя задача — определить, нарушает ли сообщение пользователя
+одно из правил чата.
 
 ВАЖНЫЕ ПРИНЦИПЫ:
 
-1. Анализируй смысл и контекст.
+1. Анализируй смысл сообщения.
 2. Не придумывай нарушение.
-3. Если нарушение не очевидно — violation=false.
-4. Обычный мат сам по себе НЕ является нарушением,
-   если он не связан с другим правилом.
-5. Шутки не являются нарушением сами по себе.
+3. Если нарушение неочевидно — violation=false.
+4. Обычный мат сам по себе НЕ является нарушением.
+5. Шутки сами по себе НЕ являются нарушением.
 6. Обсуждение правил НЕ является нарушением.
 7. Вопрос «какие правила?» НЕ является нарушением.
 8. Вопрос о том, разрешено ли что-то правилами,
    сам по себе НЕ является нарушением.
-9. Простое упоминание аккаунтов без предложения купить,
-   продать, обменять или передать их НЕ считать нарушением.
-10. Обсуждение розыгрыша как уже проведённого события
-    не считать 4.3, если человек не организует его.
+9. Простое упоминание игровых аккаунтов без предложения
+   купить, продать, обменять или передать их НЕ считать нарушением.
+10. Обсуждение уже проведённого розыгрыша НЕ считать 4.3,
+    если человек не пытается организовать его.
 11. Публичный спор с администрацией считать 7.3,
-    если действительно идёт конфликт или выяснение отношений.
-12. Рекламу и приглашения в сторонние ресурсы
-    считать 3.3 только при наличии рекламного/пригласительного смысла.
+    только если действительно идёт конфликт или выяснение отношений.
+12. Рекламу считать 3.3 только при наличии рекламного
+    или пригласительного смысла.
+13. Если сообщение можно нормально понять без нарушения —
+    violation=false.
+14. Не наказывай пользователя за обычный разговор.
 
 ПРАВИЛА:
 
 {MODERATION_RULES}
 
-СООБЩЕНИЕ:
+СООБЩЕНИЕ ПОЛЬЗОВАТЕЛЯ:
 
 {text}
 
-Верни ТОЛЬКО JSON:
+Верни ТОЛЬКО JSON следующего формата:
 
 {{
-  "violation": true или false,
-  "rule": "номер правила или null",
-  "reason": "краткая причина или null"
+  "violation": true,
+  "rule": "3.3",
+  "reason": "краткая причина"
+}}
+
+или:
+
+{{
+  "violation": false,
+  "rule": null,
+  "reason": null
 }}
 """
 
     try:
 
         completion = client.chat.completions.create(
-            model=BACKUP_MODEL,
+            model=MODERATION_MODEL,
             messages=[
                 {
                     "role": "system",
@@ -413,7 +440,10 @@ def moderate_message(text):
                 }
             ],
             max_tokens=MODERATION_MAX_TOKENS,
-            temperature=0
+            temperature=0,
+            response_format={
+                "type": "json_object"
+            }
         )
 
         result = (
@@ -422,7 +452,13 @@ def moderate_message(text):
             .strip()
         )
 
-        # Удаляем markdown
+        print(
+            "🛡️ Ответ модератора:",
+            result,
+            flush=True
+        )
+
+        # На случай markdown
         result = (
             result
             .replace("```json", "")
@@ -430,8 +466,7 @@ def moderate_message(text):
             .strip()
         )
 
-        # Если модель добавила текст вокруг JSON,
-        # пытаемся найти сам объект
+        # На случай текста вокруг JSON
         if not result.startswith("{"):
 
             start = result.find("{")
@@ -445,13 +480,20 @@ def moderate_message(text):
 
         data = json.loads(result)
 
+        violation = data.get(
+            "violation",
+            False
+        )
+
+        if isinstance(violation, str):
+
+            violation = (
+                violation.lower()
+                in ["true", "1", "yes"]
+            )
+
         return {
-            "violation": bool(
-                data.get(
-                    "violation",
-                    False
-                )
-            ),
+            "violation": bool(violation),
             "rule": data.get("rule"),
             "reason": data.get("reason")
         }
@@ -459,13 +501,12 @@ def moderate_message(text):
     except Exception as e:
 
         print(
-            "Ошибка модерации:",
+            "❌ Ошибка модерации:",
             e,
             flush=True
         )
 
-        # При ошибке лучше промолчать,
-        # чем выдать ложное наказание.
+        # При ошибке НИКОГО не наказываем.
         return {
             "violation": False,
             "rule": None,
@@ -527,7 +568,7 @@ def send_warning(
             f"Нарушение: {rule}\n"
             f"Причина: {reason}\n\n"
             f"⚠️ Предупреждение: 2/3\n"
-            f"Следующее нарушение — передаю информацию администрации."
+            f"Следующее нарушение — информация будет передана администрации."
         )
 
     elif warning_number == 3:
@@ -614,7 +655,17 @@ def process_moderation(
     # Главного админа не модерируем
     if from_id == ADMIN_ID:
 
+        print(
+            "🛡️ МОДЕРАЦИЯ: сообщение администратора пропущено.",
+            flush=True
+        )
+
         return False
+
+    print(
+        f"🛡️ МОДЕРАЦИЯ: пользователь {from_id}",
+        flush=True
+    )
 
     moderation = moderate_message(
         text.strip()
@@ -622,7 +673,11 @@ def process_moderation(
 
     if not moderation["violation"]:
 
-        # Никакого AI-ответа
+        print(
+            "🛡️ МОДЕРАЦИЯ: нарушения нет.",
+            flush=True
+        )
+
         return False
 
     rule = (
@@ -633,6 +688,12 @@ def process_moderation(
     reason = (
         moderation["reason"]
         or "Нарушение правил чата"
+    )
+
+    print(
+        f"🚨 МОДЕРАЦИЯ: НАЙДЕНО НАРУШЕНИЕ "
+        f"{rule} — {reason}",
+        flush=True
     )
 
     warning_number = add_violation(
@@ -706,8 +767,15 @@ def get_user_name(
 
         result = response.json()
 
+        if "response" not in result:
+            return ""
+
+        if not result["response"]:
+            return ""
+
         first_name = (
-            result["response"][0]["first_name"]
+            result["response"][0]
+            .get("first_name", "")
         )
 
         return first_name
@@ -730,7 +798,8 @@ def get_user_name(
 def ask_model(
     model,
     user_message,
-    user_name
+    user_name,
+    max_tokens=TEXT_MAX_TOKENS
 ):
 
     message_with_name = (
@@ -751,7 +820,7 @@ def ask_model(
                 "content": message_with_name
             },
         ],
-        max_tokens=TEXT_MAX_TOKENS,
+        max_tokens=max_tokens,
     )
 
     reply = (
@@ -774,7 +843,8 @@ def ask_model(
 
 def ask_groq(
     user_message: str,
-    user_name: str
+    user_name: str,
+    max_tokens=TEXT_MAX_TOKENS
 ) -> str:
 
     global main_model_blocked_until
@@ -794,7 +864,8 @@ def ask_groq(
             reply = ask_model(
                 MAIN_MODEL,
                 user_message,
-                user_name
+                user_name,
+                max_tokens
             )
 
             main_model_blocked_until = 0
@@ -833,7 +904,8 @@ def ask_groq(
     return ask_model(
         BACKUP_MODEL,
         user_message,
-        user_name
+        user_name,
+        max_tokens
     )
 
 
@@ -911,11 +983,9 @@ def download_image_as_base64(
         image_data
     ).decode("utf-8")
 
-    data_url = (
+    return (
         f"data:{content_type};base64,{encoded_image}"
     )
-
-    return data_url
 
 
 # =========================================================
@@ -1024,8 +1094,16 @@ def send_vk_message(
         if "error" in result:
 
             print(
-                "Ошибка VK API:",
+                "❌ Ошибка VK API:",
                 result["error"],
+                flush=True
+            )
+
+        else:
+
+            print(
+                "✅ Сообщение отправлено VK:",
+                peer_id,
                 flush=True
             )
 
@@ -1034,7 +1112,7 @@ def send_vk_message(
     except Exception as e:
 
         print(
-            "Ошибка отправки VK:",
+            "❌ Ошибка отправки VK:",
             e,
             flush=True
         )
@@ -1067,9 +1145,9 @@ def handle_admin_command(
 
     command = parts[0].lower()
 
-    # -----------------------------------------------------
+    # =====================================================
     # /warns ID
-    # -----------------------------------------------------
+    # =====================================================
 
     if command == "/warns":
 
@@ -1109,8 +1187,7 @@ def handle_admin_command(
         )
 
         lines = [
-            f"📋 История нарушений "
-            f"пользователя {target_id}",
+            f"📋 История нарушений пользователя {target_id}",
             "",
             f"⚠️ Всего предупреждений: {warnings}",
             ""
@@ -1126,13 +1203,11 @@ def handle_admin_command(
             )
 
             lines.append(
-                f"Причина: "
-                f"{violation.get('reason', '')}"
+                f"Причина: {violation.get('reason', '')}"
             )
 
             lines.append(
-                f"Сообщение: "
-                f"{violation.get('message', '')}"
+                f"Сообщение: {violation.get('message', '')}"
             )
 
             lines.append("")
@@ -1144,9 +1219,9 @@ def handle_admin_command(
 
         return True
 
-    # -----------------------------------------------------
+    # =====================================================
     # /clearwarns ID
-    # -----------------------------------------------------
+    # =====================================================
 
     if command == "/clearwarns":
 
@@ -1193,17 +1268,43 @@ def handle_message(
 
     try:
 
+        print(
+            "======================================",
+            flush=True
+        )
+
+        print(
+            f"📩 Новое сообщение: peer_id={peer_id}, "
+            f"from_id={from_id}",
+            flush=True
+        )
+
+        print(
+            f"💬 Текст: {text[:300]}",
+            flush=True
+        )
+
+        print(
+            f"🏠 Это беседа: {is_chat(peer_id)}",
+            flush=True
+        )
+
         user_name = get_user_name(
             from_id
         )
 
         # =================================================
-        # ЧАТ
+        # ЧАТ / БЕСЕДА
         # =================================================
 
         if is_chat(peer_id):
 
-            # Админские команды
+            print(
+                "🛡️ РЕЖИМ МОДЕРАЦИИ АКТИВЕН",
+                flush=True
+            )
+
+            # Команды администратора
             if handle_admin_command(
                 peer_id,
                 from_id,
@@ -1211,8 +1312,13 @@ def handle_message(
             ):
                 return
 
-            # Правила можно запросить в чате
+            # Запрос правил
             if is_rules_request(text):
+
+                print(
+                    "📋 Пользователь запросил правила.",
+                    flush=True
+                )
 
                 send_vk_message(
                     peer_id,
@@ -1221,8 +1327,7 @@ def handle_message(
 
                 return
 
-            # Главное:
-            # в чате НЕ запускаем обычный AI.
+            # НИКАКОГО обычного AI здесь нет.
             if from_id != ADMIN_ID:
 
                 process_moderation(
@@ -1238,6 +1343,11 @@ def handle_message(
         # ЛС
         # =================================================
 
+        print(
+            "💬 РЕЖИМ ЛС — запускаем обычный AI",
+            flush=True
+        )
+
         if handle_admin_command(
             peer_id,
             from_id,
@@ -1247,7 +1357,8 @@ def handle_message(
 
         reply = ask_groq(
             text,
-            user_name
+            user_name,
+            TEXT_MAX_TOKENS
         )
 
         send_vk_message(
@@ -1258,13 +1369,12 @@ def handle_message(
     except Exception as e:
 
         print(
-            "Ошибка handle_message:",
+            "❌ Ошибка handle_message:",
             e,
             flush=True
         )
 
-        # Ошибку отправляем только в ЛС.
-        # В чате бот не должен превращаться в обычный AI.
+        # В беседе ошибки НЕ отправляем.
         if not is_chat(peer_id):
 
             send_vk_message(
@@ -1286,6 +1396,12 @@ def handle_voice_message(
 
     try:
 
+        print(
+            f"🎤 Голосовое: peer_id={peer_id}, "
+            f"from_id={from_id}",
+            flush=True
+        )
+
         user_name = get_user_name(
             from_id
         )
@@ -1295,7 +1411,7 @@ def handle_voice_message(
         )
 
         print(
-            "Распознан голос:",
+            "🎤 Распознан голос:",
             text,
             flush=True
         )
@@ -1310,8 +1426,11 @@ def handle_voice_message(
 
         if is_chat(peer_id):
 
-            # В чате голосовое только модерируем.
-            # Обычного AI-ответа НЕТ.
+            print(
+                "🛡️ Голосовое в беседе -> только модерация",
+                flush=True
+            )
+
             if from_id != ADMIN_ID:
 
                 process_moderation(
@@ -1327,10 +1446,10 @@ def handle_voice_message(
         # ЛС
         # =================================================
 
-        reply = ask_model(
-            MAIN_MODEL,
+        reply = ask_groq(
             text,
-            user_name
+            user_name,
+            VOICE_MAX_TOKENS
         )
 
         send_vk_message(
@@ -1341,7 +1460,7 @@ def handle_voice_message(
     except Exception as e:
 
         print(
-            "Ошибка голосового:",
+            "❌ Ошибка голосового:",
             e,
             flush=True
         )
@@ -1368,6 +1487,12 @@ def handle_image_message(
 
     try:
 
+        print(
+            f"🖼️ Фото: peer_id={peer_id}, "
+            f"from_id={from_id}",
+            flush=True
+        )
+
         user_name = get_user_name(
             from_id
         )
@@ -1378,7 +1503,12 @@ def handle_image_message(
 
         if is_chat(peer_id):
 
-            # Если есть подпись — проверяем её.
+            print(
+                "🛡️ Фото в беседе -> обычный AI отключён",
+                flush=True
+            )
+
+            # Модерируем только подпись к фото.
             if (
                 from_id != ADMIN_ID
                 and caption
@@ -1392,9 +1522,6 @@ def handle_image_message(
                     caption
                 )
 
-            # ВАЖНО:
-            # В чате фото НЕ отправляем в Vision AI.
-            # Бот не отвечает на обычные фото.
             return
 
         # =================================================
@@ -1415,7 +1542,7 @@ def handle_image_message(
     except Exception as e:
 
         print(
-            "Ошибка изображения:",
+            "❌ Ошибка изображения:",
             e,
             flush=True
         )
@@ -1458,6 +1585,36 @@ def get_best_photo_url(photo):
 
 
 # =========================================================
+# ИЗВЛЕЧЕНИЕ MESSAGE ИЗ CALLBACK
+# =========================================================
+
+def extract_message(data):
+
+    obj = data.get(
+        "object",
+        {}
+    )
+
+    if not isinstance(obj, dict):
+
+        return {}
+
+    # Новый / вложенный вариант
+    if isinstance(
+        obj.get("message"),
+        dict
+    ):
+
+        return obj.get(
+            "message",
+            {}
+        )
+
+    # Старый вариант — object сам является сообщением
+    return obj
+
+
+# =========================================================
 # CALLBACK VK
 # =========================================================
 
@@ -1476,10 +1633,14 @@ def callback():
     except Exception as e:
 
         print(
-            "Ошибка получения JSON:",
+            "❌ Ошибка получения JSON:",
             e,
             flush=True
         )
+
+        return "bad request", 400
+
+    if not isinstance(data, dict):
 
         return "bad request", 400
 
@@ -1493,7 +1654,7 @@ def callback():
     ):
 
         print(
-            "Неверный secret VK",
+            "❌ Неверный secret VK",
             flush=True
         )
 
@@ -1509,6 +1670,11 @@ def callback():
 
     if event_type == "confirmation":
 
+        print(
+            "✅ VK confirmation",
+            flush=True
+        )
+
         return VK_CONFIRMATION_CODE
 
     # =====================================================
@@ -1517,13 +1683,18 @@ def callback():
 
     if event_type == "message_new":
 
-        message = data.get(
-            "object",
-            {}
-        ).get(
-            "message",
-            {}
+        message = extract_message(
+            data
         )
+
+        if not message:
+
+            print(
+                "⚠️ VK: не удалось получить message",
+                flush=True
+            )
+
+            return "ok"
 
         peer_id = message.get(
             "peer_id"
@@ -1545,7 +1716,20 @@ def callback():
 
         if not peer_id or not from_id:
 
+            print(
+                "⚠️ VK: нет peer_id или from_id",
+                flush=True
+            )
+
             return "ok"
+
+        print(
+            "📨 CALLBACK:",
+            f"peer_id={peer_id}",
+            f"from_id={from_id}",
+            f"chat={is_chat(peer_id)}",
+            flush=True
+        )
 
         voice_url = None
         image_url = None
@@ -1554,41 +1738,52 @@ def callback():
         # ВЛОЖЕНИЯ
         # =================================================
 
-        for att in attachments:
+        if isinstance(
+            attachments,
+            list
+        ):
 
-            att_type = att.get(
-                "type"
-            )
+            for att in attachments:
 
-            # Голос
-            if att_type == "audio_message":
+                if not isinstance(
+                    att,
+                    dict
+                ):
+                    continue
 
-                audio_message = att.get(
-                    "audio_message",
-                    {}
+                att_type = att.get(
+                    "type"
                 )
 
-                voice_url = (
-                    audio_message.get(
-                        "link_ogg"
+                # Голос
+                if att_type == "audio_message":
+
+                    audio_message = att.get(
+                        "audio_message",
+                        {}
                     )
-                    or
-                    audio_message.get(
-                        "link_mp3"
+
+                    voice_url = (
+                        audio_message.get(
+                            "link_ogg"
+                        )
+                        or
+                        audio_message.get(
+                            "link_mp3"
+                        )
                     )
-                )
 
-            # Фото
-            elif att_type == "photo":
+                # Фото
+                elif att_type == "photo":
 
-                photo = att.get(
-                    "photo",
-                    {}
-                )
+                    photo = att.get(
+                        "photo",
+                        {}
+                    )
 
-                image_url = get_best_photo_url(
-                    photo
-                )
+                    image_url = get_best_photo_url(
+                        photo
+                    )
 
         # =================================================
         # ГОЛОС
@@ -1663,7 +1858,7 @@ if __name__ == "__main__":
     )
 
     print(
-        "VK AI БОТ ЗАПУСКАЕТСЯ",
+        "🚀 VK AI БОТ ЗАПУСКАЕТСЯ",
         flush=True
     )
 
@@ -1681,6 +1876,12 @@ if __name__ == "__main__":
     print(
         "Запасная модель:",
         BACKUP_MODEL,
+        flush=True
+    )
+
+    print(
+        "Модель модерации:",
+        MODERATION_MODEL,
         flush=True
     )
 
@@ -1725,12 +1926,12 @@ if __name__ == "__main__":
     )
 
     print(
-        "Модерация бесед: АКТИВНА",
+        "🛡️ МОДЕРАЦИЯ БЕСЕД: АКТИВНА",
         flush=True
     )
 
     print(
-        "В беседах обычный AI-ответ ОТКЛЮЧЕН",
+        "🤫 В БЕСЕДАХ ОБЫЧНЫЙ AI: ОТКЛЮЧЕН",
         flush=True
     )
 
