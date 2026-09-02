@@ -7,54 +7,247 @@ from flask import Flask, request
 from groq import Groq
 
 
+# =========================================================
+# НАСТРОЙКИ
+# =========================================================
+
 VK_TOKEN = os.environ.get("VK_TOKEN", "")
 VK_CONFIRMATION_CODE = os.environ.get("VK_CONFIRMATION_CODE", "")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 VK_GROUP_SECRET = os.environ.get("VK_GROUP_SECRET", "")
-
-
-SYSTEM_PROMPT = (
-    "Ты — дерзкий, языкастый бот сообщества ВКонтакте канала Бонус коды tanksblitz твое имя Blitz ИИ, посвящённого ИСКЛЮЧИТЕЛЬНО игре "
-    "Tanks Blitz PVP битвы (разработчик EAST-GAMES LLC / Lesta Games) — мобильному танковому "
-    "PVP-шутеру. Это твоё единственное разрешённое направление разговора. "
-    "Если вопрос не связан с этой игрой — дерзко и с юмором отказывайся отвечать по существу, "
-    "напоминай, что тут говорят только про танки.\n\n"
-
-    "ОБРАЩЕНИЕ ПО ИМЕНИ: тебе в начале сообщения передаётся имя пользователя в формате "
-    "'[Имя: ...]'. Обращайся к человеку по этому имени в своём ответе, естественно вписывая "
-    "его в дерзкий стиль. Саму пометку '[Имя: ...]' в ответе не показывай.\n\n"
-
-    "ЗАПРЕТ НА ВЫДУМЫВАНИЕ ТОЧНЫХ ЦИФР: не придумывай точные характеристики техники, "
-    "калибры, урон, броню, названия валюты и другие конкретные цифры — ты их не знаешь. "
-    "Если спрашивают про конкретные характеристики техники или что качать — отвечай в общих "
-    "чертах и советуй посмотреть актуальные гайды и обзоры техники на YouTube, там всё "
-    "наглядно показывают с цифрами и геймплеем.\n\n"
-
-    "ФОРМАТ ОТВЕТА: отвечай КОРОТКО, максимум 2-3 предложения или максимум 3 пункта списком. "
-    "Никаких длинных портянок текста.\n\n"
-
-    "Используешь неформальный тон, лёгкую иронию и подколки, но без грубости и оскорблений. "
-    "Не хами по-настоящему и не переходи на личности — дерзость должна быть смешной, "
-    "а не обидной."
-)
-
-
-app = Flask(__name__)
-client = Groq(api_key=GROQ_API_KEY)
 
 VK_API_URL = "https://api.vk.com/method/messages.send"
 VK_USERS_GET_URL = "https://api.vk.com/method/users.get"
 VK_API_VERSION = "5.199"
 
 
+# =========================================================
+# МОДЕЛИ
+# =========================================================
+
 MAIN_MODEL = "openai/gpt-oss-120b"
 BACKUP_MODEL = "openai/gpt-oss-20b"
 
-# Модель для обработки изображений
+# Модель для изображений
 VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
+# Модель для придумывания клички
+NICKNAME_MODEL = "openai/gpt-oss-20b"
+
 MAIN_MODEL_RETRY_TIME = 60 * 60
+
 main_model_blocked_until = 0
+
+
+# =========================================================
+# ПАМЯТЬ
+# =========================================================
+
+MAX_HISTORY_MESSAGES = 25
+
+# Через сколько секунд пользователь считается уснувшим
+SESSION_TIMEOUT = 60
+
+# user_id:
+# {
+#     "history": [...],
+#     "nickname": "...",
+#     "active": True/False,
+#     "last_activity": timestamp,
+#     "lock": threading.Lock()
+# }
+
+users_memory = {}
+
+memory_lock = threading.Lock()
+
+
+# =========================================================
+# SYSTEM PROMPT
+# =========================================================
+
+SYSTEM_PROMPT = """
+Ты — ИИ-бот танкового сообщества ВКонтакте, посвящённого
+ИСКЛЮЧИТЕЛЬНО игре Tanks Blitz PVP.
+
+Твоя главная тема — Tanks Blitz, танки, техника, бои,
+тактика, игровые механики, обновления и всё, что напрямую
+связано с этой игрой.
+
+Ты не универсальный ассистент.
+Ты — танковый ИИ сообщества.
+
+=========================================================
+ХАРАКТЕР
+=========================================================
+
+Ты живой, дерзкий, языкастый и немного наглый танкист.
+
+Используй:
+- лёгкую иронию;
+- дружеские подколы;
+- юмор;
+- живую речь.
+
+Но:
+- не оскорбляй пользователя;
+- не унижай его;
+- не переходи на настоящую грубость;
+- не используй оскорбительные прозвища.
+
+Ты должен ощущаться как свой человек из танкового чата,
+а не как сухой технический бот.
+
+=========================================================
+КЛИЧКА ПОЛЬЗОВАТЕЛЯ
+=========================================================
+
+В начале новой сессии тебе передаётся:
+
+[Кличка: ...]
+
+Это специально придуманная для пользователя танковая кличка.
+
+ВАЖНО:
+
+Никогда не используй настоящее имя пользователя из VK.
+
+Обращайся только по переданной кличке.
+
+Кличка может быть забавной, танковой или необычной.
+
+Например:
+- Стальной Барон
+- Гусеничный
+- Шальной Командир
+- Критовик
+- Танковый Псих
+- Король рикошетов
+
+Не нужно вставлять кличку абсолютно в каждое предложение.
+
+=========================================================
+ПРИВЕТСТВИЕ
+=========================================================
+
+Если перед тобой стоит:
+
+[НОВАЯ СЕССИЯ]
+
+это означает, что пользователь снова начал разговор
+после периода сна.
+
+В таком случае можешь коротко поздороваться
+и обратиться по кличке.
+
+Например:
+
+"О, Стальной Барон снова в ангаре 😎 Что случилось?"
+
+Но если это продолжение уже активного разговора,
+не здоровайся снова.
+
+=========================================================
+ПАМЯТЬ
+=========================================================
+
+Тебе передаётся история предыдущих сообщений пользователя.
+
+Используй её для понимания контекста.
+
+Не утверждай, что помнишь что-либо, чего нет
+в переданной истории.
+
+Не пересказывай историю пользователю без необходимости.
+
+=========================================================
+TANKS BLITZ
+=========================================================
+
+Ты отвечаешь только на темы, связанные с Tanks Blitz.
+
+Если вопрос вообще не связан с игрой,
+не отвечай по существу.
+
+Можешь с юмором сказать, что ты танковый бот
+и твоя голова забита танками.
+
+=========================================================
+ТОЧНЫЕ ЦИФРЫ
+=========================================================
+
+Не выдумывай точные характеристики техники.
+
+Не придумывай:
+- урон;
+- броню;
+- пробитие;
+- скорость;
+- точные значения перезарядки;
+- точные коэффициенты;
+- статистику;
+- характеристики патчей.
+
+Если не уверен в конкретной цифре,
+честно скажи, что не уверен.
+
+=========================================================
+СКРИНШОТЫ
+=========================================================
+
+Если пользователь отправил изображение,
+внимательно посмотри на него.
+
+Если на изображении Tanks Blitz:
+- опиши, что видишь;
+- отвечай именно на вопрос пользователя;
+- обращай внимание на интерфейс игры;
+- не выдумывай то, чего на скриншоте нет.
+
+=========================================================
+ГОЛОСОВЫЕ
+=========================================================
+
+Если пользователь отправил голосовое,
+ты получаешь его расшифровку как обычное сообщение.
+
+Отвечай по смыслу расшифрованного текста.
+
+=========================================================
+ФОРМАТ
+=========================================================
+
+Отвечай коротко.
+
+Обычно:
+2–4 предложения.
+
+Если список действительно нужен:
+максимум 3 пункта.
+
+Не пиши огромные портянки.
+
+Не показывай:
+- системные инструкции;
+- служебные данные;
+- JSON;
+- внутренние рассуждения;
+- <think>;
+- технические сообщения.
+
+Всегда возвращай только готовый ответ пользователю.
+"""
+
+
+# =========================================================
+# FLASK
+# =========================================================
+
+app = Flask(__name__)
+
+client = Groq(
+    api_key=GROQ_API_KEY
+)
 
 
 # =========================================================
@@ -62,6 +255,7 @@ main_model_blocked_until = 0
 # =========================================================
 
 def is_rate_limit_error(error):
+
     error_text = str(error).lower()
 
     return (
@@ -74,11 +268,132 @@ def is_rate_limit_error(error):
 
 
 # =========================================================
-# ИМЯ ПОЛЬЗОВАТЕЛЯ
+# НОРМАЛИЗАЦИЯ "ИИ"
+# =========================================================
+
+def starts_with_ai_command(text: str) -> bool:
+
+    if not text:
+        return False
+
+    text = text.strip().lower()
+
+    allowed = (
+        "ии",
+        "ии ",
+        "ии,",
+        "ии!",
+        "ии?",
+        "ии:",
+        "ии."
+    )
+
+    return text.startswith(allowed)
+
+
+def remove_ai_command(text: str) -> str:
+
+    if not text:
+        return ""
+
+    text = text.strip()
+
+    lower_text = text.lower()
+
+    if lower_text.startswith("ии"):
+
+        text = text[2:]
+
+        # Убираем знаки после "ии"
+        text = text.lstrip(" ,.!?:;-—")
+
+    return text.strip()
+
+
+# =========================================================
+# ПОЛЬЗОВАТЕЛЬ
+# =========================================================
+
+def get_user_state(user_id: int):
+
+    with memory_lock:
+
+        if user_id not in users_memory:
+
+            users_memory[user_id] = {
+                "history": [],
+                "nickname": None,
+                "active": False,
+                "last_activity": 0,
+                "lock": threading.Lock()
+            }
+
+        return users_memory[user_id]
+
+
+# =========================================================
+# ОЧИСТКА ПАМЯТИ
+# =========================================================
+
+def cleanup_user_memory(user_id: int):
+
+    with memory_lock:
+
+        state = users_memory.get(user_id)
+
+        if not state:
+            return
+
+        last_activity = state.get(
+            "last_activity",
+            0
+        )
+
+        if (
+            time.time() - last_activity
+            >= SESSION_TIMEOUT
+        ):
+
+            print(
+                f"[MEMORY] Пользователь {user_id} уснул. "
+                f"Очищаем историю.",
+                flush=True
+            )
+
+            state["history"] = []
+            state["active"] = False
+
+
+# =========================================================
+# ТАЙМЕР ОЧИСТКИ
+# =========================================================
+
+def schedule_memory_cleanup(user_id: int):
+
+    def cleanup():
+
+        time.sleep(
+            SESSION_TIMEOUT
+        )
+
+        cleanup_user_memory(
+            user_id
+        )
+
+    threading.Thread(
+        target=cleanup,
+        daemon=True
+    ).start()
+
+
+# =========================================================
+# VK ИМЯ
 # =========================================================
 
 def get_user_name(user_id: int) -> str:
+
     try:
+
         params = {
             "access_token": VK_TOKEN,
             "v": VK_API_VERSION,
@@ -88,16 +403,19 @@ def get_user_name(user_id: int) -> str:
         response = requests.get(
             VK_USERS_GET_URL,
             params=params,
-            timeout=100
+            timeout=10
         )
 
         result = response.json()
 
-        first_name = result["response"][0]["first_name"]
+        first_name = (
+            result["response"][0]["first_name"]
+        )
 
         return first_name
 
     except Exception as e:
+
         print(
             "Не удалось получить имя пользователя:",
             e,
@@ -108,33 +426,217 @@ def get_user_name(user_id: int) -> str:
 
 
 # =========================================================
+# СОЗДАНИЕ КЛИЧКИ
+# =========================================================
+
+def generate_nickname(user_id: int) -> str:
+
+    try:
+
+        prompt = """
+Придумай короткую танковую кличку для участника
+сообщества Tanks Blitz.
+
+Кличка должна быть:
+- дружеской;
+- запоминающейся;
+- немного смешной;
+- связанной с танками или боями.
+
+Не используй имя человека.
+Не используй оскорбления.
+Не используй мат.
+Не делай кличку слишком длинной.
+
+Верни ТОЛЬКО кличку.
+Максимум 3 слова.
+"""
+
+        completion = client.chat.completions.create(
+            model=NICKNAME_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": prompt
+                }
+            ],
+            max_tokens=30,
+        )
+
+        nickname = (
+            completion
+            .choices[0]
+            .message
+            .content
+        )
+
+        if not nickname:
+            raise RuntimeError(
+                "Модель не вернула кличку"
+            )
+
+        nickname = nickname.strip()
+
+        # Убираем возможные кавычки
+        nickname = nickname.strip(
+            "\"'«»"
+        )
+
+        if len(nickname) > 40:
+            nickname = nickname[:40].strip()
+
+        print(
+            f"[NICKNAME] {user_id} -> {nickname}",
+            flush=True
+        )
+
+        return nickname
+
+    except Exception as e:
+
+        print(
+            "Ошибка создания клички:",
+            e,
+            flush=True
+        )
+
+        return "Танкист"
+
+
+# =========================================================
+# ПОЛУЧЕНИЕ / СОЗДАНИЕ КЛИЧКИ
+# =========================================================
+
+def get_user_nickname(user_id: int) -> str:
+
+    state = get_user_state(
+        user_id
+    )
+
+    if state["nickname"]:
+        return state["nickname"]
+
+    nickname = generate_nickname(
+        user_id
+    )
+
+    state["nickname"] = nickname
+
+    return nickname
+
+
+# =========================================================
+# ДОБАВЛЕНИЕ В ПАМЯТЬ
+# =========================================================
+
+def add_to_history(
+    user_id: int,
+    role: str,
+    content: str
+):
+
+    state = get_user_state(
+        user_id
+    )
+
+    state["history"].append(
+        {
+            "role": role,
+            "content": content
+        }
+    )
+
+    # Максимум 25 сообщений
+    if len(state["history"]) > MAX_HISTORY_MESSAGES:
+
+        state["history"] = (
+            state["history"][
+                -MAX_HISTORY_MESSAGES:
+            ]
+        )
+
+
+# =========================================================
+# ПОЛУЧЕНИЕ ИСТОРИИ
+# =========================================================
+
+def get_history(user_id: int):
+
+    state = get_user_state(
+        user_id
+    )
+
+    return list(
+        state["history"]
+    )
+
+
+# =========================================================
 # ОБЫЧНАЯ МОДЕЛЬ
 # =========================================================
 
-def ask_model(model, user_message, user_name):
+def ask_model(
+    model,
+    user_message,
+    user_id,
+    is_new_session=False
+):
 
-    message_with_name = (
-        f"[Имя: {user_name}] {user_message}"
-        if user_name
-        else user_message
+    nickname = get_user_nickname(
+        user_id
+    )
+
+    history = get_history(
+        user_id
+    )
+
+    messages = [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT
+        }
+    ]
+
+    # Передаём кличку
+    messages.append(
+        {
+            "role": "system",
+            "content": (
+                f"[Кличка: {nickname}]\n"
+                + (
+                    "[НОВАЯ СЕССИЯ]"
+                    if is_new_session
+                    else ""
+                )
+            )
+        }
+    )
+
+    # Старый контекст
+    messages.extend(
+        history
+    )
+
+    # Новый вопрос
+    messages.append(
+        {
+            "role": "user",
+            "content": user_message
+        }
     )
 
     completion = client.chat.completions.create(
         model=model,
-        messages=[
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT
-            },
-            {
-                "role": "user",
-                "content": message_with_name
-            },
-        ],
-        max_tokens=250,
+        messages=messages,
+        max_tokens=300,
     )
 
-    reply = completion.choices[0].message.content
+    reply = (
+        completion
+        .choices[0]
+        .message
+        .content
+    )
 
     if not reply:
         raise RuntimeError(
@@ -145,12 +647,13 @@ def ask_model(model, user_message, user_name):
 
 
 # =========================================================
-# GROQ — ОСНОВНАЯ / ЗАПАСНАЯ МОДЕЛЬ
+# GROQ — ОСНОВНАЯ / ЗАПАСНАЯ
 # =========================================================
 
 def ask_groq(
     user_message: str,
-    user_name: str
+    user_id: int,
+    is_new_session=False
 ) -> str:
 
     global main_model_blocked_until
@@ -170,13 +673,14 @@ def ask_groq(
             reply = ask_model(
                 MAIN_MODEL,
                 user_message,
-                user_name
+                user_id,
+                is_new_session
             )
 
             main_model_blocked_until = 0
 
             print(
-                "120B работает. Используем основную модель.",
+                "120B работает.",
                 flush=True
             )
 
@@ -205,13 +709,8 @@ def ask_groq(
                     flush=True
                 )
 
-                print(
-                    "Временно используем 20B.",
-                    flush=True
-                )
-
     print(
-        "Используем запасную модель:",
+        "Используем:",
         BACKUP_MODEL,
         flush=True
     )
@@ -219,15 +718,18 @@ def ask_groq(
     return ask_model(
         BACKUP_MODEL,
         user_message,
-        user_name
+        user_id,
+        is_new_session
     )
 
 
 # =========================================================
-# ГОЛОСОВЫЕ
+# ГОЛОСОВОЕ
 # =========================================================
 
-def transcribe_voice(audio_url: str) -> str:
+def transcribe_voice(
+    audio_url: str
+) -> str:
 
     audio_response = requests.get(
         audio_url,
@@ -249,10 +751,12 @@ def transcribe_voice(audio_url: str) -> str:
 
 
 # =========================================================
-# СКАЧИВАНИЕ ИЗОБРАЖЕНИЯ VK
+# СКАЧИВАНИЕ ИЗОБРАЖЕНИЯ
 # =========================================================
 
-def download_image_as_base64(image_url: str):
+def download_image_as_base64(
+    image_url: str
+):
 
     print(
         "Скачиваем изображение из VK...",
@@ -269,13 +773,13 @@ def download_image_as_base64(image_url: str):
     image_data = response.content
 
     if not image_data:
+
         raise RuntimeError(
             "VK вернул пустое изображение"
         )
 
-    # Groq имеет ограничение на размер изображения.
-    # Не отправляем слишком большие файлы.
     if len(image_data) > 20 * 1024 * 1024:
+
         raise RuntimeError(
             "Изображение больше 20 MB"
         )
@@ -285,12 +789,17 @@ def download_image_as_base64(image_url: str):
         "image/jpeg"
     )
 
-    if not content_type.startswith("image/"):
+    if not content_type.startswith(
+        "image/"
+    ):
+
         content_type = "image/jpeg"
 
-    encoded_image = base64.b64encode(
-        image_data
-    ).decode("utf-8")
+    encoded_image = (
+        base64
+        .b64encode(image_data)
+        .decode("utf-8")
+    )
 
     data_url = (
         f"data:{content_type};base64,{encoded_image}"
@@ -298,7 +807,10 @@ def download_image_as_base64(image_url: str):
 
     print(
         "Изображение успешно загружено:",
-        round(len(image_data) / 1024, 1),
+        round(
+            len(image_data) / 1024,
+            1
+        ),
         "KB",
         flush=True
     )
@@ -312,9 +824,18 @@ def download_image_as_base64(image_url: str):
 
 def ask_about_image(
     image_url: str,
-    user_name: str,
-    caption: str = ""
+    user_id: int,
+    caption: str = "",
+    is_new_session=False
 ) -> str:
+
+    nickname = get_user_nickname(
+        user_id
+    )
+
+    history = get_history(
+        user_id
+    )
 
     if caption and caption.strip():
 
@@ -323,23 +844,15 @@ def ask_about_image(
     else:
 
         prompt_text = (
-            "Посмотри на этот скриншот из Tanks Blitz. "
-            "Коротко прокомментируй, что на нём происходит, "
-            "в своём дерзком и дружеском стиле."
+            "Посмотри на этот скриншот из "
+            "Tanks Blitz. Коротко скажи, "
+            "что на нём происходит."
         )
 
-    message_with_name = (
-        f"[Имя: {user_name}] {prompt_text}"
-        if user_name
-        else prompt_text
-    )
-
-    # -----------------------------------------------------
-    # Скачиваем фото из VK и превращаем его в Base64
-    # -----------------------------------------------------
-
-    image_data_url = download_image_as_base64(
-        image_url
+    image_data_url = (
+        download_image_as_base64(
+            image_url
+        )
     )
 
     print(
@@ -348,35 +861,61 @@ def ask_about_image(
         flush=True
     )
 
+    messages = [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT
+        },
+        {
+            "role": "system",
+            "content": (
+                f"[Кличка: {nickname}]\n"
+                + (
+                    "[НОВАЯ СЕССИЯ]"
+                    if is_new_session
+                    else ""
+                )
+            )
+        }
+    ]
+
+    messages.extend(
+        history
+    )
+
+    messages.append(
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": prompt_text
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": image_data_url
+                    }
+                }
+            ]
+        }
+    )
+
     completion = client.chat.completions.create(
         model=VISION_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": message_with_name
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": image_data_url
-                        }
-                    }
-                ]
-            }
-        ],
+        messages=messages,
         max_tokens=300,
     )
 
-    reply = completion.choices[0].message.content
+    reply = (
+        completion
+        .choices[0]
+        .message
+        .content
+    )
 
     if not reply:
+
         raise RuntimeError(
             "Vision-модель вернула пустой ответ"
         )
@@ -394,6 +933,7 @@ def send_vk_message(
 ):
 
     if not text:
+
         text = (
             "Что-то я сейчас подвис 😅 "
             "Попробуй ещё раз."
@@ -439,7 +979,27 @@ def send_vk_message(
 
 
 # =========================================================
-# ТЕКСТ
+# АКТИВАЦИЯ СЕССИИ
+# =========================================================
+
+def activate_user(
+    user_id: int
+):
+
+    state = get_user_state(
+        user_id
+    )
+
+    was_active = state["active"]
+
+    state["active"] = True
+    state["last_activity"] = time.time()
+
+    return not was_active
+
+
+# =========================================================
+# ТЕКСТОВОЕ СООБЩЕНИЕ
 # =========================================================
 
 def handle_message(
@@ -448,34 +1008,125 @@ def handle_message(
     text: str
 ):
 
-    try:
-
-        user_name = get_user_name(
-            from_id
-        )
-
-        reply = ask_groq(
-            text,
-            user_name
-        )
-
-    except Exception as e:
-
-        reply = (
-            "Что-то я сейчас подвис 😅 "
-            "Попробуй написать ещё раз."
-        )
-
-        print(
-            "Ошибка при обращении к Groq:",
-            e,
-            flush=True
-        )
-
-    send_vk_message(
-        peer_id,
-        reply
+    state = get_user_state(
+        from_id
     )
+
+    # Защита от параллельных сообщений
+    with state["lock"]:
+
+        try:
+
+            # Если человек уснул
+            if (
+                time.time()
+                - state["last_activity"]
+                >= SESSION_TIMEOUT
+            ):
+
+                state["history"] = []
+                state["active"] = False
+
+            # -------------------------------------------------
+            # Проверяем "ии"
+            # -------------------------------------------------
+
+            if not starts_with_ai_command(
+                text
+            ):
+
+                print(
+                    f"[IGNORE] {from_id}: "
+                    f"нет обращения 'ии'",
+                    flush=True
+                )
+
+                return
+
+            # -------------------------------------------------
+            # Убираем "ии"
+            # -------------------------------------------------
+
+            user_text = remove_ai_command(
+                text
+            )
+
+            if not user_text:
+
+                print(
+                    f"[IGNORE] {from_id}: "
+                    f"после 'ии' нет вопроса",
+                    flush=True
+                )
+
+                return
+
+            # -------------------------------------------------
+            # Активируем сессию
+            # -------------------------------------------------
+
+            is_new_session = activate_user(
+                from_id
+            )
+
+            # -------------------------------------------------
+            # Добавляем вопрос
+            # -------------------------------------------------
+
+            add_to_history(
+                from_id,
+                "user",
+                user_text
+            )
+
+            # -------------------------------------------------
+            # Получаем ответ
+            # -------------------------------------------------
+
+            reply = ask_groq(
+                user_text,
+                from_id,
+                is_new_session
+            )
+
+            # -------------------------------------------------
+            # Сохраняем ответ
+            # -------------------------------------------------
+
+            add_to_history(
+                from_id,
+                "assistant",
+                reply
+            )
+
+            state["last_activity"] = time.time()
+
+            # -------------------------------------------------
+            # Отправляем
+            # -------------------------------------------------
+
+            send_vk_message(
+                peer_id,
+                reply
+            )
+
+            schedule_memory_cleanup(
+                from_id
+            )
+
+        except Exception as e:
+
+            print(
+                "Ошибка при обработке сообщения:",
+                e,
+                flush=True
+            )
+
+            send_vk_message(
+                peer_id,
+                "Что-то я сейчас подвис 😅 "
+                "Попробуй ещё раз."
+            )
 
 
 # =========================================================
@@ -488,49 +1139,112 @@ def handle_voice_message(
     voice_url: str
 ):
 
-    try:
+    state = get_user_state(
+        from_id
+    )
 
-        user_name = get_user_name(
-            from_id
-        )
+    with state["lock"]:
 
-        text = transcribe_voice(
-            voice_url
-        )
+        try:
 
-        print(
-            "Распознан голос:",
-            text,
-            flush=True
-        )
+            # -------------------------------------------------
+            # Расшифровываем
+            # -------------------------------------------------
 
-        if not text:
-            raise RuntimeError(
-                "Не удалось распознать голос"
+            text = transcribe_voice(
+                voice_url
             )
 
-        reply = ask_groq(
-            text,
-            user_name
-        )
+            print(
+                f"[VOICE] {from_id}: {text}",
+                flush=True
+            )
 
-    except Exception as e:
+            if not text:
+                return
 
-        reply = (
-            "Не смог разобрать голосовое 😅 "
-            "Попробуй написать текстом."
-        )
+            # -------------------------------------------------
+            # Голосовое тоже должно начинаться с ИИ
+            # -------------------------------------------------
 
-        print(
-            "Ошибка при распознавании голоса:",
-            e,
-            flush=True
-        )
+            if not starts_with_ai_command(
+                text
+            ):
 
-    send_vk_message(
-        peer_id,
-        reply
-    )
+                print(
+                    f"[IGNORE VOICE] {from_id}: "
+                    f"нет 'ии'",
+                    flush=True
+                )
+
+                return
+
+            user_text = remove_ai_command(
+                text
+            )
+
+            if not user_text:
+                return
+
+            # -------------------------------------------------
+            # Проверяем сон
+            # -------------------------------------------------
+
+            if (
+                time.time()
+                - state["last_activity"]
+                >= SESSION_TIMEOUT
+            ):
+
+                state["history"] = []
+                state["active"] = False
+
+            is_new_session = activate_user(
+                from_id
+            )
+
+            add_to_history(
+                from_id,
+                "user",
+                user_text
+            )
+
+            reply = ask_groq(
+                user_text,
+                from_id,
+                is_new_session
+            )
+
+            add_to_history(
+                from_id,
+                "assistant",
+                reply
+            )
+
+            state["last_activity"] = time.time()
+
+            send_vk_message(
+                peer_id,
+                reply
+            )
+
+            schedule_memory_cleanup(
+                from_id
+            )
+
+        except Exception as e:
+
+            print(
+                "Ошибка голосового:",
+                e,
+                flush=True
+            )
+
+            send_vk_message(
+                peer_id,
+                "Не смог разобрать голосовое 😅 "
+                "Попробуй ещё раз."
+            )
 
 
 # =========================================================
@@ -544,39 +1258,122 @@ def handle_image_message(
     caption: str
 ):
 
-    try:
-
-        user_name = get_user_name(
-            from_id
-        )
-
-        reply = ask_about_image(
-            image_url,
-            user_name,
-            caption
-        )
-
-    except Exception as e:
-
-        reply = (
-            "Не смог рассмотреть скриншот 😅 "
-            "Попробуй ещё раз или опиши словами."
-        )
-
-        print(
-            "Ошибка при анализе изображения:",
-            e,
-            flush=True
-        )
-
-    send_vk_message(
-        peer_id,
-        reply
+    state = get_user_state(
+        from_id
     )
+
+    with state["lock"]:
+
+        try:
+
+            # -------------------------------------------------
+            # Фото без текста "ии" игнорируем
+            # -------------------------------------------------
+
+            if not starts_with_ai_command(
+                caption
+            ):
+
+                print(
+                    f"[IGNORE PHOTO] {from_id}: "
+                    f"нет 'ии'",
+                    flush=True
+                )
+
+                return
+
+            user_text = remove_ai_command(
+                caption
+            )
+
+            # -------------------------------------------------
+            # Если после ИИ ничего нет
+            # -------------------------------------------------
+
+            if not user_text:
+
+                user_text = (
+                    "Посмотри на этот скриншот "
+                    "из Tanks Blitz и коротко "
+                    "скажи, что на нём происходит."
+                )
+
+            # -------------------------------------------------
+            # Проверяем сон
+            # -------------------------------------------------
+
+            if (
+                time.time()
+                - state["last_activity"]
+                >= SESSION_TIMEOUT
+            ):
+
+                state["history"] = []
+                state["active"] = False
+
+            is_new_session = activate_user(
+                from_id
+            )
+
+            # -------------------------------------------------
+            # Сохраняем вопрос
+            # -------------------------------------------------
+
+            add_to_history(
+                from_id,
+                "user",
+                user_text
+            )
+
+            # -------------------------------------------------
+            # Vision
+            # -------------------------------------------------
+
+            reply = ask_about_image(
+                image_url,
+                from_id,
+                user_text,
+                is_new_session
+            )
+
+            # -------------------------------------------------
+            # Сохраняем ответ
+            # -------------------------------------------------
+
+            add_to_history(
+                from_id,
+                "assistant",
+                reply
+            )
+
+            state["last_activity"] = time.time()
+
+            send_vk_message(
+                peer_id,
+                reply
+            )
+
+            schedule_memory_cleanup(
+                from_id
+            )
+
+        except Exception as e:
+
+            print(
+                "Ошибка изображения:",
+                e,
+                flush=True
+            )
+
+            send_vk_message(
+                peer_id,
+                "Не смог рассмотреть скриншот 😅 "
+                "Попробуй ещё раз."
+            )
 
 
 # =========================================================
-# ВЫБОР САМОЙ БОЛЬШОЙ ФОТОГРАФИИ VK
+# ЛУЧШЕЕ ФОТО VK
 # =========================================================
 
 def get_best_photo_url(photo):
@@ -597,7 +1394,9 @@ def get_best_photo_url(photo):
         )
     )
 
-    return best_size.get("url")
+    return best_size.get(
+        "url"
+    )
 
 
 # =========================================================
@@ -626,13 +1425,14 @@ def callback():
 
         return "bad request", 400
 
-    # -----------------------------------------------------
-    # Проверяем secret
-    # -----------------------------------------------------
+    # =====================================================
+    # SECRET
+    # =====================================================
 
     if (
         VK_GROUP_SECRET
-        and data.get("secret") != VK_GROUP_SECRET
+        and data.get("secret")
+        != VK_GROUP_SECRET
     ):
 
         print(
@@ -646,26 +1446,24 @@ def callback():
         "type"
     )
 
-    # -----------------------------------------------------
-    # Подтверждение Callback API
-    # -----------------------------------------------------
+    # =====================================================
+    # CONFIRMATION
+    # =====================================================
 
     if event_type == "confirmation":
 
         return VK_CONFIRMATION_CODE
 
-    # -----------------------------------------------------
-    # Новое сообщение
-    # -----------------------------------------------------
+    # =====================================================
+    # MESSAGE NEW
+    # =====================================================
 
     if event_type == "message_new":
 
-        message = data.get(
-            "object",
-            {}
-        ).get(
-            "message",
-            {}
+        message = (
+            data
+            .get("object", {})
+            .get("message", {})
         )
 
         peer_id = message.get(
@@ -687,14 +1485,23 @@ def callback():
         )
 
         if not peer_id or not from_id:
+
+            return "ok"
+
+        # -------------------------------------------------
+        # Бот не отвечает сам себе
+        # -------------------------------------------------
+
+        if from_id < 0:
+
             return "ok"
 
         voice_url = None
         image_url = None
 
-        # -------------------------------------------------
-        # Ищем вложения
-        # -------------------------------------------------
+        # =================================================
+        # ВЛОЖЕНИЯ
+        # =================================================
 
         for att in attachments:
 
@@ -702,7 +1509,10 @@ def callback():
                 "type"
             )
 
+            # ---------------------------------------------
             # Голосовое
+            # ---------------------------------------------
+
             if att_type == "audio_message":
 
                 audio_message = att.get(
@@ -711,12 +1521,19 @@ def callback():
                 )
 
                 voice_url = (
-                    audio_message.get("link_ogg")
+                    audio_message.get(
+                        "link_ogg"
+                    )
                     or
-                    audio_message.get("link_mp3")
+                    audio_message.get(
+                        "link_mp3"
+                    )
                 )
 
+            # ---------------------------------------------
             # Фото
+            # ---------------------------------------------
+
             elif att_type == "photo":
 
                 photo = att.get(
@@ -724,13 +1541,15 @@ def callback():
                     {}
                 )
 
-                image_url = get_best_photo_url(
-                    photo
+                image_url = (
+                    get_best_photo_url(
+                        photo
+                    )
                 )
 
-        # -------------------------------------------------
-        # Голос
-        # -------------------------------------------------
+        # =================================================
+        # ГОЛОС
+        # =================================================
 
         if voice_url:
 
@@ -744,9 +1563,9 @@ def callback():
                 daemon=True
             ).start()
 
-        # -------------------------------------------------
-        # Фото
-        # -------------------------------------------------
+        # =================================================
+        # ФОТО
+        # =================================================
 
         elif image_url:
 
@@ -761,9 +1580,9 @@ def callback():
                 daemon=True
             ).start()
 
-        # -------------------------------------------------
-        # Текст
-        # -------------------------------------------------
+        # =================================================
+        # ТЕКСТ
+        # =================================================
 
         elif text.strip():
 
@@ -796,7 +1615,47 @@ if __name__ == "__main__":
     )
 
     print(
-        "VK AI бот запускается...",
+        "========================================",
+        flush=True
+    )
+
+    print(
+        "VK AI БОТ ЗАПУСКАЕТСЯ",
+        flush=True
+    )
+
+    print(
+        f"Основная модель: {MAIN_MODEL}",
+        flush=True
+    )
+
+    print(
+        f"Запасная модель: {BACKUP_MODEL}",
+        flush=True
+    )
+
+    print(
+        f"Vision: {VISION_MODEL}",
+        flush=True
+    )
+
+    print(
+        f"Память: {MAX_HISTORY_MESSAGES} сообщений",
+        flush=True
+    )
+
+    print(
+        f"Сон: {SESSION_TIMEOUT} секунд",
+        flush=True
+    )
+
+    print(
+        "Команда обращения: ИИ",
+        flush=True
+    )
+
+    print(
+        "========================================",
         flush=True
     )
 
