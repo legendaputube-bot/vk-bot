@@ -46,7 +46,7 @@ VK_API_VERSION = "5.199"
 
 MAIN_MODEL = "openai/gpt-oss-120b"
 BACKUP_MODEL = "openai/gpt-oss-20b"
-VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+VISION_MODEL = "qwen/qwen3.6-27b"
 MAIN_MODEL_RETRY_TIME = 60 * 60  # 1 час
 main_model_blocked_until = 0
 
