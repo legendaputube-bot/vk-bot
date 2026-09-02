@@ -1,27 +1,62 @@
 import os
-import requests
+import re
 import time
 import hashlib
-import re
 from collections import defaultdict, deque
+
+import requests
 from flask import Flask, request
 from groq import Groq
 
 
 # =========================================================
-# ENVIRONMENT
+# CONFIG
 # =========================================================
 
 VK_TOKEN = os.environ.get("VK_TOKEN", "")
 VK_CONFIRMATION_CODE = os.environ.get("VK_CONFIRMATION_CODE", "")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 VK_GROUP_SECRET = os.environ.get("VK_GROUP_SECRET", "")
-PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "")
+
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+
+PERPLEXITY_API_KEY = os.environ.get(
+    "PERPLEXITY_API_KEY", ""
+)
 
 PERPLEXITY_MODEL = os.environ.get(
-    "PERPLEXITY_MODEL",
-    ""
+    "PERPLEXITY_MODEL", ""
 )
+
+VK_API = "https://api.vk.com/method"
+VK_VERSION = "5.199"
+
+MAIN_MODEL = "openai/gpt-oss-120b"
+BACKUP_MODEL = "openai/gpt-oss-20b"
+
+# Уменьшенный расход токенов
+GROQ_MAX_TOKENS = 220
+SONAR_MAX_TOKENS = 300
+IMAGE_MAX_TOKENS = 200
+
+# Память: user → assistant → user → assistant
+MEMORY_LIMIT = 4
+
+# Кеш Sonar
+SONAR_CACHE_TIME = 30 * 60
+
+# Кеш имён VK
+NAME_CACHE_TIME = 24 * 60 * 60
+
+# Защита от повторных событий VK
+EVENT_CACHE_TIME = 30 * 60
+EVENT_CACHE_LIMIT = 1000
+
+# Если 120B получила дневной лимит
+MAIN_DEFAULT_COOLDOWN = 60 * 60
+
+# Если 20B получила лимит и VK/Groq дали
+# время повторной попытки
+BACKUP_DEFAULT_COOLDOWN = 10 * 60
 
 
 # =========================================================
@@ -29,58 +64,32 @@ PERPLEXITY_MODEL = os.environ.get(
 # =========================================================
 
 SYSTEM_PROMPT = (
-    "Ты — дерзкий, языкастый бот сообщества ВКонтакте, посвящённого ИСКЛЮЧИТЕЛЬНО игре "
-    "Tanks Blitz PVP битвы (разработчик EAST-GAMES LLC / Lesta Games) — мобильному танковому "
-    "PVP-шутеру 7 на 7. Это твоё единственное разрешённое направление разговора.\n\n"
+    "Ты — живой, дерзкий и языкастый бот сообщества ВКонтакте "
+    "про Tanks Blitz.\n\n"
 
-    "ПРАВИЛО ПО ТЕМЕ:\n"
-    "Если сообщение не связано с Tanks Blitz или текущим разговором о Tanks Blitz — "
-    "не отвечай по существу и с лёгким юмором напомни, что здесь говорят про танки.\n\n"
+    "Твоя основная тема — Tanks Blitz. Если сообщение вообще "
+    "не связано с игрой или текущим разговором, коротко напомни, "
+    "что здесь говорят про танки.\n\n"
 
-    "ГЛАВНОЕ ПРАВИЛО — НЕ ВЫДУМЫВАТЬ:\n"
-    "Тебе запрещено придумывать любые конкретные игровые данные.\n"
-    "Не придумывай названия танков, ветки прокачки, уровни техники, характеристики, "
-    "урон, броню, пробитие, калибры, скорость, перезарядку, очки прочности, проценты, "
-    "цифры, карты, режимы, события, бонус-коды или другие точные сведения.\n\n"
+    "НЕ ВЫДУМЫВАЙ факты. Не придумывай названия танков, ветки, "
+    "характеристики, урон, броню, пробитие, скорость, перезарядку, "
+    "карты, режимы, события, бонус-коды или цифры.\n\n"
 
-    "ОСОБЕННО ЗАПРЕЩЕНО:\n"
-    "- составлять ветки прокачки на основе собственных знаний;\n"
-    "- перечислять танки без подтверждённых данных;\n"
-    "- придумывать, какой танк находится на конкретном уровне;\n"
-    "- придумывать характеристики танков;\n"
-    "- добавлять неподтверждённые цифры;\n"
-    "- смешивать Tanks Blitz с World of Tanks PC;\n"
-    "- выдавать предположение за подтверждённый факт.\n\n"
+    "Не смешивай Tanks Blitz с World of Tanks PC.\n\n"
 
-    "ЕСЛИ ЕСТЬ ДАННЫЕ ИЗ ПОИСКА:\n"
-    "Используй переданную информацию как источник. "
-    "Не добавляй к ней неподтверждённые сведения.\n\n"
+    "Если переданы данные поиска или анализа изображения, "
+    "используй только их. Не добавляй неподтверждённые факты.\n\n"
 
-    "ЕСЛИ ДАННЫХ НЕДОСТАТОЧНО:\n"
-    "Честно скажи, что точных подтверждённых данных недостаточно. "
-    "Не заполняй пробел догадкой.\n\n"
+    "Если точных данных нет — честно скажи об этом.\n\n"
 
-    "СКРИНШОТЫ:\n"
-    "Используй только то, что действительно видно на изображении или подтверждено анализом. "
-    "Не придумывай отсутствующие элементы.\n\n"
+    "Отвечай коротко, живо и по делу. Если нужен список — "
+    "максимум 3 пункта.\n\n"
 
-    "ПАМЯТЬ ДИАЛОГА:\n"
-    "Учитывай предыдущие сообщения пользователя и свои предыдущие ответы, "
-    "если они переданы в контексте. Понимай короткие продолжения вроде "
-    "«а почему?», «а этот?», «а если так?», «а на 8 уровне?» в контексте предыдущего разговора.\n\n"
+    "Можно использовать лёгкую иронию и подколы, "
+    "но без настоящих оскорблений и переходов на личности.\n\n"
 
-    "ИМЯ ПОЛЬЗОВАТЕЛЯ:\n"
-    "Если в контексте указано имя пользователя, можешь иногда обращаться к нему по имени. "
-    "Не вставляй имя в каждое сообщение.\n\n"
-
-    "ФОРМАТ ОТВЕТА:\n"
-    "Отвечай коротко, живо и по делу.\n"
-    "Если отвечаешь списком или советами — максимум 3 пункта.\n"
-    "Не пиши длинные портянки.\n\n"
-
-    "ТОН:\n"
-    "Используй неформальный тон, лёгкую иронию и подколки, "
-    "но без настоящих оскорблений и переходов на личности."
+    "Учитывай историю диалога и понимай короткие продолжения "
+    "вроде «а этот?», «а почему?», «а если так?». "
 )
 
 
@@ -89,122 +98,54 @@ SYSTEM_PROMPT = (
 # =========================================================
 
 app = Flask(__name__)
+groq = Groq(api_key=GROQ_API_KEY)
 
 
 # =========================================================
-# CLIENTS
+# MEMORY / CACHE
 # =========================================================
-
-groq_client = Groq(
-    api_key=GROQ_API_KEY
-)
-
-
-# =========================================================
-# VK
-# =========================================================
-
-VK_API_URL = "https://api.vk.com/method/messages.send"
-VK_API_VERSION = "5.199"
-
-
-# =========================================================
-# GROQ MODELS
-# =========================================================
-
-MAIN_MODEL = "openai/gpt-oss-120b"
-BACKUP_MODEL = "openai/gpt-oss-20b"
-
-
-# =========================================================
-# 120B COOLDOWN
-# =========================================================
-
-MAIN_MODEL_RETRY_TIME = 60 * 60
-
-main_model_blocked_until = 0
-
-
-# =========================================================
-# SONAR CACHE
-# =========================================================
-
-SONAR_CACHE_TIME = 30 * 60
-
-sonar_cache = {}
-
-
-# =========================================================
-# USER MEMORY
-# =========================================================
-
-# Максимум последних сообщений на пользователя.
-MEMORY_MESSAGES_LIMIT = 8
 
 user_memory = defaultdict(
-    lambda: deque(
-        maxlen=MEMORY_MESSAGES_LIMIT
-    )
+    lambda: deque(maxlen=MEMORY_LIMIT)
 )
 
-
-# =========================================================
-# USER NAMES
-# =========================================================
-
-# Кэш имени пользователя, чтобы не обращаться
-# к VK API при каждом сообщении.
-USER_NAME_CACHE_TIME = 24 * 60 * 60
-
 user_names = {}
-
-
-# =========================================================
-# DUPLICATE EVENT PROTECTION
-# =========================================================
-
-PROCESSED_EVENTS_LIMIT = 1000
-
+sonar_cache = {}
 processed_events = {}
 
+main_blocked_until = 0
+backup_blocked_until = 0
+
+
+# =========================================================
+# EVENT PROTECTION
+# =========================================================
 
 def already_processed(event_id):
-
     if not event_id:
         return False
 
-    current_time = time.time()
+    now = time.time()
 
-    old_events = [
-        event_id_key
-        for event_id_key, saved_time in processed_events.items()
-        if current_time - saved_time > 60 * 30
+    old = [
+        key for key, saved in processed_events.items()
+        if now - saved > EVENT_CACHE_TIME
     ]
 
-    for event_id_key in old_events:
-
-        processed_events.pop(
-            event_id_key,
-            None
-        )
+    for key in old:
+        processed_events.pop(key, None)
 
     if event_id in processed_events:
-
         return True
 
-    processed_events[event_id] = current_time
+    processed_events[event_id] = now
 
-    if len(processed_events) > PROCESSED_EVENTS_LIMIT:
-
-        oldest_key = min(
+    if len(processed_events) > EVENT_CACHE_LIMIT:
+        oldest = min(
             processed_events,
             key=processed_events.get
         )
-
-        processed_events.pop(
-            oldest_key,
-            None
-        )
+        processed_events.pop(oldest, None)
 
     return False
 
@@ -214,364 +155,285 @@ def already_processed(event_id):
 # =========================================================
 
 def is_rate_limit_error(error):
+    text = str(error).lower()
 
-    error_text = str(error).lower()
+    return any(x in text for x in (
+        "429",
+        "rate limit",
+        "rate_limit_exceeded",
+        "tokens per day",
+        "tpd",
+        "too many requests"
+    ))
+
+
+def get_retry_seconds(error, default):
+    text = str(error)
+
+    match = re.search(
+        r"try again in\s+"
+        r"(?:(\d+)h)?"
+        r"(?:(\d+)m)?"
+        r"(?:(\d+(?:\.\d+)?)s)?",
+        text,
+        re.I
+    )
+
+    if not match:
+        return default
+
+    hours = int(match.group(1) or 0)
+    minutes = int(match.group(2) or 0)
+    seconds = float(match.group(3) or 0)
+
+    total = (
+        hours * 3600
+        + minutes * 60
+        + seconds
+    )
+
+    if total <= 0:
+        return default
+
+    return int(total) + 10
+
+
+# =========================================================
+# GREETINGS
+# =========================================================
+
+GREETINGS = {
+    "привет",
+    "привет!",
+    "приветик",
+    "здарова",
+    "здорово",
+    "дарова",
+    "хай",
+    "хелло",
+    "hello",
+    "hi",
+    "ку",
+    "ку!"
+}
+
+SPECIAL_GREETINGS = {
+    "доброе утро":
+        "Доброе утро! ☀️ Удачного дня и победных боёв!",
+
+    "добрый день":
+        "Добрый день! 😎 Побольше победных боёв!",
+
+    "добрый вечер":
+        "Добрый вечер! 😎 Удачных боёв!",
+
+    "доброй ночи":
+        "Доброй ночи! 🌙 Отдыхай, завтра раздавай!"
+}
+
+
+def is_greeting(text):
+    text = text.lower().strip()
 
     return (
-        "429" in error_text
-        or "rate limit" in error_text
-        or "rate_limit_exceeded" in error_text
-        or "tokens per day" in error_text
-        or "tpd" in error_text
-        or "too many requests" in error_text
+        text in GREETINGS
+        or text in SPECIAL_GREETINGS
     )
 
 
-# =========================================================
-# GREETING
-# =========================================================
-
-def is_greeting(text):
-
-    text = text.lower().strip()
-
-    greetings = {
-        "привет",
-        "привет!",
-        "приветик",
-        "здарова",
-        "здорово",
-        "дарова",
-        "хай",
-        "хелло",
-        "hello",
-        "hi",
-        "добрый день",
-        "добрый вечер",
-        "доброе утро",
-        "доброй ночи",
-        "добрейший",
-        "ку",
-        "ку!"
-    }
-
-    return text in greetings
-
-
 def greeting_response(text):
-
     text = text.lower().strip()
 
-    if text == "доброе утро":
-        return "Доброе утро! ☀️ Удачного дня и побольше победных боёв!"
+    if text in SPECIAL_GREETINGS:
+        return SPECIAL_GREETINGS[text]
 
-    if text == "добрый день":
-        return "Добрый день! 😎 Хорошего дня и побольше победных боёв!"
-
-    if text == "добрый вечер":
-        return "Добрый вечер! 😎 Хорошего вечера и удачных боёв!"
-
-    if text == "доброй ночи":
-        return "Доброй ночи! 🌙 Отдыхай и завтра раздавай по полной!"
-
-    return "Привет! 👋 Хорошего дня и удачных боёв!"
+    return "Привет! 👋 Удачных боёв!"
 
 
 # =========================================================
-# LOCAL MESSAGE INTENT
+# LOCAL ROUTER
 # =========================================================
 
 QUESTION_WORDS = {
-    "кто",
-    "что",
-    "где",
-    "когда",
-    "зачем",
-    "почему",
-    "как",
-    "какой",
-    "какая",
-    "какие",
-    "какое",
-    "какого",
-    "какую",
-    "каких",
-    "сколько",
-    "куда",
-    "откуда",
-    "можно",
-    "нужно",
-    "стоит",
-    "будет",
-    "есть",
-    "подскажешь",
-    "посоветуешь",
-    "скажешь",
-    "знаешь",
-    "думаешь"
+    "кто", "что", "где", "когда", "зачем", "почему",
+    "как", "какой", "какая", "какие", "какое",
+    "какого", "какую", "каких", "сколько", "куда",
+    "откуда", "можно", "нужно", "стоит", "будет",
+    "есть", "подскажешь", "посоветуешь", "скажешь",
+    "знаешь", "думаешь"
 }
 
+FOLLOWUPS = (
+    "а почему", "а зачем", "а как", "а какой",
+    "а какая", "а какие", "а какое", "а где",
+    "а когда", "а сколько", "а этот", "а эта",
+    "а эти", "а оно", "а он", "а она", "а там",
+    "а на", "а если", "а что если", "а можно",
+    "а нужно", "а стоит", "и что", "и как",
+    "и какой", "тогда как", "тогда что", "ну а",
+    "не понял", "не понимаю", "объясни",
+    "расскажи", "подробнее", "почему так"
+)
 
-FOLLOWUP_PHRASES = (
-    "а почему",
-    "а зачем",
-    "а как",
-    "а какой",
-    "а какая",
-    "а какие",
-    "а какое",
-    "а где",
-    "а когда",
-    "а сколько",
-    "а этот",
-    "а эта",
-    "а эти",
-    "а оно",
-    "а он",
-    "а она",
-    "а там",
-    "а на",
-    "а если",
-    "а что если",
-    "а можно",
-    "а нужно",
-    "а стоит",
-    "и что",
-    "и как",
-    "и какой",
-    "тогда как",
-    "тогда что",
-    "ну а",
-    "понял",
-    "понятно",
-    "не понял",
-    "не понимаю",
-    "объясни",
-    "расскажи",
-    "подробнее",
-    "почему так"
+IGNORED = {
+    "ок", "окей", "ага", "угу", "да", "нет",
+    "лол", "ахах", "ахаха", "пон", "ясно",
+    "спс", "спасибо", "благодарю", "+", "++",
+    "👍", "👌", "😂", "🤣"
+}
+
+TANK_WORDS = (
+    "танк", "танка", "танке", "танки", "танков",
+    "блиц", "blitz", "урон", "брон", "пробит",
+    "оруд", "калибр", "хп", "перезаряд", "скорост",
+    "точност", "ветк", "прокач", "экипаж", "модул",
+    "снаряд", "голд", "серебр", "опыт", "карта",
+    "карты", "бой", "бои", "ивент", "событи",
+    "патч", "обновлен", "обновление", "нерф",
+    "бафф", "промокод", "бонус-код", "бонус код",
+    "код"
 )
 
 
-IGNORED_MESSAGES = {
-    "ок",
-    "окей",
-    "ага",
-    "угу",
-    "да",
-    "нет",
-    "лол",
-    "ахах",
-    "ахаха",
-    "пон",
-    "ясно",
-    "спс",
-    "спасибо",
-    "благодарю",
-    "+",
-    "++",
-    "👍",
-    "👌",
-    "😂",
-    "🤣"
-}
+def is_noise(text):
+    text = text.lower().strip()
+
+    if not text:
+        return True
+
+    if text in IGNORED:
+        return True
+
+    if len(text) <= 2:
+        return True
+
+    # Например: аааааааа / )))))))))
+    if len(text) >= 7 and len(set(text)) <= 2:
+        return True
+
+    return False
 
 
 def looks_like_question(text):
+    text = text.lower().strip()
 
-    text_lower = text.lower().strip()
-
-    if not text_lower:
+    if not text:
         return False
 
-    # Старый вариант ? теперь не обязателен,
-    # но если он есть — это почти наверняка вопрос.
-    if text_lower.endswith(("?", "?!", "!?")):
+    if text.endswith(("?", "?!", "!?")):
         return True
 
     words = re.findall(
         r"[а-яёa-z0-9]+",
-        text_lower
+        text
     )
 
     if not words:
         return False
 
-    # Начинается с вопросительного слова.
     if words[0] in QUESTION_WORDS:
         return True
 
-    # Вопросительное слово встречается в начале короткой фразы.
+    if any(text.startswith(x) for x in FOLLOWUPS):
+        return True
+
     if len(words) <= 8:
+        return any(
+            word in QUESTION_WORDS
+            for word in words[:3]
+        )
 
-        for word in words[:3]:
+    return False
 
-            if word in QUESTION_WORDS:
-                return True
 
-    # Типичные продолжения разговора.
-    for phrase in FOLLOWUP_PHRASES:
+def is_tanks_message(text):
+    text = text.lower()
 
-        if text_lower.startswith(phrase):
+    return any(
+        word in text
+        for word in TANK_WORDS
+    )
 
+
+def should_use_ai(text, user_id=None):
+    text = text.strip()
+
+    if is_noise(text):
+        return False
+
+    # Вопросы работают даже без знака ?
+    if looks_like_question(text):
+        return True
+
+    # Любое нормальное сообщение по Tanks Blitz
+    # тоже может получить ответ.
+    if is_tanks_message(text):
+        return True
+
+    # Короткое продолжение уже начатого диалога.
+    if user_id and user_memory.get(user_id):
+        if len(text) <= 80:
             return True
 
     return False
 
 
-def is_obvious_noise(text):
-
-    text_lower = text.lower().strip()
-
-    if not text_lower:
-        return True
-
-    if text_lower in IGNORED_MESSAGES:
-        return True
-
-    # Слишком короткие бессмысленные сообщения.
-    if len(text_lower) <= 2:
-        return True
-
-    return False
-
-
-def should_use_ai(
-    text,
-    user_id=None
-):
-
-    text = text.strip()
-
-    if is_obvious_noise(text):
-
-        return False
-
-    # Явный вопрос.
-    if looks_like_question(text):
-
-        return True
-
-    # Если пользователь уже недавно разговаривал
-    # с ботом, короткие продолжения тоже отправляем в AI.
-    if user_id:
-
-        history = user_memory.get(
-            user_id
-        )
-
-        if history:
-
-            # Короткое сообщение после предыдущего
-            # диалога почти наверняка является продолжением.
-            if len(text) <= 120:
-
-                return True
-
-            # Фразы продолжения.
-            text_lower = text.lower()
-
-            for phrase in FOLLOWUP_PHRASES:
-
-                if phrase in text_lower:
-
-                    return True
-
-    return False
-
-
 # =========================================================
-# VK USER INFO
+# USER NAME
 # =========================================================
 
 def get_vk_user_name(user_id):
-
     if not user_id:
         return None
 
-    cached = user_names.get(
-        user_id
-    )
+    cached = user_names.get(user_id)
 
     if cached:
+        saved, name = cached
 
-        saved_time, full_name = cached
-
-        if (
-            time.time() - saved_time
-            < USER_NAME_CACHE_TIME
-        ):
-
-            return full_name
+        if time.time() - saved < NAME_CACHE_TIME:
+            return name
 
     try:
-
         response = requests.get(
-
-            "https://api.vk.com/method/users.get",
-
+            f"{VK_API}/users.get",
             params={
-
-                "access_token":
-                    VK_TOKEN,
-
-                "v":
-                    VK_API_VERSION,
-
-                "user_ids":
-                    user_id,
-
-                "fields":
-                    "first_name,last_name"
+                "access_token": VK_TOKEN,
+                "v": VK_VERSION,
+                "user_ids": user_id
             },
-
             timeout=10
         )
 
-        data = response.json()
-
-        users = data.get(
-            "response",
-            []
-        )
+        users = response.json().get("response", [])
 
         if not users:
             return None
 
         user = users[0]
 
-        first_name = user.get(
-            "first_name",
-            ""
+        first = user.get(
+            "first_name", ""
         ).strip()
 
-        last_name = user.get(
-            "last_name",
-            ""
+        last = user.get(
+            "last_name", ""
         ).strip()
 
-        full_name = (
-            f"{first_name} {last_name}"
-        ).strip()
+        name = f"{first} {last}".strip()
 
-        if not full_name:
+        if not name:
             return None
 
         user_names[user_id] = (
             time.time(),
-            full_name
+            name
         )
 
-        return full_name
+        return name
 
     except Exception as e:
-
-        print(
-            "Ошибка получения имени VK:",
-            e,
-            flush=True
-        )
-
+        print("VK name error:", e, flush=True)
         return None
 
 
@@ -579,495 +441,361 @@ def get_vk_user_name(user_id):
 # MEMORY
 # =========================================================
 
-def add_memory(
-    user_id,
-    role,
-    content
-):
-
-    if not user_id or not content:
-        return
-
-    user_memory[user_id].append({
-
-        "role":
-            role,
-
-        "content":
-            content
-    })
+def add_memory(user_id, role, content):
+    if user_id and content:
+        user_memory[user_id].append({
+            "role": role,
+            "content": content
+        })
 
 
-def build_memory_context(
-    user_id
-):
-
+def get_memory(user_id):
     if not user_id:
         return []
 
-    history = user_memory.get(
-        user_id
+    return list(
+        user_memory.get(user_id, [])
     )
 
-    if not history:
-        return []
 
-    return list(history)
+def cleanup_memory():
+    limit = 5000
 
-
-def clear_old_memory():
-
-    # Ограничиваем общее количество пользователей
-    # в памяти, чтобы память Render не росла бесконечно.
-
-    MAX_MEMORY_USERS = 5000
-
-    if len(user_memory) <= MAX_MEMORY_USERS:
+    if len(user_memory) <= limit:
         return
 
-    users_to_remove = (
-        len(user_memory)
-        - MAX_MEMORY_USERS
-    )
-
-    for _ in range(users_to_remove):
-
+    for _ in range(
+        len(user_memory) - limit
+    ):
         try:
-
-            oldest_user = next(
-                iter(user_memory)
-            )
-
             del user_memory[
-                oldest_user
+                next(iter(user_memory))
             ]
-
         except StopIteration:
-
             break
 
 
 # =========================================================
-# GROQ
+# GROQ MESSAGES
 # =========================================================
 
-def ask_model(
-    model,
-    messages
+def build_messages(
+    text,
+    user_id=None,
+    user_name=None
 ):
+    messages = [{
+        "role": "system",
+        "content": SYSTEM_PROMPT
+    }]
 
+    if user_name:
+        messages.append({
+            "role": "system",
+            "content": (
+                f"Имя пользователя: {user_name}. "
+                "Используй имя редко и естественно."
+            )
+        })
+
+    history = get_memory(user_id)
+
+    if history:
+        messages.extend(history)
+
+    messages.append({
+        "role": "user",
+        "content": text
+    })
+
+    return messages
+
+
+# =========================================================
+# GROQ REQUEST
+# =========================================================
+
+def ask_model(model, messages):
     completion = (
-        groq_client
+        groq
         .chat
         .completions
         .create(
-
             model=model,
-
             messages=messages,
-
-            max_tokens=500
+            max_tokens=GROQ_MAX_TOKENS
         )
     )
 
-    return (
+    usage = getattr(
+        completion,
+        "usage",
+        None
+    )
+
+    if usage:
+        print(
+            "Groq:",
+            "prompt=", getattr(
+                usage, "prompt_tokens", None
+            ),
+            "completion=", getattr(
+                usage, "completion_tokens", None
+            ),
+            "total=", getattr(
+                usage, "total_tokens", None
+            ),
+            flush=True
+        )
+
+    reply = (
         completion
         .choices[0]
         .message
         .content
-        .strip()
     )
 
+    if not reply:
+        raise RuntimeError(
+            "Groq returned empty response."
+        )
+
+    return reply.strip()
+
+
+# =========================================================
+# GROQ ROUTER
+# =========================================================
 
 def ask_groq(
-    user_message,
+    text,
     user_id=None,
     user_name=None
 ):
+    global main_blocked_until
+    global backup_blocked_until
 
-    global main_model_blocked_until
-
-    current_time = time.time()
-
-    messages = [
-
-        {
-            "role":
-                "system",
-
-            "content":
-                SYSTEM_PROMPT
-        }
-
-    ]
-
-    # =====================================================
-    # USER NAME
-    # =====================================================
-
-    if user_name:
-
-        messages.append({
-
-            "role":
-                "system",
-
-            "content": (
-                "Имя пользователя в VK: "
-                f"{user_name}. "
-                "Обращайся по имени только иногда, "
-                "когда это естественно."
-            )
-        })
-
-    # =====================================================
-    # MEMORY
-    # =====================================================
-
-    history = build_memory_context(
-        user_id
+    messages = build_messages(
+        text,
+        user_id,
+        user_name
     )
 
-    if history:
+    now = time.time()
 
-        messages.append({
-
-            "role":
-                "system",
-
-            "content": (
-                "Ниже находится недавняя история "
-                "диалога. Используй её для понимания "
-                "контекста текущего сообщения.\n\n"
-                "История диалога:"
-            )
-        })
-
-        messages.extend(
-            history
-        )
-
-    # =====================================================
-    # CURRENT MESSAGE
-    # =====================================================
-
-    messages.append({
-
-        "role":
-            "user",
-
-        "content":
-            user_message
-    })
-
-    # =====================================================
+    # -----------------------------------------------------
     # 120B
-    # =====================================================
+    # -----------------------------------------------------
 
-    if current_time >= main_model_blocked_until:
-
+    if now >= main_blocked_until:
         try:
-
             print(
-                "Пробуем:",
-                MAIN_MODEL,
+                "Groq → 120B",
                 flush=True
             )
 
-            reply = ask_model(
-
+            return ask_model(
                 MAIN_MODEL,
-
                 messages
             )
-
-            main_model_blocked_until = 0
-
-            print(
-                "120B успешно ответила.",
-                flush=True
-            )
-
-            return reply
 
         except Exception as e:
 
             if is_rate_limit_error(e):
+                cooldown = get_retry_seconds(
+                    e,
+                    MAIN_DEFAULT_COOLDOWN
+                )
 
-                main_model_blocked_until = (
-                    time.time()
-                    + MAIN_MODEL_RETRY_TIME
+                main_blocked_until = (
+                    time.time() + cooldown
                 )
 
                 print(
-                    "120B достигла лимита.",
+                    f"120B limit → "
+                    f"backup for {cooldown}s",
                     flush=True
                 )
-
-                print(
-                    "Переходим на 20B.",
-                    flush=True
-                )
-
             else:
-
                 print(
-                    "Ошибка 120B:",
+                    "120B error:",
                     e,
                     flush=True
                 )
 
-    # =====================================================
+    else:
+        print(
+            "120B temporarily blocked",
+            flush=True
+        )
+
+    # -----------------------------------------------------
     # 20B
-    # =====================================================
+    # -----------------------------------------------------
 
-    try:
+    if time.time() >= backup_blocked_until:
+        try:
+            print(
+                "Groq → 20B",
+                flush=True
+            )
 
+            return ask_model(
+                BACKUP_MODEL,
+                messages
+            )
+
+        except Exception as e:
+
+            if is_rate_limit_error(e):
+                cooldown = get_retry_seconds(
+                    e,
+                    BACKUP_DEFAULT_COOLDOWN
+                )
+
+                backup_blocked_until = (
+                    time.time() + cooldown
+                )
+
+                print(
+                    f"20B limit → "
+                    f"pause {cooldown}s",
+                    flush=True
+                )
+
+            else:
+                print(
+                    "20B error:",
+                    e,
+                    flush=True
+                )
+
+    else:
         print(
-            "Используем:",
-            BACKUP_MODEL,
+            "20B temporarily blocked",
             flush=True
         )
 
-        return ask_model(
-
-            BACKUP_MODEL,
-
-            messages
-        )
-
-    except Exception as e:
-
-        print(
-            "Ошибка 20B:",
-            e,
-            flush=True
-        )
-
-        raise
-
-
-# =========================================================
-# WEB SEARCH ROUTER
-# =========================================================
-
-def needs_web_search(text):
-
-    text_lower = text.lower()
-
-    keywords = [
-
-        "характеристик",
-        "характеристика",
-        "урон",
-        "брон",
-        "скорост",
-        "точност",
-        "перезаряд",
-        "хп",
-        "здоров",
-        "пробит",
-        "калибр",
-        "оруд",
-        "танк",
-        "танка",
-        "танке",
-        "танков",
-        "ветк",
-        "прокач",
-        "обновлен",
-        "обновление",
-        "патч",
-        "ивент",
-        "событи",
-        "новый танк",
-        "новые танки",
-        "актуальн",
-        "сейчас",
-        "сегодня",
-        "последн",
-        "добавили",
-        "убрали",
-        "изменили",
-        "нерф",
-        "бафф",
-        "промокод",
-        "бонус код",
-        "бонус-код",
-        "код"
-    ]
-
-    return any(
-        keyword in text_lower
-        for keyword in keywords
+    raise RuntimeError(
+        "Обе модели Groq временно недоступны."
     )
-
-
-# =========================================================
-# SONAR CACHE KEY
-# =========================================================
-
-def sonar_cache_key(text):
-
-    return hashlib.sha256(
-
-        text.lower()
-        .strip()
-        .encode("utf-8")
-
-    ).hexdigest()
 
 
 # =========================================================
 # SONAR
 # =========================================================
 
-def ask_sonar(
-    user_message
-):
+WEB_WORDS = (
+    "характеристик", "урон", "брон", "скорост",
+    "точност", "перезаряд", "хп", "пробит",
+    "калибр", "оруд", "танк", "танка", "танке",
+    "танков", "ветк", "прокач", "обновлен",
+    "обновление", "патч", "ивент", "событи",
+    "новый танк", "новые танки", "актуальн",
+    "сейчас", "сегодня", "последн", "добавили",
+    "убрали", "изменили", "нерф", "бафф",
+    "промокод", "бонус код", "бонус-код", "код"
+)
 
+
+def needs_sonar(text):
+    text = text.lower()
+
+    return any(
+        word in text
+        for word in WEB_WORDS
+    )
+
+
+def cache_key(text):
+    return hashlib.sha256(
+        text.lower().strip().encode()
+    ).hexdigest()
+
+
+def ask_sonar(text):
     if not PERPLEXITY_API_KEY:
-
         raise RuntimeError(
             "PERPLEXITY_API_KEY не установлен."
         )
 
     if not PERPLEXITY_MODEL:
-
         raise RuntimeError(
             "PERPLEXITY_MODEL не установлен."
         )
 
-    cache_key = sonar_cache_key(
-        user_message
-    )
-
-    cached = sonar_cache.get(
-        cache_key
-    )
+    key = cache_key(text)
+    cached = sonar_cache.get(key)
 
     if cached:
+        saved, answer = cached
 
-        saved_time, saved_answer = cached
-
-        if (
-            time.time()
-            - saved_time
-            < SONAR_CACHE_TIME
-        ):
-
+        if time.time() - saved < SONAR_CACHE_TIME:
             print(
-                "Sonar: используем кэш.",
+                "Sonar → cache",
                 flush=True
             )
-
-            return saved_answer
+            return answer
 
     print(
-        "Sonar: выполняем поиск.",
+        "Sonar → search",
         flush=True
     )
 
-    url = (
-        "https://api.perplexity.ai/"
-        "chat/completions"
-    )
-
-    headers = {
-
-        "Authorization":
-            f"Bearer {PERPLEXITY_API_KEY}",
-
-        "Content-Type":
-            "application/json"
-    }
-
-    payload = {
-
-        "model":
-            PERPLEXITY_MODEL,
-
-        "messages": [
-
-            {
-
-                "role":
-                    "system",
-
-                "content": (
-                    "Ты поисковый помощник для "
-                    "Tanks Blitz. "
-                    "Найди актуальную и подтверждаемую "
-                    "информацию. "
-                    "Особенно внимательно отличай "
-                    "Tanks Blitz от World of Tanks PC. "
-                    "Не придумывай отсутствующие данные."
-                )
-            },
-
-            {
-
-                "role":
-                    "user",
-
-                "content": (
-                    "Найди информацию для ответа "
-                    "на следующий вопрос пользователя:\n\n"
-                    + user_message
-                )
-            }
-
-        ],
-
-        "max_tokens":
-            700
-    }
-
     response = requests.post(
-
-        url,
-
-        headers=headers,
-
-        json=payload,
-
+        "https://api.perplexity.ai/chat/completions",
+        headers={
+            "Authorization":
+                f"Bearer {PERPLEXITY_API_KEY}",
+            "Content-Type":
+                "application/json"
+        },
+        json={
+            "model": PERPLEXITY_MODEL,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Найди актуальную информацию "
+                        "только по Tanks Blitz. "
+                        "Не смешивай её с World of Tanks PC. "
+                        "Не выдумывай данные. "
+                        "Дай только нужные факты."
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": text
+                }
+            ],
+            "max_tokens": SONAR_MAX_TOKENS
+        },
         timeout=30
     )
 
     if response.status_code != 200:
-
         raise RuntimeError(
-            f"Perplexity HTTP "
-            f"{response.status_code}: "
-            f"{response.text[:500]}"
+            f"Sonar HTTP {response.status_code}"
         )
 
     data = response.json()
 
-    try:
-
-        answer = (
-            data["choices"][0]
-            ["message"]
-            ["content"]
-        ).strip()
-
-    except Exception:
-
-        raise RuntimeError(
-            "Perplexity вернул неожиданный формат ответа."
-        )
+    answer = (
+        data["choices"][0]
+        ["message"]
+        ["content"]
+        .strip()
+    )
 
     if not answer:
-
         raise RuntimeError(
-            "Perplexity вернул пустой ответ."
+            "Sonar returned empty response."
         )
 
-    sonar_cache[cache_key] = (
+    answer = answer[:4000]
 
+    sonar_cache[key] = (
         time.time(),
-
         answer
     )
 
@@ -1079,100 +807,62 @@ def ask_sonar(
 # =========================================================
 
 def ask_sonar_then_groq(
-    user_message,
+    text,
     user_id=None,
     user_name=None
 ):
-
-    sonar_answer = ask_sonar(
-        user_message
-    )
+    found = ask_sonar(text)
 
     prompt = (
-
-        "Пользователь задал вопрос:\n"
-
-        f"{user_message}\n\n"
-
-        "Поисковый помощник нашёл следующие данные:\n"
-
-        f"{sonar_answer}\n\n"
-
-        "Сформируй ОДИН короткий итоговый ответ "
-        "пользователю.\n\n"
-
-        "Используй найденные данные как источник. "
-        "Не добавляй собственные неподтверждённые "
-        "характеристики, цифры, танки или другие факты. "
-        "Не упоминай поисковый помощник, Sonar, Groq, "
-        "API или внутреннюю архитектуру бота."
+        "Ответь пользователю на основе найденных данных.\n"
+        f"Вопрос: {text}\n"
+        f"Данные: {found}\n\n"
+        "Дай один короткий ответ. "
+        "Не упоминай Sonar, Perplexity, Groq или API. "
+        "Не добавляй неподтверждённые факты."
     )
 
     return ask_groq(
-
         prompt,
-
-        user_id=user_id,
-
-        user_name=user_name
+        user_id,
+        user_name
     )
 
 
-# =========================================================
-# AI ROUTER
-# =========================================================
-
 def ask_ai(
-    user_message,
+    text,
     user_id=None,
     user_name=None
 ):
-
-    if needs_web_search(
-        user_message
-    ):
-
+    if needs_sonar(text):
         try:
-
             print(
-                "Маршрутизация → Sonar → Groq",
+                "ROUTER → Sonar → Groq",
                 flush=True
             )
 
             return ask_sonar_then_groq(
-
-                user_message,
-
-                user_id=user_id,
-
-                user_name=user_name
+                text,
+                user_id,
+                user_name
             )
 
         except Exception as e:
-
             print(
-                "Sonar недоступен:",
+                "Sonar error:",
                 e,
                 flush=True
             )
 
-            print(
-                "Переходим напрямую на Groq.",
-                flush=True
-            )
-
     print(
-        "Маршрутизация → Groq",
+        "ROUTER → Groq",
         flush=True
     )
 
     return ask_groq(
-
-        user_message,
-
-        user_id=user_id,
-
-        user_name=user_name
+        text,
+        user_id,
+        user_name
     )
 
 
@@ -1180,44 +870,24 @@ def ask_ai(
 # VK SEND
 # =========================================================
 
-def send_vk_message(
-    peer_id,
-    text
-):
-
-    params = {
-
-        "access_token":
-            VK_TOKEN,
-
-        "v":
-            VK_API_VERSION,
-
-        "peer_id":
-            peer_id,
-
-        "message":
-            text,
-
-        "random_id":
-            0
-    }
-
+def send_message(peer_id, text):
     response = requests.post(
-
-        VK_API_URL,
-
-        data=params,
-
+        f"{VK_API}/messages.send",
+        data={
+            "access_token": VK_TOKEN,
+            "v": VK_VERSION,
+            "peer_id": peer_id,
+            "message": text,
+            "random_id": 0
+        },
         timeout=15
     )
 
     result = response.json()
 
     if "error" in result:
-
         print(
-            "Ошибка VK API:",
+            "VK send error:",
             result["error"],
             flush=True
         )
@@ -1226,91 +896,16 @@ def send_vk_message(
 
 
 # =========================================================
-# FILE DOWNLOAD
+# VOICE
 # =========================================================
 
-def download_file(
-    url
-):
-
-    response = requests.get(
-
-        url,
-
-        timeout=30
-    )
-
-    response.raise_for_status()
-
-    return response.content
-
-
-# =========================================================
-# VOICE TRANSCRIPTION
-# =========================================================
-
-def transcribe_voice(
-    audio_url
-):
-
-    audio_data = download_file(
-        audio_url
-    )
-
-    temp_file = "/tmp/vk_voice.ogg"
-
-    with open(
-        temp_file,
-        "wb"
-    ) as file:
-
-        file.write(
-            audio_data
-        )
-
-    with open(
-        temp_file,
-        "rb"
-    ) as audio_file:
-
-        transcription = (
-            groq_client
-            .audio
-            .transcriptions
-            .create(
-
-                file=audio_file,
-
-                model="whisper-large-v3-turbo",
-
-                response_format="text"
-            )
-        )
-
-    return str(
-        transcription
-    ).strip()
-
-
-# =========================================================
-# GET VOICE
-# =========================================================
-
-def get_voice_url(
-    message
-):
-
-    attachments = message.get(
-        "attachments",
-        []
-    )
-
-    for attachment in attachments:
-
+def get_voice(message):
+    for attachment in message.get(
+        "attachments", []
+    ):
         if attachment.get(
             "type"
         ) != "audio_message":
-
             continue
 
         audio = attachment.get(
@@ -1323,57 +918,57 @@ def get_voice_url(
         )
 
         if transcript:
-
             return {
-
-                "transcript":
-                    transcript,
-
-                "url":
-                    None
+                "text": transcript.strip(),
+                "url": None
             }
 
-        url = audio.get(
-            "link_ogg"
-        )
+        url = audio.get("link_ogg")
 
         if url:
-
             return {
-
-                "transcript":
-                    None,
-
-                "url":
-                    url
+                "text": None,
+                "url": url
             }
 
     return None
 
 
+def transcribe_voice(url):
+    data = requests.get(
+        url,
+        timeout=30
+    ).content
+
+    path = "/tmp/voice.ogg"
+
+    with open(path, "wb") as file:
+        file.write(data)
+
+    with open(path, "rb") as file:
+        result = groq.audio.transcriptions.create(
+            file=file,
+            model="whisper-large-v3-turbo",
+            response_format="text"
+        )
+
+    return str(result).strip()
+
+
 # =========================================================
-# GET IMAGE
+# IMAGE
 # =========================================================
 
-def get_image_url(
-    message
-):
+def get_image(message):
+    best = None
+    best_area = 0
 
-    attachments = message.get(
-        "attachments",
-        []
-    )
-
-    best_url = None
-
-    best_size = 0
-
-    for attachment in attachments:
-
+    for attachment in message.get(
+        "attachments", []
+    ):
         if attachment.get(
             "type"
         ) != "photo":
-
             continue
 
         photo = attachment.get(
@@ -1381,218 +976,151 @@ def get_image_url(
             {}
         )
 
-        sizes = photo.get(
-            "sizes",
-            []
-        )
+        for size in photo.get(
+            "sizes", []
+        ):
+            url = size.get("url")
 
-        for size in sizes:
+            if not url:
+                continue
 
-            width = size.get(
-                "width",
-                0
+            area = (
+                size.get("width", 0)
+                * size.get("height", 0)
             )
 
-            height = size.get(
-                "height",
-                0
-            )
+            if area > best_area:
+                best = url
+                best_area = area
 
-            url = size.get(
-                "url"
-            )
+    return best
 
-            area = width * height
-
-            if (
-                url
-                and area > best_size
-            ):
-
-                best_size = area
-
-                best_url = url
-
-    return best_url
-
-
-# =========================================================
-# IMAGE ANALYSIS
-# =========================================================
 
 def analyze_image(
     image_url,
-    user_text
+    text
 ):
-
     if not PERPLEXITY_API_KEY:
-
         raise RuntimeError(
             "PERPLEXITY_API_KEY не установлен."
         )
 
     if not PERPLEXITY_MODEL:
-
         raise RuntimeError(
             "PERPLEXITY_MODEL не установлен."
         )
 
-    headers = {
-
-        "Authorization":
-            f"Bearer {PERPLEXITY_API_KEY}",
-
-        "Content-Type":
-            "application/json"
-    }
-
-    user_content = [
-
+    content = [
         {
-
-            "type":
-                "text",
-
+            "type": "text",
             "text": (
-                "Проанализируй этот скриншот "
-                "из Tanks Blitz.\n\n"
-
-                "Описывай только то, что действительно "
-                "видно на изображении.\n"
-
-                "Не придумывай отсутствующие данные.\n\n"
-
-                "Вопрос пользователя:\n"
-                + user_text
+                "Проанализируй скриншот Tanks Blitz "
+                "и ответь только на вопрос пользователя.\n"
+                "Не описывай весь скриншот.\n"
+                "Не придумывай то, чего не видно.\n"
+                f"Вопрос: {text}"
             )
         },
-
         {
-
-            "type":
-                "image_url",
-
+            "type": "image_url",
             "image_url": {
-
-                "url":
-                    image_url
+                "url": image_url
             }
         }
-
     ]
 
-    payload = {
-
-        "model":
-            PERPLEXITY_MODEL,
-
-        "messages": [
-
-            {
-
-                "role":
-                    "system",
-
-                "content": (
-                    "Ты анализируешь изображения "
-                    "из Tanks Blitz. "
-                    "Не смешивай игру с World of Tanks PC. "
-                    "Не придумывай то, чего не видно."
-                )
-            },
-
-            {
-
-                "role":
-                    "user",
-
-                "content":
-                    user_content
-            }
-
-        ],
-
-        "max_tokens":
-            600
-    }
-
     response = requests.post(
-
         "https://api.perplexity.ai/chat/completions",
-
-        headers=headers,
-
-        json=payload,
-
+        headers={
+            "Authorization":
+                f"Bearer {PERPLEXITY_API_KEY}",
+            "Content-Type":
+                "application/json"
+        },
+        json={
+            "model": PERPLEXITY_MODEL,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Анализируй только изображение "
+                        "Tanks Blitz. Не выдумывай."
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": content
+                }
+            ],
+            "max_tokens": IMAGE_MAX_TOKENS
+        },
         timeout=45
     )
 
     if response.status_code != 200:
-
         raise RuntimeError(
-
-            f"Perplexity image HTTP "
-            f"{response.status_code}: "
-            f"{response.text[:500]}"
+            f"Image HTTP {response.status_code}"
         )
 
     data = response.json()
 
-    analysis = (
-
+    result = (
         data["choices"][0]
         ["message"]
         ["content"]
+        .strip()
     )
 
-    return analysis.strip()
+    if not result:
+        raise RuntimeError(
+            "Пустой анализ изображения."
+        )
 
+    return result[:3000]
 
-# =========================================================
-# IMAGE → GROQ
-# =========================================================
 
 def analyze_image_then_groq(
     image_url,
-    user_text,
+    text,
     user_id=None,
     user_name=None
 ):
-
-    image_analysis = analyze_image(
-
+    analysis = analyze_image(
         image_url,
-
-        user_text
+        text
     )
 
     prompt = (
-
-        "Пользователь отправил скриншот "
-        "из Tanks Blitz.\n\n"
-
-        "Вопрос пользователя:\n"
-        f"{user_text}\n\n"
-
-        "Подтверждённый анализ изображения:\n"
-        f"{image_analysis}\n\n"
-
-        "Сформируй ОДИН короткий ответ "
-        "пользователю.\n\n"
-
-        "Используй только данные из анализа. "
-        "Не придумывай то, чего там нет. "
+        "Ответь пользователю по анализу скриншота.\n"
+        f"Вопрос: {text}\n"
+        f"Анализ: {analysis}\n\n"
+        "Один короткий ответ. "
         "Не упоминай внутреннюю систему, "
-        "Perplexity, Sonar или Groq."
+        "Perplexity, Sonar, Groq или API. "
+        "Не придумывай отсутствующие данные."
     )
 
     return ask_groq(
-
         prompt,
+        user_id,
+        user_name
+    )
 
-        user_id=user_id,
 
-        user_name=user_name
+# =========================================================
+# ERROR MESSAGE
+# =========================================================
+
+def ai_error_message(error):
+    if "обе модели" in str(error).lower():
+        return (
+            "ИИ сейчас упёрся в лимит 😅 "
+            "Попробуй немного позже."
+        )
+
+    return (
+        "Танковый мозг немного заглох 😅 "
+        "Попробуй ещё раз."
     )
 
 
@@ -1605,403 +1133,305 @@ def analyze_image_then_groq(
     methods=["POST"]
 )
 def callback():
-
-    data = request.get_json(
-        force=True
-    )
-
-    # =====================================================
-    # SECRET
-    # =====================================================
-
-    if (
-
-        VK_GROUP_SECRET
-
-        and data.get(
-            "secret"
-        ) != VK_GROUP_SECRET
-
-    ):
-
-        return "invalid secret", 403
-
-    event_type = data.get(
-        "type"
-    )
-
-    # =====================================================
-    # CONFIRMATION
-    # =====================================================
-
-    if event_type == "confirmation":
-
-        return VK_CONFIRMATION_CODE
-
-    # =====================================================
-    # ONLY MESSAGE_NEW
-    # =====================================================
-
-    if event_type != "message_new":
-
-        return "ok"
-
-    # =====================================================
-    # DUPLICATE EVENT PROTECTION
-    # =====================================================
-
-    event_id = data.get(
-        "event_id"
-    )
-
-    if already_processed(
-        event_id
-    ):
-
-        print(
-            "Повторное событие VK — игнорируем.",
-            flush=True
+    try:
+        data = request.get_json(
+            force=True
         )
 
-        return "ok"
+        # -------------------------------------------------
+        # SECRET
+        # -------------------------------------------------
 
-    # =====================================================
-    # MESSAGE
-    # =====================================================
+        if (
+            VK_GROUP_SECRET
+            and data.get("secret")
+            != VK_GROUP_SECRET
+        ):
+            return "invalid secret", 403
 
-    message = data["object"]["message"]
+        event_type = data.get("type")
 
-    peer_id = message[
-        "peer_id"
-    ]
+        # -------------------------------------------------
+        # CONFIRMATION
+        # -------------------------------------------------
 
-    sender_id = message.get(
-        "from_id"
-    )
+        if event_type == "confirmation":
+            return VK_CONFIRMATION_CODE
 
-    if not sender_id:
+        if event_type != "message_new":
+            return "ok"
 
-        sender_id = message.get(
-            "user_id"
-        )
+        # -------------------------------------------------
+        # DUPLICATE
+        # -------------------------------------------------
 
-    user_id = str(
-        sender_id
-    ) if sender_id else str(
-        peer_id
-    )
-
-    text = message.get(
-        "text",
-        ""
-    ).strip()
-
-    # =====================================================
-    # USER NAME
-    # =====================================================
-
-    user_name = get_vk_user_name(
-        sender_id
-    )
-
-    if user_name:
-
-        print(
-            "Пользователь:",
-            user_name,
-            flush=True
-        )
-
-    # =====================================================
-    # GREETING
-    # =====================================================
-
-    if is_greeting(text):
-
-        send_vk_message(
-
-            peer_id,
-
-            greeting_response(
-                text
-            )
-        )
-
-        return "ok"
-
-    # =====================================================
-    # VOICE
-    # =====================================================
-
-    voice = get_voice_url(
-        message
-    )
-
-    if voice:
-
-        try:
-
-            if voice["transcript"]:
-
-                recognized_text = (
-                    voice["transcript"]
-                    .strip()
-                )
-
-            else:
-
-                recognized_text = (
-                    transcribe_voice(
-                        voice["url"]
-                    )
-                )
-
+        if already_processed(
+            data.get("event_id")
+        ):
             print(
-                "Распознан голос:",
-                recognized_text,
+                "Duplicate VK event.",
                 flush=True
             )
+            return "ok"
 
-            if not should_use_ai(
+        message = (
+            data["object"]["message"]
+        )
 
-                recognized_text,
+        peer_id = message["peer_id"]
 
-                user_id
-            ):
+        sender_id = message.get(
+            "from_id"
+        )
+
+        if not sender_id:
+            sender_id = message.get(
+                "user_id"
+            )
+
+        user_id = str(
+            sender_id or peer_id
+        )
+
+        text = message.get(
+            "text",
+            ""
+        ).strip()
+
+        # -------------------------------------------------
+        # GREETING
+        # -------------------------------------------------
+
+        if is_greeting(text):
+            send_message(
+                peer_id,
+                greeting_response(text)
+            )
+            return "ok"
+
+        # -------------------------------------------------
+        # VOICE
+        # -------------------------------------------------
+
+        voice = get_voice(message)
+
+        if voice:
+            if voice["text"]:
+                recognized = voice["text"]
 
                 print(
-                    "Голос не требует ответа — "
-                    "игнорируем.",
+                    "VK transcript:",
+                    recognized,
+                    flush=True
+                )
+            else:
+                print(
+                    "Whisper transcription...",
                     flush=True
                 )
 
+                recognized = transcribe_voice(
+                    voice["url"]
+                )
+
+            if not recognized:
                 return "ok"
 
-            # Добавляем голос пользователя
-            # в память только перед AI.
-            add_memory(
+            if not should_use_ai(
+                recognized,
+                user_id
+            ):
+                print(
+                    "Voice ignored by local router.",
+                    flush=True
+                )
+                return "ok"
 
-                user_id,
-
-                "user",
-
-                recognized_text
+            user_name = get_vk_user_name(
+                sender_id
             )
 
             reply = ask_ai(
-
-                recognized_text,
-
-                user_id=user_id,
-
-                user_name=user_name
+                recognized,
+                user_id,
+                user_name
             )
 
             add_memory(
-
                 user_id,
-
-                "assistant",
-
-                reply
-            )
-
-            clear_old_memory()
-
-            send_vk_message(
-
-                peer_id,
-
-                reply
-            )
-
-        except Exception as e:
-
-            print(
-                "Ошибка обработки голоса:",
-                e,
-                flush=True
-            )
-
-        return "ok"
-
-    # =====================================================
-    # IMAGE
-    # =====================================================
-
-    image_url = get_image_url(
-        message
-    )
-
-    if image_url:
-
-        # Для изображения больше не нужен знак ?.
-        # Если есть осмысленный текст — анализируем.
-        # Если текста нет, изображение игнорируем.
-
-        if not text:
-
-            print(
-                "Скриншот без текста — игнорируем.",
-                flush=True
-            )
-
-            return "ok"
-
-        if not should_use_ai(
-
-            text,
-
-            user_id
-        ):
-
-            print(
-                "Текст к скриншоту не требует "
-                "ответа — игнорируем.",
-                flush=True
-            )
-
-            return "ok"
-
-        try:
-
-            add_memory(
-
-                user_id,
-
                 "user",
+                recognized
+            )
 
-                text
+            add_memory(
+                user_id,
+                "assistant",
+                reply
+            )
+
+            cleanup_memory()
+
+            send_message(
+                peer_id,
+                reply
+            )
+
+            return "ok"
+
+        # -------------------------------------------------
+        # IMAGE
+        # -------------------------------------------------
+
+        image_url = get_image(message)
+
+        if image_url:
+            if not text:
+                print(
+                    "Image without question ignored.",
+                    flush=True
+                )
+                return "ok"
+
+            if not should_use_ai(
+                text,
+                user_id
+            ):
+                print(
+                    "Image text ignored.",
+                    flush=True
+                )
+                return "ok"
+
+            user_name = get_vk_user_name(
+                sender_id
             )
 
             reply = analyze_image_then_groq(
-
                 image_url,
-
                 text,
-
-                user_id=user_id,
-
-                user_name=user_name
+                user_id,
+                user_name
             )
 
             add_memory(
-
                 user_id,
+                "user",
+                text
+            )
 
+            add_memory(
+                user_id,
                 "assistant",
-
                 reply
             )
 
-            clear_old_memory()
+            cleanup_memory()
 
-            send_vk_message(
-
+            send_message(
                 peer_id,
-
                 reply
+            )
+
+            return "ok"
+
+        # -------------------------------------------------
+        # EMPTY
+        # -------------------------------------------------
+
+        if not text:
+            return "ok"
+
+        # -------------------------------------------------
+        # LOCAL ROUTER
+        # -------------------------------------------------
+
+        if not should_use_ai(
+            text,
+            user_id
+        ):
+            print(
+                "Ignored locally → 0 AI tokens.",
+                flush=True
+            )
+            return "ok"
+
+        # -------------------------------------------------
+        # NAME
+        # -------------------------------------------------
+
+        user_name = get_vk_user_name(
+            sender_id
+        )
+
+        if user_name:
+            print(
+                "User:",
+                user_name,
+                flush=True
+            )
+
+        # -------------------------------------------------
+        # AI
+        # -------------------------------------------------
+
+        try:
+            reply = ask_ai(
+                text,
+                user_id,
+                user_name
             )
 
         except Exception as e:
-
             print(
-                "Ошибка анализа изображения:",
+                "AI error:",
                 e,
                 flush=True
             )
 
-        return "ok"
+            send_message(
+                peer_id,
+                ai_error_message(e)
+            )
 
-    # =====================================================
-    # EMPTY TEXT
-    # =====================================================
+            return "ok"
 
-    if not text:
+        # -------------------------------------------------
+        # MEMORY
+        # -------------------------------------------------
 
-        return "ok"
-
-    # =====================================================
-    # SMART LOCAL ROUTER
-    # =====================================================
-
-    if not should_use_ai(
-
-        text,
-
-        user_id
-    ):
-
-        print(
-            "Сообщение не требует AI — "
-            "игнорируем без расхода токенов.",
-            flush=True
-        )
-
-        return "ok"
-
-    # =====================================================
-    # AI
-    # =====================================================
-
-    try:
-
-        # Сначала сохраняем сообщение пользователя.
         add_memory(
-
             user_id,
-
             "user",
-
             text
         )
 
-        reply = ask_ai(
-
-            text,
-
-            user_id=user_id,
-
-            user_name=user_name
-        )
-
-        # Затем сохраняем ответ бота.
         add_memory(
-
             user_id,
-
             "assistant",
-
             reply
         )
 
-        clear_old_memory()
+        cleanup_memory()
+
+        # -------------------------------------------------
+        # SEND
+        # -------------------------------------------------
+
+        send_message(
+            peer_id,
+            reply
+        )
+
+        return "ok"
 
     except Exception as e:
-
         print(
-            "Ошибка AI:",
+            "Callback error:",
             e,
             flush=True
         )
 
-        reply = (
-            "Танковый мозг сейчас немного "
-            "заглох 😅 Попробуй ещё раз."
-        )
-
-    # =====================================================
-    # ONE FINAL MESSAGE
-    # =====================================================
-
-    send_vk_message(
-
-        peer_id,
-
-        reply
-    )
-
-    return "ok"
+        return "ok"
 
 
 # =========================================================
@@ -2009,9 +1439,7 @@ def callback():
 # =========================================================
 
 if __name__ == "__main__":
-
     port = int(
-
         os.environ.get(
             "PORT",
             5000
@@ -2019,8 +1447,6 @@ if __name__ == "__main__":
     )
 
     app.run(
-
         host="0.0.0.0",
-
         port=port
     )
