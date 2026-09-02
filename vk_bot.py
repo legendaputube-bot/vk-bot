@@ -26,7 +26,16 @@ PERPLEXITY_API_KEY = os.environ.get(
 PERPLEXITY_MODEL = os.environ.get(
     "PERPLEXITY_MODEL", ""
 )
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
+SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY", "").strip()
 
+if SUPABASE_URL and not SUPABASE_URL.startswith(("http://", "https://")):
+    SUPABASE_URL = "https://" + SUPABASE_URL
+
+supabase = create_client(
+    SUPABASE_URL,
+    SUPABASE_SECRET_KEY
+)
 VK_API = "https://api.vk.com/method"
 VK_VERSION = "5.199"
 
