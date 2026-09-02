@@ -33,9 +33,10 @@ if SUPABASE_URL and not SUPABASE_URL.startswith(("http://", "https://")):
     SUPABASE_URL = "https://" + SUPABASE_URL
 
 supabase = create_client(
-    SUPABASE_URL,
+  SUPABASE_URL,
     SUPABASE_SECRET_KEY
-)
+) 
+print("Supabase подключён:", bool(supabase), flush=True)
 VK_API = "https://api.vk.com/method"
 VK_VERSION = "5.199"
 
