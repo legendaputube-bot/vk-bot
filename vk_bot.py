@@ -1,13 +1,33 @@
 import os
+import json
+import threading
 import requests
 from flask import Flask, request
 from groq import Groq
+
+
+# =========================
+# НАСТРОЙКИ
+# =========================
 
 VK_TOKEN = os.environ.get("VK_TOKEN", "")
 VK_CONFIRMATION_CODE = os.environ.get("VK_CONFIRMATION_CODE", "")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 VK_GROUP_SECRET = os.environ.get("VK_GROUP_SECRET", "")
 
+VK_API_URL = "https://api.vk.com/method/messages.send"
+VK_API_VERSION = "5.199"
+
+# Файл с памятью пользователей
+MEMORY_FILE = "users_memory.json"
+
+# Сколько последних сообщений хранить у каждого пользователя
+MAX_HISTORY = 10
+
+
+# =========================
+# SYSTEM PROMPT
+# =========================
 
 SYSTEM_PROMPT = """
 Ты — живой, дерзкий и дружелюбный AI-бот сообщества ВКонтакте, посвящённого игре Tanks Blitz PVP битвы от EAST-GAMES LLC / Lesta Games.
@@ -47,6 +67,26 @@ SYSTEM_PROMPT = """
 Если человек попрощался — попрощайся.
 
 Не превращай каждый ответ в напоминание о тематике сообщества.
+
+========================
+ПЕРСОНАЛЬНОЕ ОБЩЕНИЕ
+========================
+
+Ты можешь получать имя пользователя и историю его предыдущего общения.
+
+Используй эту информацию, чтобы понимать, с кем именно разговариваешь.
+
+Если пользователь уже общался с тобой раньше — учитывай предыдущий контекст.
+
+НЕ нужно каждый раз обращаться к пользователю по имени.
+
+Используй имя только тогда, когда это звучит естественно и действительно помогает разговору.
+
+Не выдумывай личную информацию о пользователе.
+
+Не утверждай, что пользователь что-то говорил или делал раньше, если этого нет в переданной истории.
+
+Если в истории несколько пользователей — учитывай только историю текущего пользователя.
 
 ========================
 СТИЛЬ ОБЩЕНИЯ
@@ -179,14 +219,6 @@ SYSTEM_PROMPT = """
 
 Особенно запрещено придумывать конкретные цифры.
 
-Например, нельзя писать:
-«У этого танка 240 урона»
-если такой информации нет в проверенных фактах.
-
-Нельзя писать:
-«У него 220 мм брони»
-если такого факта нет.
-
 Нельзя придумывать правдоподобные цифры только потому, что они кажутся правильными.
 
 ========================
@@ -200,14 +232,10 @@ SYSTEM_PROMPT = """
 «Точность-на-плечах»
 «Мега-фланг»
 «Суперпозиция»
+
 и любые другие придуманные игровые термины.
 
 Используй нормальный человеческий язык.
-
-Можно сказать:
-«ПТ хорошо играют с дистанции»
-
-Но не нужно придумывать для этого отдельное название.
 
 ========================
 ЕСЛИ НЕ ЗНАЕШЬ ОТВЕТ
@@ -225,7 +253,7 @@ SYSTEM_PROMPT = """
 
 «Точного значения у меня сейчас нет — лучше посмотреть ТТХ этой машины в игре.»
 
-Не нужно каждый раз писать одинаковую фразу. Формулируй естественно.
+Не нужно каждый раз писать одинаковую фразу.
 
 ========================
 ФОРМАТ ОТВЕТОВ
@@ -257,8 +285,6 @@ SYSTEM_PROMPT = """
 ========================
 ПРОВЕРЕННЫЕ ФАКТЫ
 ========================
-
-Используй следующие факты как достоверные.
 
 НАЦИИ ДЛЯ СТАРТА:
 
@@ -348,21 +374,13 @@ SYSTEM_PROMPT = """
 
 Можно коротко и с юмором напомнить о специализации бота.
 
-Например:
-
-«Я по танкам 😄 С вопросами по Tanks Blitz — сюда.»
-
-Или:
-
-«Моя специализация попроще: танки, броня и вечные союзники, которые уезжают не туда 😂»
-
-Но не используй одну и ту же фразу постоянно.
+Не используй одну и ту же фразу постоянно.
 
 ========================
-ВАЖНО О КОНТЕКСТЕ
+КОНТЕКСТ ДИАЛОГА
 ========================
 
-Учитывай предыдущие сообщения в разговоре.
+Учитывай предыдущие сообщения текущего пользователя.
 
 Если пользователь продолжает тему, не заставляй его повторять вопрос.
 
@@ -377,55 +395,7 @@ SYSTEM_PROMPT = """
 Пользователь:
 «А новичку?»
 
-Ты должен понять, что речь всё ещё о ПТ и новичке, а не начинать разговор заново.
-
-========================
-ЕСЛИ ПОЛЬЗОВАТЕЛЬ СПОРИТ
-========================
-
-Не нужно автоматически соглашаться.
-
-Если пользователь говорит:
-«Ты неправ»
-
-Можно спокойно ответить:
-«Возможно. Если речь о конкретной машине, дай название — разберём именно её.»
-
-Не выдумывай аргументы ради того, чтобы доказать свою правоту.
-
-========================
-ЕСЛИ ПОЛЬЗОВАТЕЛЬ ПРОСИТ ТТХ
-========================
-
-Если конкретных характеристик нет среди проверенных данных — не придумывай их.
-
-Ответь примерно так:
-
-«Точные ТТХ этой машины я сейчас не вижу, поэтому цифры придумывать не буду. Лучше сверить их в игре.»
-
-========================
-ЕСЛИ ПОЛЬЗОВАТЕЛЬ СПРАШИВАЕТ «СТОИТ ЛИ»
-========================
-
-Не отвечай категорично без причины.
-
-Учитывай стиль игры пользователя.
-
-Например:
-
-«Если нравится играть от дистанции — ПТ тебе может зайти. Если любишь постоянно лезть вперёд, лучше смотреть в сторону более подходящего класса.»
-
-========================
-ОГРАНИЧЕНИЕ ДЛИНЫ
-========================
-
-Обычный ответ:
-1–4 коротких предложения.
-
-Если нужен список:
-максимум 3 пункта.
-
-Не пиши огромные объяснения, если пользователь сам их не просит.
+Ты должен понять, что речь всё ещё о ПТ и новичке.
 
 ========================
 ГЛАВНЫЙ ПРИНЦИП
@@ -441,102 +411,528 @@ SYSTEM_PROMPT = """
 
 Лучше признать отсутствие информации, чем придумать её.
 
-Главное:
 Tanks Blitz — твоя основная тема.
 Естественное общение — твой стиль.
 Точность — важнее уверенного вида.
 """
 
 
+# =========================
+# FLASK + GROQ
+# =========================
+
 app = Flask(__name__)
+
 client = Groq(api_key=GROQ_API_KEY)
 
-VK_API_URL = "https://api.vk.com/method/messages.send"
-VK_API_VERSION = "5.199"
+
+# =========================
+# ПАМЯТЬ ПОЛЬЗОВАТЕЛЕЙ
+# =========================
+
+users_memory = {}
+
+memory_lock = threading.Lock()
 
 
-def ask_groq(user_message: str) -> str:
+def load_memory():
+    """
+    Загружает память пользователей из файла.
+    Если файла нет — создаём пустую память.
+    """
+
+    global users_memory
+
+    try:
+        if os.path.exists(MEMORY_FILE):
+            with open(
+                MEMORY_FILE,
+                "r",
+                encoding="utf-8"
+            ) as file:
+
+                users_memory = json.load(file)
+
+                print(
+                    f"Память загружена. Пользователей: {len(users_memory)}",
+                    flush=True
+                )
+
+        else:
+            users_memory = {}
+
+    except Exception as e:
+        print(
+            "Ошибка загрузки памяти:",
+            e,
+            flush=True
+        )
+
+        users_memory = {}
+
+
+def save_memory():
+    """
+    Сохраняет память пользователей в файл.
+    """
+
+    try:
+        with open(
+            MEMORY_FILE,
+            "w",
+            encoding="utf-8"
+        ) as file:
+
+            json.dump(
+                users_memory,
+                file,
+                ensure_ascii=False,
+                indent=2
+            )
+
+    except Exception as e:
+        print(
+            "Ошибка сохранения памяти:",
+            e,
+            flush=True
+        )
+
+
+def get_user_name(user_id: int) -> str:
+    """
+    Получает имя и фамилию пользователя VK.
+    """
+
+    try:
+        params = {
+            "access_token": VK_TOKEN,
+            "v": VK_API_VERSION,
+            "user_ids": user_id,
+            "fields": "first_name,last_name"
+        }
+
+        response = requests.get(
+            "https://api.vk.com/method/users.get",
+            params=params,
+            timeout=10
+        )
+
+        result = response.json()
+
+        if "response" in result and result["response"]:
+            user = result["response"][0]
+
+            first_name = user.get(
+                "first_name",
+                ""
+            )
+
+            last_name = user.get(
+                "last_name",
+                ""
+            )
+
+            full_name = f"{first_name} {last_name}".strip()
+
+            if full_name:
+                return full_name
+
+    except Exception as e:
+        print(
+            "Ошибка получения имени пользователя:",
+            e,
+            flush=True
+        )
+
+    return "Участник"
+
+
+def get_user_data(user_id: int):
+    """
+    Получает персональные данные пользователя из памяти.
+    """
+
+    user_key = str(user_id)
+
+    with memory_lock:
+
+        if user_key not in users_memory:
+
+            users_memory[user_key] = {
+                "name": get_user_name(user_id),
+                "history": []
+            }
+
+            save_memory()
+
+        return users_memory[user_key]
+
+
+def add_to_history(
+    user_id: int,
+    role: str,
+    content: str
+):
+    """
+    Добавляет сообщение в историю конкретного пользователя.
+    """
+
+    user_key = str(user_id)
+
+    with memory_lock:
+
+        if user_key not in users_memory:
+
+            users_memory[user_key] = {
+                "name": get_user_name(user_id),
+                "history": []
+            }
+
+        history = users_memory[user_key]["history"]
+
+        history.append({
+            "role": role,
+            "content": content
+        })
+
+        # Оставляем только последние сообщения
+        if len(history) > MAX_HISTORY:
+            users_memory[user_key]["history"] = history[-MAX_HISTORY:]
+
+        save_memory()
+
+
+# =========================
+# GROQ
+# =========================
+
+def ask_groq(
+    user_id: int,
+    user_message: str
+) -> str:
+
+    user_data = get_user_data(user_id)
+
+    user_name = user_data.get(
+        "name",
+        "Участник"
+    )
+
+    history = user_data.get(
+        "history",
+        []
+    )
+
+    # Формируем персональный контекст
+    personal_context = f"""
+========================
+ТЕКУЩИЙ ПОЛЬЗОВАТЕЛЬ
+========================
+
+Имя пользователя: {user_name}
+ID пользователя: {user_id}
+
+Это история общения именно с этим пользователем.
+Не смешивай её с другими участниками чата.
+
+========================
+ПРЕДЫДУЩАЯ ИСТОРИЯ
+========================
+"""
+
+    if history:
+
+        for item in history:
+
+            role = item.get(
+                "role",
+                "user"
+            )
+
+            content = item.get(
+                "content",
+                ""
+            )
+
+            if role == "user":
+                personal_context += f"\nПользователь: {content}"
+
+            elif role == "assistant":
+                personal_context += f"\nБот: {content}"
+
+    else:
+
+        personal_context += "\nЭто первое сообщение пользователя."
+
+    messages = [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT
+        },
+        {
+            "role": "system",
+            "content": personal_context
+        },
+        {
+            "role": "user",
+            "content": user_message
+        }
+    ]
+
     completion = client.chat.completions.create(
         model="openai/gpt-oss-120b",
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_message},
-        ],
-        max_tokens=500,
+        messages=messages,
+        max_tokens=500
     )
 
     return completion.choices[0].message.content
 
 
-def send_vk_message(peer_id: int, text: str):
+# =========================
+# VK SEND MESSAGE
+# =========================
+
+def send_vk_message(
+    peer_id: int,
+    text: str
+):
+
     params = {
         "access_token": VK_TOKEN,
         "v": VK_API_VERSION,
         "peer_id": peer_id,
         "message": text,
-        "random_id": 0,
+        "random_id": 0
     }
 
-    response = requests.post(
-        VK_API_URL,
-        data=params,
-        timeout=15
-    )
+    try:
 
-    result = response.json()
+        response = requests.post(
+            VK_API_URL,
+            data=params,
+            timeout=15
+        )
 
-    if "error" in result:
-        print("Ошибка VK API:", result["error"], flush=True)
+        result = response.json()
 
-    return result
+        if "error" in result:
+
+            print(
+                "Ошибка VK API:",
+                result["error"],
+                flush=True
+            )
+
+        return result
+
+    except Exception as e:
+
+        print(
+            "Ошибка отправки сообщения:",
+            e,
+            flush=True
+        )
+
+        return None
 
 
-@app.route("/callback", methods=["POST"])
+# =========================
+# CALLBACK API
+# =========================
+
+@app.route(
+    "/callback",
+    methods=["POST"]
+)
 def callback():
-    data = request.get_json(force=True)
 
-    # Проверяем секрет Callback API
-    if VK_GROUP_SECRET and data.get("secret") != VK_GROUP_SECRET:
+    try:
+
+        data = request.get_json(
+            force=True
+        )
+
+    except Exception:
+
+        return "bad request", 400
+
+
+    # =========================
+    # ПРОВЕРКА SECRET
+    # =========================
+
+    if (
+        VK_GROUP_SECRET
+        and data.get("secret") != VK_GROUP_SECRET
+    ):
+
+        print(
+            "Неверный secret",
+            flush=True
+        )
+
         return "invalid secret", 403
+
 
     event_type = data.get("type")
 
-    # Подтверждение сервера Callback API
+
+    # =========================
+    # CONFIRMATION
+    # =========================
+
     if event_type == "confirmation":
+
         return VK_CONFIRMATION_CODE
 
-    # Новое сообщение
+
+    # =========================
+    # НОВОЕ СООБЩЕНИЕ
+    # =========================
+
     if event_type == "message_new":
-        message = data["object"]["message"]
 
-        user_id = message["from_id"]
-        peer_id = message["peer_id"]
-        text = message.get("text", "")
+        try:
 
-        if text.strip():
+            message = data["object"]["message"]
+
+            # ID человека, который написал сообщение
+            user_id = message["from_id"]
+
+            # Куда нужно отправить ответ
+            peer_id = message["peer_id"]
+
+            text = message.get(
+                "text",
+                ""
+            ).strip()
+
+
+            # Игнорируем пустые сообщения
+            if not text:
+
+                return "ok"
+
+
+            # Игнорируем сообщения,
+            # которые пришли не от обычного пользователя
+            if user_id <= 0:
+
+                return "ok"
+
+
+            print(
+                f"Новое сообщение от {user_id}: {text}",
+                flush=True
+            )
+
+
+            # =========================
+            # ПОЛУЧАЕМ ИМЯ
+            # =========================
+
+            user_data = get_user_data(
+                user_id
+            )
+
+            user_name = user_data.get(
+                "name",
+                "Участник"
+            )
+
+            print(
+                f"Пользователь: {user_name}",
+                flush=True
+            )
+
+
+            # =========================
+            # ДОБАВЛЯЕМ СООБЩЕНИЕ
+            # =========================
+
+            add_to_history(
+                user_id,
+                "user",
+                text
+            )
+
+
+            # =========================
+            # СПРАШИВАЕМ GROQ
+            # =========================
+
             try:
-                reply = ask_groq(text)
+
+                reply = ask_groq(
+                    user_id,
+                    text
+                )
 
             except Exception as e:
-                reply = "Извините, произошла ошибка. Попробуйте позже."
+
                 print(
-                    "Ошибка при обращении к Groq:",
+                    "Ошибка Groq:",
                     e,
                     flush=True
                 )
 
-            # Отправляем ответ туда же, откуда пришло сообщение:
-            # ЛС -> в ЛС
-            # Беседа -> в беседу
-            send_vk_message(peer_id, reply)
+                reply = (
+                    "Что-то я сейчас подвис 😅 "
+                    "Попробуй написать ещё раз."
+                )
+
+
+            # =========================
+            # СОХРАНЯЕМ ОТВЕТ БОТА
+            # =========================
+
+            add_to_history(
+                user_id,
+                "assistant",
+                reply
+            )
+
+
+            # =========================
+            # ОТВЕЧАЕМ
+            # =========================
+
+            send_vk_message(
+                peer_id,
+                reply
+            )
+
+
+        except Exception as e:
+
+            print(
+                "Ошибка обработки сообщения:",
+                e,
+                flush=True
+            )
+
 
         return "ok"
+
 
     return "ok"
 
 
+# =========================
+# ЗАПУСК
+# =========================
+
+load_memory()
+
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+
+    port = int(
+        os.environ.get(
+            "PORT",
+            5000
+        )
+    )
 
     app.run(
         host="0.0.0.0",
