@@ -50,7 +50,7 @@ SONAR_MAX_TOKENS = 300
 IMAGE_MAX_TOKENS = 200
 
 # Память: user → assistant → user → assistant
-MEMORY_LIMIT = 4
+MEMORY_LIMIT = 30
 
 # Кеш Sonar
 SONAR_CACHE_TIME = 30 * 60
