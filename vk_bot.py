@@ -453,11 +453,18 @@ def get_vk_user_name(user_id):
 # =========================================================
 
 def add_memory(user_id, role, content):
-    if user_id and content:
-        user_memory[user_id].append({
+    if not user_id or not content:
+        return
+
+    try:
+        supabase.table("bot_memory").insert({
+            "user_id": str(user_id),
             "role": role,
             "content": content
-        })
+        }).execute()
+
+    except Exception as e:
+        print("Supabase memory save error:", e, flush=True)
 
 
 def get_memory(user_id):
