@@ -1,5 +1,5 @@
 import os
-import re
+import base64
 import requests
 import time
 import threading
@@ -7,130 +7,58 @@ from flask import Flask, request
 from groq import Groq
 
 
-# =========================================================
-# НАСТРОЙКИ
-# =========================================================
-
 VK_TOKEN = os.environ.get("VK_TOKEN", "")
 VK_CONFIRMATION_CODE = os.environ.get("VK_CONFIRMATION_CODE", "")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 VK_GROUP_SECRET = os.environ.get("VK_GROUP_SECRET", "")
+
+
+SYSTEM_PROMPT = (
+    "Ты — дерзкий, языкастый бот сообщества ВКонтакте, посвящённого ИСКЛЮЧИТЕЛЬНО игре "
+    "Tanks Blitz PVP битвы (разработчик EAST-GAMES LLC / Lesta Games) — мобильному танковому "
+    "PVP-шутеру. Это твоё единственное разрешённое направление разговора. "
+    "Если вопрос не связан с этой игрой — дерзко и с юмором отказывайся отвечать по существу, "
+    "напоминай, что тут говорят только про танки.\n\n"
+
+    "ОБРАЩЕНИЕ ПО ИМЕНИ: тебе в начале сообщения передаётся имя пользователя в формате "
+    "'[Имя: ...]'. Обращайся к человеку по этому имени в своём ответе, естественно вписывая "
+    "его в дерзкий стиль. Саму пометку '[Имя: ...]' в ответе не показывай.\n\n"
+
+    "ЗАПРЕТ НА ВЫДУМЫВАНИЕ ТОЧНЫХ ЦИФР: не придумывай точные характеристики техники, "
+    "калибры, урон, броню, названия валюты и другие конкретные цифры — ты их не знаешь. "
+    "Если спрашивают про конкретные характеристики техники или что качать — отвечай в общих "
+    "чертах и советуй посмотреть актуальные гайды и обзоры техники на YouTube, там всё "
+    "наглядно показывают с цифрами и геймплеем.\n\n"
+
+    "ФОРМАТ ОТВЕТА: отвечай КОРОТКО, максимум 2-3 предложения или максимум 3 пункта списком. "
+    "Никаких длинных портянок текста.\n\n"
+
+    "Используешь неформальный тон, лёгкую иронию и подколки, но без грубости и оскорблений. "
+    "Не хами по-настоящему и не переходи на личности — дерзость должна быть смешной, "
+    "а не обидной."
+)
+
+
+app = Flask(__name__)
+client = Groq(api_key=GROQ_API_KEY)
 
 VK_API_URL = "https://api.vk.com/method/messages.send"
 VK_USERS_GET_URL = "https://api.vk.com/method/users.get"
 VK_API_VERSION = "5.199"
 
 
-# =========================================================
-# СИСТЕМНЫЙ ПРОМПТ
-# =========================================================
-
-SYSTEM_PROMPT = (
-    "Ты — ИИ-бот сообщества 'Бонус-коды Tanks blitz' ВКонтакте, посвящённого ИСКЛЮЧИТЕЛЬНО "
-    "игре Tanks Blitz PVP битвы (разработчик EAST-GAMES LLC / Lesta Games). Ты — часть "
-    "админской команды сообщества, свой парень среди танкистов. Ты не просто справочник, "
-    "а участник тусовки: подкалываешь игроков по-дружески, угараешь вместе с ними, "
-    "поддерживаешь живой разговор, помнишь, о чём говорили с человеком раньше "
-    "(тебе для этого дают историю последних сообщений).\n\n"
-
-    "Если разговор уходит совсем далеко от игры — дерзко и с юмором подкалывай и мягко "
-    "возвращай к танкам, но не будь занудой — лёгкий стёб на отвлечённые темы допустим, "
-    "если это часть живого общения с человеком. Просто не отвечай по существу на "
-    "посторонние вопросы.\n\n"
-
-    "ПАМЯТЬ: используй историю переписки с этим человеком, чтобы вести связный диалог, "
-    "шутить над тем, что он говорил раньше, помнить контекст.\n\n"
-
-    "ОБРАЩЕНИЕ ПО ИМЕНИ: тебе передаётся имя пользователя в формате '[Имя: ...]' "
-    "в начале сообщения. Обращайся по имени естественно. Саму пометку в ответе не показывай.\n\n"
-
-    "ЗАПРЕТ НА ВЫДУМЫВАНИЕ ТОЧНЫХ ЦИФР: не придумывай точные характеристики техники, "
-    "калибры, урон, броню, валюту — ты их не знаешь. За конкретикой отправляй смотреть "
-    "гайды на YouTube.\n\n"
-
-    "ФОРМАТ ОТВЕТА: КОРОТКО, максимум 2-3 предложения. "
-    "Никаких портянок текста и никаких технических пометок/тегов — только чистый финальный ответ.\n\n"
-
-    "Тон: неформальный, дерзкий, с иронией и подколками, но без грубости и оскорблений "
-    "в адрес самого человека. Дерзость — смешная, а не обидная."
-)
-
-
-# =========================================================
-# FLASK / GROQ
-# =========================================================
-
-app = Flask(__name__)
-
-client = Groq(api_key=GROQ_API_KEY)
-
-
-# =========================================================
-# МОДЕЛИ
-# =========================================================
-
 MAIN_MODEL = "openai/gpt-oss-120b"
 BACKUP_MODEL = "openai/gpt-oss-20b"
 
-# Модель для анализа изображений
-VISION_MODEL = "qwen/qwen3.6-27b"
+# Модель для обработки изображений
+VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
-
-# Если 120B получил лимит — не пробуем его снова 1 час
 MAIN_MODEL_RETRY_TIME = 60 * 60
 main_model_blocked_until = 0
 
 
 # =========================================================
-# ПАМЯТЬ ДИАЛОГА
-# =========================================================
-
-MAX_HISTORY_MESSAGES = 5
-
-conversation_history = {}
-history_lock = threading.Lock()
-
-
-# =========================================================
-# ОЧИСТКА ОТВЕТА
-# =========================================================
-
-def clean_response(text: str) -> str:
-    """
-    Удаляет <think>...</think> и незакрытый <think>
-    из ответа модели.
-    """
-
-    if not text:
-        return ""
-
-    text = str(text).strip()
-
-    # Удаляем полностью закрытые блоки <think>...</think>
-    text = re.sub(
-        r"<think>.*?</think>",
-        "",
-        text,
-        flags=re.DOTALL | re.IGNORECASE
-    )
-
-    # Если модель начала <think>, но не закрыла его,
-    # удаляем всё начиная с <think>
-    text = re.sub(
-        r"<think>.*$",
-        "",
-        text,
-        flags=re.DOTALL | re.IGNORECASE
-    )
-
-    # На всякий случай убираем сами теги
-    text = re.sub(r"</?think>", "", text, flags=re.IGNORECASE)
-
-    return text.strip()
-
-
-# =========================================================
-# ПРОВЕРКА RATE LIMIT
+# RATE LIMIT
 # =========================================================
 
 def is_rate_limit_error(error):
@@ -146,7 +74,7 @@ def is_rate_limit_error(error):
 
 
 # =========================================================
-# ПОЛУЧЕНИЕ ИМЕНИ ПОЛЬЗОВАТЕЛЯ
+# ИМЯ ПОЛЬЗОВАТЕЛЯ
 # =========================================================
 
 def get_user_name(user_id: int) -> str:
@@ -163,17 +91,9 @@ def get_user_name(user_id: int) -> str:
             timeout=10
         )
 
-        response.raise_for_status()
-
         result = response.json()
 
-        if "response" not in result:
-            return ""
-
-        if not result["response"]:
-            return ""
-
-        first_name = result["response"][0].get("first_name", "")
+        first_name = result["response"][0]["first_name"]
 
         return first_name
 
@@ -188,55 +108,10 @@ def get_user_name(user_id: int) -> str:
 
 
 # =========================================================
-# ИСТОРИЯ
+# ОБЫЧНАЯ МОДЕЛЬ
 # =========================================================
 
-def get_history(user_id: int):
-    with history_lock:
-        return list(
-            conversation_history.get(user_id, [])
-        )
-
-
-def add_to_history(
-    user_id: int,
-    user_message: str,
-    bot_reply: str
-):
-    if not user_message or not bot_reply:
-        return
-
-    with history_lock:
-        history = conversation_history.get(
-            user_id,
-            []
-        )
-
-        history.append({
-            "role": "user",
-            "content": user_message
-        })
-
-        history.append({
-            "role": "assistant",
-            "content": bot_reply
-        })
-
-        max_items = MAX_HISTORY_MESSAGES * 2
-
-        conversation_history[user_id] = history[-max_items:]
-
-
-# =========================================================
-# ЗАПРОС К МОДЕЛИ
-# =========================================================
-
-def ask_model(
-    model,
-    user_message,
-    user_name,
-    user_id
-):
+def ask_model(model, user_message, user_name):
 
     message_with_name = (
         f"[Имя: {user_name}] {user_message}"
@@ -244,45 +119,29 @@ def ask_model(
         else user_message
     )
 
-    messages = [
-        {
-            "role": "system",
-            "content": SYSTEM_PROMPT
-        }
-    ]
-
-    messages.extend(
-        get_history(user_id)
-    )
-
-    messages.append({
-        "role": "user",
-        "content": message_with_name
-    })
-
     completion = client.chat.completions.create(
         model=model,
-        messages=messages,
-        max_tokens=250,
+        messages=[
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT
+            },
+            {
+                "role": "user",
+                "content": message_with_name
+            },
+        ],
+        max_tokens=300,
     )
 
-    raw_reply = completion.choices[0].message.content
+    reply = completion.choices[0].message.content
 
-    reply = clean_response(raw_reply)
-
-    # Если после очистки ничего не осталось
     if not reply:
         raise RuntimeError(
             "Модель вернула пустой ответ"
         )
 
-    add_to_history(
-        user_id,
-        user_message,
-        reply
-    )
-
-    return reply
+    return reply.strip()
 
 
 # =========================================================
@@ -291,21 +150,17 @@ def ask_model(
 
 def ask_groq(
     user_message: str,
-    user_name: str,
-    user_id: int
+    user_name: str
 ) -> str:
 
     global main_model_blocked_until
 
     current_time = time.time()
 
-    # -----------------------------------------------------
-    # Пробуем 120B
-    # -----------------------------------------------------
-
     if current_time >= main_model_blocked_until:
 
         try:
+
             print(
                 "Пробуем основную модель:",
                 MAIN_MODEL,
@@ -315,8 +170,7 @@ def ask_groq(
             reply = ask_model(
                 MAIN_MODEL,
                 user_message,
-                user_name,
-                user_id
+                user_name
             )
 
             main_model_blocked_until = 0
@@ -356,10 +210,6 @@ def ask_groq(
                     flush=True
                 )
 
-    # -----------------------------------------------------
-    # Запасная модель
-    # -----------------------------------------------------
-
     print(
         "Используем запасную модель:",
         BACKUP_MODEL,
@@ -369,8 +219,7 @@ def ask_groq(
     return ask_model(
         BACKUP_MODEL,
         user_message,
-        user_name,
-        user_id
+        user_name
     )
 
 
@@ -400,22 +249,83 @@ def transcribe_voice(audio_url: str) -> str:
 
 
 # =========================================================
+# СКАЧИВАНИЕ ИЗОБРАЖЕНИЯ VK
+# =========================================================
+
+def download_image_as_base64(image_url: str):
+
+    print(
+        "Скачиваем изображение из VK...",
+        flush=True
+    )
+
+    response = requests.get(
+        image_url,
+        timeout=20
+    )
+
+    response.raise_for_status()
+
+    image_data = response.content
+
+    if not image_data:
+        raise RuntimeError(
+            "VK вернул пустое изображение"
+        )
+
+    # Groq имеет ограничение на размер изображения.
+    # Не отправляем слишком большие файлы.
+    if len(image_data) > 20 * 1024 * 1024:
+        raise RuntimeError(
+            "Изображение больше 20 MB"
+        )
+
+    content_type = response.headers.get(
+        "Content-Type",
+        "image/jpeg"
+    )
+
+    if not content_type.startswith("image/"):
+        content_type = "image/jpeg"
+
+    encoded_image = base64.b64encode(
+        image_data
+    ).decode("utf-8")
+
+    data_url = (
+        f"data:{content_type};base64,{encoded_image}"
+    )
+
+    print(
+        "Изображение успешно загружено:",
+        round(len(image_data) / 1024, 1),
+        "KB",
+        flush=True
+    )
+
+    return data_url
+
+
+# =========================================================
 # АНАЛИЗ ИЗОБРАЖЕНИЯ
 # =========================================================
 
 def ask_about_image(
     image_url: str,
     user_name: str,
-    user_id: int,
     caption: str = ""
 ) -> str:
 
     if caption and caption.strip():
+
         prompt_text = caption.strip()
+
     else:
+
         prompt_text = (
-            "Посмотри на этот скриншот из Tanks Blitz "
-            "и коротко прокомментируй его в своём стиле."
+            "Посмотри на этот скриншот из Tanks Blitz. "
+            "Коротко прокомментируй, что на нём происходит, "
+            "в своём дерзком и дружеском стиле."
         )
 
     message_with_name = (
@@ -424,80 +334,58 @@ def ask_about_image(
         else prompt_text
     )
 
-    messages = [
-        {
-            "role": "system",
-            "content": SYSTEM_PROMPT
-        }
-    ]
+    # -----------------------------------------------------
+    # Скачиваем фото из VK и превращаем его в Base64
+    # -----------------------------------------------------
 
-    # Историю оставляем
-    # Но она содержит только обычные текстовые сообщения
-    messages.extend(
-        get_history(user_id)
+    image_data_url = download_image_as_base64(
+        image_url
     )
 
-    messages.append({
-        "role": "user",
-        "content": [
-            {
-                "type": "text",
-                "text": message_with_name
-            },
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": image_url
-                }
-            }
-        ]
-    })
-
     print(
-        "Анализируем изображение через:",
+        "Отправляем изображение в:",
         VISION_MODEL,
         flush=True
     )
 
     completion = client.chat.completions.create(
         model=VISION_MODEL,
-        messages=messages,
-
-        # Короткий ответ
-        max_tokens=250,
-
-        # ВАЖНО:
-        # полностью отключаем reasoning,
-        # чтобы модель не выдавала <think>
-        reasoning_effort="none",
+        messages=[
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": message_with_name
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": image_data_url
+                        }
+                    }
+                ]
+            }
+        ],
+        max_tokens=300,
     )
 
-    raw_reply = completion.choices[0].message.content
-
-    print(
-        "Ответ vision-модели:",
-        raw_reply,
-        flush=True
-    )
-
-    reply = clean_response(raw_reply)
+    reply = completion.choices[0].message.content
 
     if not reply:
         raise RuntimeError(
             "Vision-модель вернула пустой ответ"
         )
 
-    add_to_history(
-        user_id,
-        prompt_text,
-        reply
-    )
-
-    return reply
+    return reply.strip()
 
 
 # =========================================================
-# ОТПРАВКА СООБЩЕНИЯ VK
+# ОТПРАВКА В VK
 # =========================================================
 
 def send_vk_message(
@@ -507,8 +395,8 @@ def send_vk_message(
 
     if not text:
         text = (
-            "Что-то я завис 😅 "
-            "Попробуй отправить ещё раз."
+            "Что-то я сейчас подвис 😅 "
+            "Попробуй ещё раз."
         )
 
     params = {
@@ -527,11 +415,10 @@ def send_vk_message(
             timeout=15
         )
 
-        response.raise_for_status()
-
         result = response.json()
 
         if "error" in result:
+
             print(
                 "Ошибка VK API:",
                 result["error"],
@@ -543,7 +430,7 @@ def send_vk_message(
     except Exception as e:
 
         print(
-            "Ошибка отправки сообщения VK:",
+            "Ошибка отправки VK:",
             e,
             flush=True
         )
@@ -552,7 +439,7 @@ def send_vk_message(
 
 
 # =========================================================
-# ОБЫЧНОЕ СООБЩЕНИЕ
+# ТЕКСТ
 # =========================================================
 
 def handle_message(
@@ -569,8 +456,7 @@ def handle_message(
 
         reply = ask_groq(
             text,
-            user_name,
-            from_id
+            user_name
         )
 
     except Exception as e:
@@ -593,7 +479,7 @@ def handle_message(
 
 
 # =========================================================
-# ГОЛОСОВОЕ СООБЩЕНИЕ
+# ГОЛОС
 # =========================================================
 
 def handle_voice_message(
@@ -620,13 +506,12 @@ def handle_voice_message(
 
         if not text:
             raise RuntimeError(
-                "Голосовое сообщение пустое"
+                "Не удалось распознать голос"
             )
 
         reply = ask_groq(
             text,
-            user_name,
-            from_id
+            user_name
         )
 
     except Exception as e:
@@ -668,7 +553,6 @@ def handle_image_message(
         reply = ask_about_image(
             image_url,
             user_name,
-            from_id,
             caption
         )
 
@@ -692,28 +576,24 @@ def handle_image_message(
 
 
 # =========================================================
-# ПОЛУЧЕНИЕ ЛУЧШЕЙ ФОТОГРАФИИ
+# ВЫБОР САМОЙ БОЛЬШОЙ ФОТОГРАФИИ VK
 # =========================================================
 
 def get_best_photo_url(photo):
-    """
-    VK может отдавать несколько размеров фотографии.
-    Берём самый большой доступный.
-    """
 
-    if not photo:
-        return None
-
-    sizes = photo.get("sizes", [])
+    sizes = photo.get(
+        "sizes",
+        []
+    )
 
     if not sizes:
         return None
 
     best_size = max(
         sizes,
-        key=lambda x: (
-            x.get("width", 0)
-            * x.get("height", 0)
+        key=lambda size: (
+            size.get("width", 0)
+            * size.get("height", 0)
         )
     )
 
@@ -739,7 +619,7 @@ def callback():
     except Exception as e:
 
         print(
-            "Ошибка JSON:",
+            "Ошибка получения JSON:",
             e,
             flush=True
         )
@@ -747,7 +627,7 @@ def callback():
         return "bad request", 400
 
     # -----------------------------------------------------
-    # Проверка secret
+    # Проверяем secret
     # -----------------------------------------------------
 
     if (
@@ -762,10 +642,12 @@ def callback():
 
         return "invalid secret", 403
 
-    event_type = data.get("type")
+    event_type = data.get(
+        "type"
+    )
 
     # -----------------------------------------------------
-    # Подтверждение сервера
+    # Подтверждение Callback API
     # -----------------------------------------------------
 
     if event_type == "confirmation":
@@ -778,114 +660,112 @@ def callback():
 
     if event_type == "message_new":
 
-        obj = data.get(
+        message = data.get(
             "object",
+            {}
+        ).get(
+            "message",
             {}
         )
 
-        from_id = obj.get(
-            "from_id"
-        )
-
-        peer_id = obj.get(
+        peer_id = message.get(
             "peer_id"
         )
 
-        text = (
-            obj.get("text")
-            or ""
-        ).strip()
-
-        if not from_id or not peer_id:
-
-            return "ok"
-
-        # -------------------------------------------------
-        # Вложения
-        # -------------------------------------------------
-
-        attachments = (
-            obj.get("attachments")
-            or []
+        from_id = message.get(
+            "from_id"
         )
 
+        text = message.get(
+            "text",
+            ""
+        )
+
+        attachments = message.get(
+            "attachments",
+            []
+        )
+
+        if not peer_id or not from_id:
+            return "ok"
+
+        voice_url = None
+        image_url = None
+
         # -------------------------------------------------
-        # Ищем голосовое
+        # Ищем вложения
         # -------------------------------------------------
 
-        for attachment in attachments:
+        for att in attachments:
 
-            if attachment.get("type") == "audio_message":
+            att_type = att.get(
+                "type"
+            )
 
-                audio_message = (
-                    attachment.get(
-                        "audio_message"
-                    )
-                    or {}
+            # Голосовое
+            if att_type == "audio_message":
+
+                audio_message = att.get(
+                    "audio_message",
+                    {}
                 )
 
-                voice_url = audio_message.get(
-                    "link_ogg"
+                voice_url = (
+                    audio_message.get("link_ogg")
+                    or
+                    audio_message.get("link_mp3")
                 )
 
-                if not voice_url:
-                    voice_url = audio_message.get(
-                        "link_mp3"
-                    )
+            # Фото
+            elif att_type == "photo":
 
-                if voice_url:
-
-                    threading.Thread(
-                        target=handle_voice_message,
-                        args=(
-                            peer_id,
-                            from_id,
-                            voice_url
-                        ),
-                        daemon=True
-                    ).start()
-
-                    return "ok"
-
-        # -------------------------------------------------
-        # Ищем фотографию
-        # -------------------------------------------------
-
-        for attachment in attachments:
-
-            if attachment.get("type") == "photo":
-
-                photo = (
-                    attachment.get(
-                        "photo"
-                    )
-                    or {}
+                photo = att.get(
+                    "photo",
+                    {}
                 )
 
                 image_url = get_best_photo_url(
                     photo
                 )
 
-                if image_url:
-
-                    threading.Thread(
-                        target=handle_image_message,
-                        args=(
-                            peer_id,
-                            from_id,
-                            image_url,
-                            text
-                        ),
-                        daemon=True
-                    ).start()
-
-                    return "ok"
-
         # -------------------------------------------------
-        # Обычный текст
+        # Голос
         # -------------------------------------------------
 
-        if text:
+        if voice_url:
+
+            threading.Thread(
+                target=handle_voice_message,
+                args=(
+                    peer_id,
+                    from_id,
+                    voice_url
+                ),
+                daemon=True
+            ).start()
+
+        # -------------------------------------------------
+        # Фото
+        # -------------------------------------------------
+
+        elif image_url:
+
+            threading.Thread(
+                target=handle_image_message,
+                args=(
+                    peer_id,
+                    from_id,
+                    image_url,
+                    text
+                ),
+                daemon=True
+            ).start()
+
+        # -------------------------------------------------
+        # Текст
+        # -------------------------------------------------
+
+        elif text.strip():
 
             threading.Thread(
                 target=handle_message,
@@ -899,10 +779,6 @@ def callback():
 
         return "ok"
 
-    # -----------------------------------------------------
-    # Все остальные события
-    # -----------------------------------------------------
-
     return "ok"
 
 
@@ -915,7 +791,7 @@ if __name__ == "__main__":
     port = int(
         os.environ.get(
             "PORT",
-            10000
+            5000
         )
     )
 
