@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 import time
 import threading
@@ -29,7 +30,8 @@ SYSTEM_PROMPT = (
     "наглядно показывают с цифрами и геймплеем.\n\n"
 
     "ФОРМАТ ОТВЕТА: отвечай КОРОТКО, максимум 2-3 предложения или максимум 3 пункта списком. "
-    "Никаких длинных портянок текста.\n\n"
+    "Никаких длинных портянок текста. Не показывай никаких технических пометок, тегов или "
+    "промежуточных рассуждений — только финальный чистый ответ.\n\n"
 
     "Используешь неформальный тон, лёгкую иронию и подколки, но без грубости и оскорблений. "
     "Не хами по-настоящему и не переходи на личности — дерзость должна быть смешной, "
@@ -49,6 +51,12 @@ BACKUP_MODEL = "openai/gpt-oss-20b"
 VISION_MODEL = "qwen/qwen3.6-27b"
 MAIN_MODEL_RETRY_TIME = 60 * 60  # 1 час
 main_model_blocked_until = 0
+
+
+def clean_response(text: str) -> str:
+    """Убирает технический блок размышлений <think>...</think> из ответа."""
+    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    return cleaned.strip()
 
 
 def is_rate_limit_error(error):
@@ -89,7 +97,7 @@ def ask_model(model, user_message, user_name):
         ],
         max_tokens=300,
     )
-    return completion.choices[0].message.content
+    return clean_response(completion.choices[0].message.content)
 
 
 def ask_groq(user_message: str, user_name: str) -> str:
@@ -146,7 +154,7 @@ def ask_about_image(image_url: str, user_name: str, caption: str = "") -> str:
         ],
         max_tokens=300,
     )
-    return completion.choices[0].message.content
+    return clean_response(completion.choices[0].message.content)
 
 
 def send_vk_message(peer_id: int, text: str):
