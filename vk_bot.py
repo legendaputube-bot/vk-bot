@@ -471,9 +471,26 @@ def get_memory(user_id):
     if not user_id:
         return []
 
-    return list(
-        user_memory.get(user_id, [])
-    )
+    try:
+        response = (
+            supabase.table("bot_memory")
+            .select("role, content")
+            .eq("user_id", str(user_id))
+            .order("created_at", desc=True)
+            .limit(MEMORY_LIMIT)
+            .execute()
+        )
+
+        rows = response.data or []
+
+        # Возвращаем сообщения в правильном порядке
+        rows.reverse()
+
+        return rows
+
+    except Exception as e:
+        print("Supabase memory load error:", e, flush=True)
+        return []
 
 
 def cleanup_memory():
