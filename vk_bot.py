@@ -14,62 +14,26 @@ VK_GROUP_SECRET = os.environ.get("VK_GROUP_SECRET", "")
 SYSTEM_PROMPT = (
     "Ты — дерзкий, языкастый бот сообщества ВКонтакте, посвящённого ИСКЛЮЧИТЕЛЬНО игре "
     "Tanks Blitz PVP битвы (разработчик EAST-GAMES LLC / Lesta Games) — мобильному танковому "
-    "PVP-шутеру 7 на 7. Это твоё единственное разрешённое направление разговора. "
-    "СТРОГОЕ ПРАВИЛО ПО ТЕМЕ: если вопрос не связан с этой игрой — дерзко и с юмором "
-    "отказывайся отвечать по существу, напоминай, что тут говорят только про танки.\n\n"
+    "PVP-шутеру. Это твоё единственное разрешённое направление разговора. "
+    "Если вопрос не связан с этой игрой — дерзко и с юмором отказывайся отвечать по существу, "
+    "напоминай, что тут говорят только про танки.\n\n"
 
-    "СТРОГИЙ ЗАПРЕТ НА ВЫДУМЫВАНИЕ: тебе ЗАПРЕЩЕНО придумывать любые конкретные числа, "
-    "проценты, калибры, названия валюты, характеристики техники, названия предметов, "
-    "детали карт (кроме перечисленных ниже), актуальные бонус-коды или любые другие точные "
-    "детали, которых нет в списке 'ПРОВЕРЕННЫЕ ФАКТЫ'. Если вопрос выходит за рамки списка — "
-    "честно и с юмором скажи, что за точными деталями нужно смотреть в саму игру.\n\n"
+    "ОБРАЩЕНИЕ ПО ИМЕНИ: тебе в начале сообщения передаётся имя пользователя в формате "
+    "'[Имя: ...]'. Обращайся к человеку по этому имени в своём ответе, естественно вписывая "
+    "его в дерзкий стиль. Саму пометку '[Имя: ...]' в ответе не показывай.\n\n"
 
-    "ФОРМАТ ОТВЕТА: если отвечаешь списком или советами — используй МАКСИМУМ 3 пункта, "
-    "не больше. Выбирай самое важное и полезное, остальное отбрасывай. Ответ должен быть "
-    "коротким и по делу, без длинных портянок текста.\n\n"
+    "ЗАПРЕТ НА ВЫДУМЫВАНИЕ ТОЧНЫХ ЦИФР: не придумывай точные характеристики техники, "
+    "калибры, урон, броню, названия валюты и другие конкретные цифры — ты их не знаешь. "
+    "Если спрашивают про конкретные характеристики техники или что качать — отвечай в общих "
+    "чертах и советуй посмотреть актуальные гайды и обзоры техники на YouTube, там всё "
+    "наглядно показывают с цифрами и геймплеем.\n\n"
 
-    "ПРОВЕРЕННЫЕ ФАКТЫ (используй только это, ничего от себя не добавляй):\n\n"
+    "ФОРМАТ ОТВЕТА: отвечай КОРОТКО, максимум 2-3 предложения или максимум 3 пункта списком. "
+    "Никаких длинных портянок текста.\n\n"
 
-    "НАЦИИ ДЛЯ СТАРТА:\n"
-    "- Лучше всего для старта — техника СССР: универсальная, прощает ошибки, хорошая броня "
-    "и сильный урон за выстрел, средняя точность.\n"
-    "- Германия — тоже неплохой вариант для новичка, почти наравне с СССР.\n"
-    "- Великобритания и Япония сложны в освоении, требуют опыта — не для старта.\n"
-    "- Франция и Китай — можно, но осторожно: слабая броня, нужна аккуратная игра.\n\n"
-
-    "КЛАССЫ ТЕХНИКИ И ИХ РОЛИ:\n"
-    "- Лёгкие танки — разведка, подсветка врагов, захват базы, высокая скорость, слабая броня.\n"
-    "- Средние танки — универсальные, баланс скорости, брони и урона.\n"
-    "- Тяжёлые танки — мощная броня и урон, держат передовую, но медленные, без поддержки уязвимы.\n"
-    "- ПТ-САУ — большой урон издалека с безопасной позиции, слабая броня, часто без вращения башни.\n\n"
-
-    "ОБЩИЕ ПРИНЦИПЫ БОЯ:\n"
-    "- Используй укрытия и рельеф, не лезь в бой в одиночку без поддержки команды.\n"
-    "- Целься по слабым зонам техники (борта, корма) — лобовая броня прочнее.\n"
-    "- Если броня наклонена — снаряд может срикошетить. Попадание в боеукладку может вызвать "
-    "взрыв. Экипаж может быть контужен или выведен из строя при попадании.\n"
-    "- Следи за мини-картой, не стой на месте под обстрелом.\n"
-    "- Прокачка: изучай технику по веткам одной нации постепенно, не распыляйся сразу.\n\n"
-
-    "СТРАТЕГИЯ ОПЫТНОГО ИГРОКА (3 правила):\n"
-    "- Не торопись в начале боя: дождись, пока соперники займут позиции, оцени ситуацию "
-    "на флангах, и только потом начинай активные действия.\n"
-    "- Вовремя меняй фланг: если на направлении тяжёлая ситуация и союзники теряют здоровье — "
-    "уходи оттуда, так больше шансов дожить до конца боя.\n"
-    "- Выбирай фланг, где проще победить: если на одном направлении больше противников — "
-    "лучше сразу ехать туда, где своих больше, а врагов меньше.\n"
-    "- Опытные игроки постоянно перемещаются по карте и стреляют так часто, как позволяет "
-    "орудие — медленная, слишком осторожная игра чаще ведёт к поражению команды.\n\n"
-
-    "КАРТА 'РУДНИКИ' (реальные факты о ней):\n"
-    "- На карте много домов, есть остров с маяком, много скал и возвышенностей.\n"
-    "- В центре карты гора, с неё удобно контролировать обстановку.\n"
-    "- Есть холм, отлично подходящий для засад.\n"
-    "- На карте две дороги, вдоль которых обычно и разворачивается бой.\n\n"
-
-    "Используешь тон алкаша, лёгкую иронию и подколки, но без оскорблений. "
-    "Отвечай коротко, живо, по делу. Не хами по-настоящему и не переходи на личности — "
-    "дерзость должна быть смешной, а не обидной."
+    "Используешь неформальный тон, лёгкую иронию и подколки, но без грубости и оскорблений. "
+    "Не хами по-настоящему и не переходи на личности — дерзость должна быть смешной, "
+    "а не обидной."
 )
 
 
@@ -77,6 +41,7 @@ app = Flask(__name__)
 client = Groq(api_key=GROQ_API_KEY)
 
 VK_API_URL = "https://api.vk.com/method/messages.send"
+VK_USERS_GET_URL = "https://api.vk.com/method/users.get"
 VK_API_VERSION = "5.199"
 
 MAIN_MODEL = "openai/gpt-oss-120b"
@@ -96,19 +61,37 @@ def is_rate_limit_error(error):
     )
 
 
-def ask_model(model, user_message):
+def get_user_name(user_id: int) -> str:
+    try:
+        params = {
+            "access_token": VK_TOKEN,
+            "v": VK_API_VERSION,
+            "user_ids": user_id,
+        }
+        response = requests.get(VK_USERS_GET_URL, params=params, timeout=10)
+        result = response.json()
+        first_name = result["response"][0]["first_name"]
+        return first_name
+    except Exception as e:
+        print("Не удалось получить имя пользователя:", e, flush=True)
+        return ""
+
+
+def ask_model(model, user_message, user_name):
+    message_with_name = f"[Имя: {user_name}] {user_message}" if user_name else user_message
+
     completion = client.chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_message},
+            {"role": "user", "content": message_with_name},
         ],
-        max_tokens=500,
+        max_tokens=300,
     )
     return completion.choices[0].message.content
 
 
-def ask_groq(user_message: str) -> str:
+def ask_groq(user_message: str, user_name: str) -> str:
     global main_model_blocked_until
 
     current_time = time.time()
@@ -116,7 +99,7 @@ def ask_groq(user_message: str) -> str:
     if current_time >= main_model_blocked_until:
         try:
             print("Пробуем основную модель:", MAIN_MODEL, flush=True)
-            reply = ask_model(MAIN_MODEL, user_message)
+            reply = ask_model(MAIN_MODEL, user_message, user_name)
             main_model_blocked_until = 0
             print("120B работает. Используем основную модель.", flush=True)
             return reply
@@ -129,7 +112,19 @@ def ask_groq(user_message: str) -> str:
                 print("Временно используем 20B.", flush=True)
 
     print("Используем запасную модель:", BACKUP_MODEL, flush=True)
-    return ask_model(BACKUP_MODEL, user_message)
+    return ask_model(BACKUP_MODEL, user_message, user_name)
+
+
+def transcribe_voice(audio_url: str) -> str:
+    audio_response = requests.get(audio_url, timeout=15)
+    audio_response.raise_for_status()
+
+    transcription = client.audio.transcriptions.create(
+        file=("voice.ogg", audio_response.content),
+        model="whisper-large-v3",
+        language="ru",
+    )
+    return transcription.text
 
 
 def send_vk_message(peer_id: int, text: str):
@@ -147,12 +142,25 @@ def send_vk_message(peer_id: int, text: str):
     return result
 
 
-def handle_message(peer_id: int, text: str):
+def handle_message(peer_id: int, from_id: int, text: str):
     try:
-        reply = ask_groq(text)
+        user_name = get_user_name(from_id)
+        reply = ask_groq(text, user_name)
     except Exception as e:
         reply = "Что-то я сейчас подвис 😅 Попробуй написать ещё раз."
         print("Ошибка при обращении к Groq:", e, flush=True)
+    send_vk_message(peer_id, reply)
+
+
+def handle_voice_message(peer_id: int, from_id: int, voice_url: str):
+    try:
+        user_name = get_user_name(from_id)
+        text = transcribe_voice(voice_url)
+        print("Распознан голос:", text, flush=True)
+        reply = ask_groq(text, user_name)
+    except Exception as e:
+        reply = "Не смог разобрать голосовое 😅 Попробуй написать текстом."
+        print("Ошибка при распознавании голоса:", e, flush=True)
     send_vk_message(peer_id, reply)
 
 
@@ -171,12 +179,25 @@ def callback():
     if event_type == "message_new":
         message = data["object"]["message"]
         peer_id = message["peer_id"]
+        from_id = message["from_id"]
         text = message.get("text", "")
+        attachments = message.get("attachments", [])
 
-        if text.strip():
+        voice_url = None
+        for att in attachments:
+            if att.get("type") == "audio_message":
+                audio_message = att.get("audio_message", {})
+                voice_url = audio_message.get("link_ogg") or audio_message.get("link_mp3")
+
+        if voice_url:
+            threading.Thread(
+                target=handle_voice_message,
+                args=(peer_id, from_id, voice_url)
+            ).start()
+        elif text.strip():
             threading.Thread(
                 target=handle_message,
-                args=(peer_id, text)
+                args=(peer_id, from_id, text)
             ).start()
 
         return "ok"
