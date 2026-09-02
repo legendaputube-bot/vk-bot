@@ -21,8 +21,11 @@ SYSTEM_PROMPT = (
     "напоминай, что тут говорят только про танки.\n\n"
 
     "ОБРАЩЕНИЕ ПО ИМЕНИ: тебе в начале сообщения передаётся имя пользователя в формате "
-    "'[Имя: ...]'. Обращайся к человеку по этому имени в своём ответе, естественно вписывая "
-    "его в дерзкий стиль. Саму пометку '[Имя: ...]' в ответе не показывай.\n\n"
+    "'[Имя: ...]'. Обращайся к человеку по этому имени, естественно вписывая его в ответ. "
+    "Саму пометку '[Имя: ...]' в ответе не показывай.\n\n"
+
+    "ВАЖНО: каждый пользователь имеет отдельную историю общения. "
+    "Никогда не смешивай информацию, вопросы или контекст разных пользователей.\n\n"
 
     "ЗАПРЕТ НА ВЫДУМЫВАНИЕ ТОЧНЫХ ЦИФР: не придумывай точные характеристики техники, "
     "калибры, урон, броню, названия валюты и другие конкретные цифры — ты их не знаешь. "
@@ -58,19 +61,119 @@ main_model_blocked_until = 0
 
 
 # =========================================================
-# RATE LIMIT
+# ПАМЯТЬ ПОЛЬЗОВАТЕЛЕЙ
 # =========================================================
 
-def is_rate_limit_error(error):
-    error_text = str(error).lower()
+# Максимум 25 сообщений НА КАЖДОГО пользователя
+MAX_HISTORY_MESSAGES = 25
 
-    return (
-        "429" in error_text
-        or "rate limit" in error_text
-        or "rate_limit_exceeded" in error_text
-        or "tokens per day" in error_text
-        or "tpd" in error_text
+users_memory = {}
+memory_lock = threading.Lock()
+
+
+def get_user_memory(user_id: int):
+    """
+    Получает отдельную память конкретного пользователя.
+    У каждого user_id своя история.
+    """
+
+    with memory_lock:
+
+        if user_id not in users_memory:
+
+            users_memory[user_id] = {
+                "history": [],
+                "name": None,
+                "lock": threading.Lock()
+            }
+
+        return users_memory[user_id]
+
+
+def add_to_history(
+    user_id: int,
+    role: str,
+    content: str
+):
+
+    user_memory = get_user_memory(user_id)
+
+    with user_memory["lock"]:
+
+        user_memory["history"].append({
+            "role": role,
+            "content": content
+        })
+
+        # Оставляем только последние 25 сообщений
+        if len(user_memory["history"]) > MAX_HISTORY_MESSAGES:
+
+            user_memory["history"] = (
+                user_memory["history"][-MAX_HISTORY_MESSAGES:]
+            )
+
+
+def get_history(user_id: int):
+
+    user_memory = get_user_memory(user_id)
+
+    with user_memory["lock"]:
+
+        return list(user_memory["history"])
+
+
+# =========================================================
+# ПРОВЕРКА: ПРИВЕТСТВИЕ
+# =========================================================
+
+def is_greeting(text: str) -> bool:
+
+    text = text.strip().lower()
+
+    greetings = (
+        "привет",
+        "прив",
+        "здарова",
+        "здорово",
+        "здравствуй",
+        "здравствуйте",
+        "доброе утро",
+        "добрый день",
+        "добрый вечер",
+        "хай",
+        "хелло",
+        "hello",
+        "ку",
+        "салют"
     )
+
+    # Убираем простую пунктуацию в конце
+    cleaned = text.rstrip("!., ")
+
+    return cleaned in greetings
+
+
+# =========================================================
+# ПРОВЕРКА: НУЖНО ЛИ ОТВЕЧАТЬ
+# =========================================================
+
+def should_answer(text: str) -> bool:
+
+    if not text:
+        return False
+
+    text = text.strip()
+
+    # Приветствия — отвечаем без вопросительного знака
+    if is_greeting(text):
+        return True
+
+    # Всё остальное — только если есть ?
+    if "?" in text:
+        return True
+
+    # Нет ? — игнорируем
+    return False
 
 
 # =========================================================
@@ -78,7 +181,15 @@ def is_rate_limit_error(error):
 # =========================================================
 
 def get_user_name(user_id: int) -> str:
+
+    user_memory = get_user_memory(user_id)
+
+    # Если имя уже получали — повторно VK не дёргаем
+    if user_memory["name"]:
+        return user_memory["name"]
+
     try:
+
         params = {
             "access_token": VK_TOKEN,
             "v": VK_API_VERSION,
@@ -95,9 +206,12 @@ def get_user_name(user_id: int) -> str:
 
         first_name = result["response"][0]["first_name"]
 
+        user_memory["name"] = first_name
+
         return first_name
 
     except Exception as e:
+
         print(
             "Не удалось получить имя пользователя:",
             e,
@@ -111,7 +225,12 @@ def get_user_name(user_id: int) -> str:
 # ОБЫЧНАЯ МОДЕЛЬ
 # =========================================================
 
-def ask_model(model, user_message, user_name):
+def ask_model(
+    model,
+    user_id: int,
+    user_message: str,
+    user_name: str
+):
 
     message_with_name = (
         f"[Имя: {user_name}] {user_message}"
@@ -119,18 +238,28 @@ def ask_model(model, user_message, user_name):
         else user_message
     )
 
+    # Получаем ИМЕННО историю этого пользователя
+    history = get_history(user_id)
+
+    messages = [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT
+        }
+    ]
+
+    # Добавляем прошлую историю конкретного пользователя
+    messages.extend(history)
+
+    # Добавляем текущее сообщение
+    messages.append({
+        "role": "user",
+        "content": message_with_name
+    })
+
     completion = client.chat.completions.create(
         model=model,
-        messages=[
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT
-            },
-            {
-                "role": "user",
-                "content": message_with_name
-            },
-        ],
+        messages=messages,
         max_tokens=300,
     )
 
@@ -149,6 +278,7 @@ def ask_model(model, user_message, user_name):
 # =========================================================
 
 def ask_groq(
+    user_id: int,
     user_message: str,
     user_name: str
 ) -> str:
@@ -169,6 +299,7 @@ def ask_groq(
 
             reply = ask_model(
                 MAIN_MODEL,
+                user_id,
                 user_message,
                 user_name
             )
@@ -218,8 +349,26 @@ def ask_groq(
 
     return ask_model(
         BACKUP_MODEL,
+        user_id,
         user_message,
         user_name
+    )
+
+
+# =========================================================
+# RATE LIMIT
+# =========================================================
+
+def is_rate_limit_error(error):
+
+    error_text = str(error).lower()
+
+    return (
+        "429" in error_text
+        or "rate limit" in error_text
+        or "rate_limit_exceeded" in error_text
+        or "tokens per day" in error_text
+        or "tpd" in error_text
     )
 
 
@@ -273,8 +422,6 @@ def download_image_as_base64(image_url: str):
             "VK вернул пустое изображение"
         )
 
-    # Groq имеет ограничение на размер изображения.
-    # Не отправляем слишком большие файлы.
     if len(image_data) > 20 * 1024 * 1024:
         raise RuntimeError(
             "Изображение больше 20 MB"
@@ -334,10 +481,6 @@ def ask_about_image(
         else prompt_text
     )
 
-    # -----------------------------------------------------
-    # Скачиваем фото из VK и превращаем его в Base64
-    # -----------------------------------------------------
-
     image_data_url = download_image_as_base64(
         image_url
     )
@@ -394,6 +537,7 @@ def send_vk_message(
 ):
 
     if not text:
+
         text = (
             "Что-то я сейчас подвис 😅 "
             "Попробуй ещё раз."
@@ -439,6 +583,29 @@ def send_vk_message(
 
 
 # =========================================================
+# СОХРАНЕНИЕ СООБЩЕНИЙ
+# =========================================================
+
+def save_conversation(
+    user_id: int,
+    user_message: str,
+    assistant_reply: str
+):
+
+    add_to_history(
+        user_id,
+        "user",
+        user_message
+    )
+
+    add_to_history(
+        user_id,
+        "assistant",
+        assistant_reply
+    )
+
+
+# =========================================================
 # ТЕКСТ
 # =========================================================
 
@@ -450,13 +617,32 @@ def handle_message(
 
     try:
 
+        # Дополнительная защита
+        if not should_answer(text):
+
+            print(
+                "Сообщение проигнорировано:",
+                text,
+                flush=True
+            )
+
+            return
+
         user_name = get_user_name(
             from_id
         )
 
         reply = ask_groq(
+            from_id,
             text,
             user_name
+        )
+
+        # Сохраняем только после успешного ответа
+        save_conversation(
+            from_id,
+            text,
+            reply
         )
 
     except Exception as e:
@@ -490,10 +676,6 @@ def handle_voice_message(
 
     try:
 
-        user_name = get_user_name(
-            from_id
-        )
-
         text = transcribe_voice(
             voice_url
         )
@@ -505,13 +687,39 @@ def handle_voice_message(
         )
 
         if not text:
-            raise RuntimeError(
-                "Не удалось распознать голос"
+
+            print(
+                "Голос пустой — игнорируем.",
+                flush=True
             )
 
+            return
+
+        # После распознавания проверяем:
+        # приветствие ИЛИ вопрос с ?
+        if not should_answer(text):
+
+            print(
+                "Голос не является вопросом/приветствием — игнорируем.",
+                flush=True
+            )
+
+            return
+
+        user_name = get_user_name(
+            from_id
+        )
+
         reply = ask_groq(
+            from_id,
             text,
             user_name
+        )
+
+        save_conversation(
+            from_id,
+            text,
+            reply
         )
 
     except Exception as e:
@@ -526,6 +734,13 @@ def handle_voice_message(
             e,
             flush=True
         )
+
+        send_vk_message(
+            peer_id,
+            reply
+        )
+
+        return
 
     send_vk_message(
         peer_id,
@@ -546,6 +761,16 @@ def handle_image_message(
 
     try:
 
+        # Фото без вопроса не обрабатываем
+        if not should_answer(caption):
+
+            print(
+                "Фото без вопроса — игнорируем.",
+                flush=True
+            )
+
+            return
+
         user_name = get_user_name(
             from_id
         )
@@ -554,6 +779,12 @@ def handle_image_message(
             image_url,
             user_name,
             caption
+        )
+
+        save_conversation(
+            from_id,
+            caption,
+            reply
         )
 
     except Exception as e:
@@ -767,15 +998,27 @@ def callback():
 
         elif text.strip():
 
-            threading.Thread(
-                target=handle_message,
-                args=(
-                    peer_id,
-                    from_id,
-                    text
-                ),
-                daemon=True
-            ).start()
+            # Сразу отсеиваем ненужные сообщения,
+            # чтобы вообще не запускать отдельный поток
+            if should_answer(text):
+
+                threading.Thread(
+                    target=handle_message,
+                    args=(
+                        peer_id,
+                        from_id,
+                        text
+                    ),
+                    daemon=True
+                ).start()
+
+            else:
+
+                print(
+                    "Сообщение без ? — игнорируем:",
+                    text,
+                    flush=True
+                )
 
         return "ok"
 
