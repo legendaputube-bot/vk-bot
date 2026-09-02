@@ -13,29 +13,33 @@ VK_GROUP_SECRET = os.environ.get("VK_GROUP_SECRET", "")
 
 
 SYSTEM_PROMPT = (
-    "Ты — дерзкий, языкастый бот сообщества ВКонтакте, посвящённого ИСКЛЮЧИТЕЛЬНО игре "
-    "Tanks Blitz PVP битвы (разработчик EAST-GAMES LLC / Lesta Games) — мобильному танковому "
-    "PVP-шутеру. Это твоё единственное разрешённое направление разговора. "
-    "Если вопрос не связан с этой игрой — дерзко и с юмором отказывайся отвечать по существу, "
-    "напоминай, что тут говорят только про танки.\n\n"
+    "Ты — ИИ-бот сообщества 'Бонус-коды Tanks blitz' ВКонтакте, посвящённого ИСКЛЮЧИТЕЛЬНО "
+    "игре Tanks Blitz PVP битвы (разработчик EAST-GAMES LLC / Lesta Games). Ты — часть "
+    "админской команды сообщества, свой парень среди танкистов. Ты не просто справочник, "
+    "а участник тусовки: подкалываешь игроков по-дружески, угараешь вместе с ними, "
+    "поддерживаешь живой разговор, помнишь, о чём говорили с человеком раньше (тебе для "
+    "этого дают историю последних сообщений).\n\n"
 
-    "ОБРАЩЕНИЕ ПО ИМЕНИ: тебе в начале сообщения передаётся имя пользователя в формате "
-    "'[Имя: ...]'. Обращайся к человеку по этому имени в своём ответе, естественно вписывая "
-    "его в дерзкий стиль. Саму пометку '[Имя: ...]' в ответе не показывай.\n\n"
+    "Если разговор уходит совсем далеко от игры — дерзко и с юмором подкалывай и мягко "
+    "возвращай к танкам, но не будь занудой — лёгкий стёб на отвлечённые темы допустим, "
+    "если это часть живого общения с человеком, просто не отвечай по существу на "
+    "посторонние вопросы (советы, факты, помощь не по теме).\n\n"
+
+    "ПАМЯТЬ: используй историю переписки с этим человеком, чтобы вести связный диалог, "
+    "шутить над тем, что он говорил раньше, помнить контекст.\n\n"
+
+    "ОБРАЩЕНИЕ ПО ИМЕНИ: тебе передаётся имя пользователя в формате '[Имя: ...]' в начале "
+    "сообщения. Обращайся по имени естественно. Саму пометку в ответе не показывай.\n\n"
 
     "ЗАПРЕТ НА ВЫДУМЫВАНИЕ ТОЧНЫХ ЦИФР: не придумывай точные характеристики техники, "
-    "калибры, урон, броню, названия валюты и другие конкретные цифры — ты их не знаешь. "
-    "Если спрашивают про конкретные характеристики техники или что качать — отвечай в общих "
-    "чертах и советуй посмотреть актуальные гайды и обзоры техники на YouTube, там всё "
-    "наглядно показывают с цифрами и геймплеем.\n\n"
+    "калибры, урон, броню, валюту — ты их не знаешь. За конкретикой отправляй смотреть "
+    "гайды на YouTube.\n\n"
 
-    "ФОРМАТ ОТВЕТА: отвечай КОРОТКО, максимум 2-3 предложения или максимум 3 пункта списком. "
-    "Никаких длинных портянок текста. Не показывай никаких технических пометок, тегов или "
-    "промежуточных рассуждений — только финальный чистый ответ.\n\n"
+    "ФОРМАТ ОТВЕТА: КОРОТКО, максимум 2-3 предложения. Никаких портянок текста и "
+    "никаких технических пометок/тегов — только чистый финальный ответ.\n\n"
 
-    "Используешь неформальный тон, лёгкую иронию и подколки, но без грубости и оскорблений. "
-    "Не хами по-настоящему и не переходи на личности — дерзость должна быть смешной, "
-    "а не обидной."
+    "Тон: неформальный, дерзкий, с иронией и подколками, но без грубости и оскорблений "
+    "в адрес самого человека. Дерзость — смешная, а не обидная."
 )
 
 
@@ -51,6 +55,10 @@ BACKUP_MODEL = "openai/gpt-oss-20b"
 VISION_MODEL = "qwen/qwen3.6-27b"
 MAIN_MODEL_RETRY_TIME = 60 * 60  # 1 час
 main_model_blocked_until = 0
+
+MAX_HISTORY_MESSAGES = 5  # сколько последних пар сообщений помнить на человека
+conversation_history = {}
+history_lock = threading.Lock()
 
 
 def clean_response(text: str) -> str:
@@ -86,21 +94,39 @@ def get_user_name(user_id: int) -> str:
         return ""
 
 
-def ask_model(model, user_message, user_name):
+def get_history(user_id: int):
+    with history_lock:
+        return list(conversation_history.get(user_id, []))
+
+
+def add_to_history(user_id: int, user_message: str, bot_reply: str):
+    with history_lock:
+        history = conversation_history.get(user_id, [])
+        history.append({"role": "user", "content": user_message})
+        history.append({"role": "assistant", "content": bot_reply})
+        # оставляем только последние MAX_HISTORY_MESSAGES пар (юзер+бот)
+        max_items = MAX_HISTORY_MESSAGES * 2
+        conversation_history[user_id] = history[-max_items:]
+
+
+def ask_model(model, user_message, user_name, user_id):
     message_with_name = f"[Имя: {user_name}] {user_message}" if user_name else user_message
+
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages.extend(get_history(user_id))
+    messages.append({"role": "user", "content": message_with_name})
 
     completion = client.chat.completions.create(
         model=model,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": message_with_name},
-        ],
+        messages=messages,
         max_tokens=300,
     )
-    return clean_response(completion.choices[0].message.content)
+    reply = clean_response(completion.choices[0].message.content)
+    add_to_history(user_id, user_message, reply)
+    return reply
 
 
-def ask_groq(user_message: str, user_name: str) -> str:
+def ask_groq(user_message: str, user_name: str, user_id: int) -> str:
     global main_model_blocked_until
 
     current_time = time.time()
@@ -108,7 +134,7 @@ def ask_groq(user_message: str, user_name: str) -> str:
     if current_time >= main_model_blocked_until:
         try:
             print("Пробуем основную модель:", MAIN_MODEL, flush=True)
-            reply = ask_model(MAIN_MODEL, user_message, user_name)
+            reply = ask_model(MAIN_MODEL, user_message, user_name, user_id)
             main_model_blocked_until = 0
             print("120B работает. Используем основную модель.", flush=True)
             return reply
@@ -121,7 +147,7 @@ def ask_groq(user_message: str, user_name: str) -> str:
                 print("Временно используем 20B.", flush=True)
 
     print("Используем запасную модель:", BACKUP_MODEL, flush=True)
-    return ask_model(BACKUP_MODEL, user_message, user_name)
+    return ask_model(BACKUP_MODEL, user_message, user_name, user_id)
 
 
 def transcribe_voice(audio_url: str) -> str:
@@ -136,25 +162,28 @@ def transcribe_voice(audio_url: str) -> str:
     return transcription.text
 
 
-def ask_about_image(image_url: str, user_name: str, caption: str = "") -> str:
+def ask_about_image(image_url: str, user_name: str, user_id: int, caption: str = "") -> str:
     prompt_text = caption.strip() if caption.strip() else "Что на этом скриншоте? Прокомментируй в своём стиле."
     message_with_name = f"[Имя: {user_name}] {prompt_text}" if user_name else prompt_text
 
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages.extend(get_history(user_id))
+    messages.append({
+        "role": "user",
+        "content": [
+            {"type": "text", "text": message_with_name},
+            {"type": "image_url", "image_url": {"url": image_url}},
+        ],
+    })
+
     completion = client.chat.completions.create(
         model=VISION_MODEL,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": message_with_name},
-                    {"type": "image_url", "image_url": {"url": image_url}},
-                ],
-            },
-        ],
+        messages=messages,
         max_tokens=300,
     )
-    return clean_response(completion.choices[0].message.content)
+    reply = clean_response(completion.choices[0].message.content)
+    add_to_history(user_id, prompt_text, reply)
+    return reply
 
 
 def send_vk_message(peer_id: int, text: str):
@@ -175,7 +204,7 @@ def send_vk_message(peer_id: int, text: str):
 def handle_message(peer_id: int, from_id: int, text: str):
     try:
         user_name = get_user_name(from_id)
-        reply = ask_groq(text, user_name)
+        reply = ask_groq(text, user_name, from_id)
     except Exception as e:
         reply = "Что-то я сейчас подвис 😅 Попробуй написать ещё раз."
         print("Ошибка при обращении к Groq:", e, flush=True)
@@ -187,7 +216,7 @@ def handle_voice_message(peer_id: int, from_id: int, voice_url: str):
         user_name = get_user_name(from_id)
         text = transcribe_voice(voice_url)
         print("Распознан голос:", text, flush=True)
-        reply = ask_groq(text, user_name)
+        reply = ask_groq(text, user_name, from_id)
     except Exception as e:
         reply = "Не смог разобрать голосовое 😅 Попробуй написать текстом."
         print("Ошибка при распознавании голоса:", e, flush=True)
@@ -197,7 +226,7 @@ def handle_voice_message(peer_id: int, from_id: int, voice_url: str):
 def handle_image_message(peer_id: int, from_id: int, image_url: str, caption: str):
     try:
         user_name = get_user_name(from_id)
-        reply = ask_about_image(image_url, user_name, caption)
+        reply = ask_about_image(image_url, user_name, from_id, caption)
     except Exception as e:
         reply = "Не смог рассмотреть скриншот 😅 Попробуй ещё раз или опиши словами."
         print("Ошибка при анализе изображения:", e, flush=True)
