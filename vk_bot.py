@@ -457,11 +457,13 @@ def add_memory(user_id, role, content):
         return
 
     try:
-        supabase.table("bot_memory").insert({
+        result = supabase.table("bot_memory").insert({
             "user_id": str(user_id),
             "role": role,
             "content": content
         }).execute()
+
+        print("SUPABASE MEMORY SAVE OK", flush=True)
 
     except Exception as e:
         print("Supabase memory save error:", e, flush=True)
