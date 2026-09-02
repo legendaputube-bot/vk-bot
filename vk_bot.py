@@ -1,5 +1,6 @@
 import os
 import requests
+import time
 from flask import Flask, request
 from groq import Groq
 
@@ -79,9 +80,41 @@ VK_API_URL = "https://api.vk.com/method/messages.send"
 VK_API_VERSION = "5.199"
 
 
-def ask_groq(user_message: str) -> str:
+# =========================================================
+# НАСТРОЙКИ ПЕРЕКЛЮЧЕНИЯ МОДЕЛЕЙ
+# =========================================================
+
+MAIN_MODEL = "openai/gpt-oss-120b"
+BACKUP_MODEL = "openai/gpt-oss-20b"
+
+# Через сколько часов после 429 снова пробовать 120B
+MAIN_MODEL_RETRY_TIME = 60 * 60  # 1 час
+
+# Время, когда последний раз 120B получил ошибку лимита
+main_model_blocked_until = 0
+
+
+def is_rate_limit_error(error):
+    """
+    Проверяет, похожа ли ошибка на лимит Groq 429.
+    """
+    error_text = str(error).lower()
+
+    return (
+        "429" in error_text
+        or "rate limit" in error_text
+        or "rate_limit_exceeded" in error_text
+        or "tokens per day" in error_text
+        or "tpd" in error_text
+    )
+
+
+def ask_model(model, user_message):
+    """
+    Отправляет запрос в указанную модель.
+    """
     completion = client.chat.completions.create(
-        model="openai/gpt-oss-20b",
+        model=model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_message},
@@ -90,6 +123,113 @@ def ask_groq(user_message: str) -> str:
     )
 
     return completion.choices[0].message.content
+
+
+def ask_groq(user_message: str) -> str:
+    """
+    Основная система:
+
+    120B -> если лимит -> 20B
+    Через 1 час снова пробуем 120B.
+    """
+
+    global main_model_blocked_until
+
+    current_time = time.time()
+
+    # =====================================================
+    # ПРОБУЕМ 120B
+    # =====================================================
+
+    if current_time >= main_model_blocked_until:
+
+        try:
+            print(
+                "Пробуем основную модель:",
+                MAIN_MODEL,
+                flush=True
+            )
+
+            reply = ask_model(
+                MAIN_MODEL,
+                user_message
+            )
+
+            # Если 120B успешно ответил —
+            # считаем его снова доступным
+            main_model_blocked_until = 0
+
+            print(
+                "120B работает. Используем основную модель.",
+                flush=True
+            )
+
+            return reply
+
+        except Exception as e:
+
+            if is_rate_limit_error(e):
+
+                # Блокируем 120B на 1 час
+                main_model_blocked_until = (
+                    time.time() + MAIN_MODEL_RETRY_TIME
+                )
+
+                print(
+                    "Лимит 120B достигнут.",
+                    flush=True
+                )
+
+                print(
+                    "Переходим на 20B.",
+                    flush=True
+                )
+
+                print(
+                    "Следующая проверка 120B через 1 час.",
+                    flush=True
+                )
+
+            else:
+                # Если ошибка не связана с лимитом,
+                # тоже временно используем 20B
+                print(
+                    "Ошибка 120B:",
+                    e,
+                    flush=True
+                )
+
+                print(
+                    "Временно используем 20B.",
+                    flush=True
+                )
+
+    # =====================================================
+    # ЗАПАСНАЯ МОДЕЛЬ 20B
+    # =====================================================
+
+    try:
+
+        print(
+            "Используем запасную модель:",
+            BACKUP_MODEL,
+            flush=True
+        )
+
+        return ask_model(
+            BACKUP_MODEL,
+            user_message
+        )
+
+    except Exception as e:
+
+        print(
+            "Ошибка Groq 20B:",
+            e,
+            flush=True
+        )
+
+        raise
 
 
 def send_vk_message(peer_id: int, text: str):
@@ -110,27 +250,42 @@ def send_vk_message(peer_id: int, text: str):
     result = response.json()
 
     if "error" in result:
-        print("Ошибка VK API:", result["error"], flush=True)
+        print(
+            "Ошибка VK API:",
+            result["error"],
+            flush=True
+        )
 
     return result
 
 
 @app.route("/callback", methods=["POST"])
 def callback():
+
     data = request.get_json(force=True)
 
     # Проверяем секрет Callback API
-    if VK_GROUP_SECRET and data.get("secret") != VK_GROUP_SECRET:
+    if (
+        VK_GROUP_SECRET
+        and data.get("secret") != VK_GROUP_SECRET
+    ):
         return "invalid secret", 403
 
     event_type = data.get("type")
 
-    # Подтверждение сервера Callback API
+    # =====================================================
+    # ПОДТВЕРЖДЕНИЕ СЕРВЕРА CALLBACK API
+    # =====================================================
+
     if event_type == "confirmation":
         return VK_CONFIRMATION_CODE
 
-    # Новое сообщение
+    # =====================================================
+    # НОВОЕ СООБЩЕНИЕ
+    # =====================================================
+
     if event_type == "message_new":
+
         message = data["object"]["message"]
 
         user_id = message["from_id"]
@@ -138,21 +293,30 @@ def callback():
         text = message.get("text", "")
 
         if text.strip():
+
             try:
+
                 reply = ask_groq(text)
 
             except Exception as e:
-                reply = "Извините, произошла ошибка. Попробуйте позже."
+
+                reply = (
+                    "Что-то я сейчас подвис 😅 "
+                    "Попробуй написать ещё раз."
+                )
+
                 print(
                     "Ошибка при обращении к Groq:",
                     e,
                     flush=True
                 )
 
-            # Отправляем ответ туда же, откуда пришло сообщение:
-            # ЛС -> в ЛС
-            # Беседа -> в беседу
-            send_vk_message(peer_id, reply)
+            # Отправляем ответ туда же,
+            # откуда пришло сообщение
+            send_vk_message(
+                peer_id,
+                reply
+            )
 
         return "ok"
 
@@ -160,7 +324,13 @@ def callback():
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+
+    port = int(
+        os.environ.get(
+            "PORT",
+            5000
+        )
+    )
 
     app.run(
         host="0.0.0.0",
