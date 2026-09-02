@@ -1,17 +1,20 @@
 import os
 import requests
 import time
+import threading
 from flask import Flask, request
 from groq import Groq
+from cerebras.cloud.sdk import Cerebras
 
 VK_TOKEN = os.environ.get("VK_TOKEN", "")
 VK_CONFIRMATION_CODE = os.environ.get("VK_CONFIRMATION_CODE", "")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+CEREBRAS_API_KEY = os.environ.get("CEREBRAS_API_KEY", "")
 VK_GROUP_SECRET = os.environ.get("VK_GROUP_SECRET", "")
 
 
 SYSTEM_PROMPT = (
-    "Ты — дерзкий, языкастый бот сообщества ВКонтакте, посвящённого ИСКЛЮЧИТЕЛЬНО игре "
+    "Ты — дерзкий, языкастый бот сообщества ВКонтакте канала Бонус коды tanks blitz, посвящённого ИСКЛЮЧИТЕЛЬНО игре "
     "Tanks Blitz PVP битвы (разработчик EAST-GAMES LLC / Lesta Games) — мобильному танковому "
     "PVP-шутеру 7 на 7. Это твоё единственное разрешённое направление разговора. "
     "СТРОГОЕ ПРАВИЛО ПО ТЕМЕ: если вопрос не связан с этой игрой — дерзко и с юмором "
@@ -61,11 +64,6 @@ SYSTEM_PROMPT = (
     "- Опытные игроки постоянно перемещаются по карте и стреляют так часто, как позволяет "
     "орудие — медленная, слишком осторожная игра чаще ведёт к поражению команды.\n\n"
 
-    "КАРТА 'РУДНИКИ' (реальные факты о ней):\n"
-    "- На карте много домов, есть остров с маяком, много скал и возвышенностей.\n"
-    "- В центре карты гора, с неё удобно контролировать обстановку.\n"
-    "- Есть холм, отлично подходящий для засад.\n"
-    "- На карте две дороги, вдоль которых обычно и разворачивается бой.\n\n"
 
     "Используешь неформальный тон, лёгкую иронию и подколки, но без грубости и оскорблений. "
     "Отвечай коротко, живо, по делу. Не хами по-настоящему и не переходи на личности — "
@@ -74,32 +72,19 @@ SYSTEM_PROMPT = (
 
 
 app = Flask(__name__)
-client = Groq(api_key=GROQ_API_KEY)
+groq_client = Groq(api_key=GROQ_API_KEY)
+cerebras_client = Cerebras(api_key=CEREBRAS_API_KEY)
 
 VK_API_URL = "https://api.vk.com/method/messages.send"
 VK_API_VERSION = "5.199"
 
-
-# =========================================================
-# НАСТРОЙКИ ПЕРЕКЛЮЧЕНИЯ МОДЕЛЕЙ
-# =========================================================
-
 MAIN_MODEL = "openai/gpt-oss-120b"
-BACKUP_MODEL = "openai/gpt-oss-20b"
-
-# Через сколько часов после 429 снова пробовать 120B
 MAIN_MODEL_RETRY_TIME = 60 * 60  # 1 час
-
-# Время, когда последний раз 120B получил ошибку лимита
 main_model_blocked_until = 0
 
 
 def is_rate_limit_error(error):
-    """
-    Проверяет, похожа ли ошибка на лимит Groq 429.
-    """
     error_text = str(error).lower()
-
     return (
         "429" in error_text
         or "rate limit" in error_text
@@ -109,127 +94,56 @@ def is_rate_limit_error(error):
     )
 
 
-def ask_model(model, user_message):
-    """
-    Отправляет запрос в указанную модель.
-    """
-    completion = client.chat.completions.create(
-        model=model,
+def ask_groq_main(user_message: str) -> str:
+    completion = groq_client.chat.completions.create(
+        model=MAIN_MODEL,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_message},
         ],
         max_tokens=500,
     )
-
     return completion.choices[0].message.content
 
 
-def ask_groq(user_message: str) -> str:
-    """
-    Основная система:
+def ask_cerebras(user_message: str) -> str:
+    completion = cerebras_client.chat.completions.create(
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_message},
+        ],
+        model="gemma-4-31b",
+    )
+    return completion.choices[0].message.content
 
-    120B -> если лимит -> 20B
-    Через 1 час снова пробуем 120B.
-    """
 
+def ask_ai(user_message: str) -> str:
+    """
+    Основная модель: Groq 120B.
+    Если лимит исчерпан — переходим на Cerebras.
+    Через 1 час снова пробуем Groq 120B.
+    """
     global main_model_blocked_until
 
     current_time = time.time()
 
-    # =====================================================
-    # ПРОБУЕМ 120B
-    # =====================================================
-
     if current_time >= main_model_blocked_until:
-
         try:
-            print(
-                "Пробуем основную модель:",
-                MAIN_MODEL,
-                flush=True
-            )
-
-            reply = ask_model(
-                MAIN_MODEL,
-                user_message
-            )
-
-            # Если 120B успешно ответил —
-            # считаем его снова доступным
+            print("Пробуем Groq 120B...", flush=True)
+            reply = ask_groq_main(user_message)
             main_model_blocked_until = 0
-
-            print(
-                "120B работает. Используем основную модель.",
-                flush=True
-            )
-
+            print("Groq 120B ответил успешно.", flush=True)
             return reply
-
         except Exception as e:
-
             if is_rate_limit_error(e):
-
-                # Блокируем 120B на 1 час
-                main_model_blocked_until = (
-                    time.time() + MAIN_MODEL_RETRY_TIME
-                )
-
-                print(
-                    "Лимит 120B достигнут.",
-                    flush=True
-                )
-
-                print(
-                    "Переходим на 20B.",
-                    flush=True
-                )
-
-                print(
-                    "Следующая проверка 120B через 1 час.",
-                    flush=True
-                )
-
+                main_model_blocked_until = time.time() + MAIN_MODEL_RETRY_TIME
+                print("Лимит Groq 120B достигнут. Переходим на Cerebras.", flush=True)
             else:
-                # Если ошибка не связана с лимитом,
-                # тоже временно используем 20B
-                print(
-                    "Ошибка 120B:",
-                    e,
-                    flush=True
-                )
+                print("Ошибка Groq 120B:", e, flush=True)
+                print("Временно используем Cerebras.", flush=True)
 
-                print(
-                    "Временно используем 20B.",
-                    flush=True
-                )
-
-    # =====================================================
-    # ЗАПАСНАЯ МОДЕЛЬ 20B
-    # =====================================================
-
-    try:
-
-        print(
-            "Используем запасную модель:",
-            BACKUP_MODEL,
-            flush=True
-        )
-
-        return ask_model(
-            BACKUP_MODEL,
-            user_message
-        )
-
-    except Exception as e:
-
-        print(
-            "Ошибка Groq 20B:",
-            e,
-            flush=True
-        )
-
-        raise
+    print("Используем Cerebras...", flush=True)
+    return ask_cerebras(user_message)
 
 
 def send_vk_message(peer_id: int, text: str):
@@ -240,83 +154,44 @@ def send_vk_message(peer_id: int, text: str):
         "message": text,
         "random_id": 0,
     }
-
-    response = requests.post(
-        VK_API_URL,
-        data=params,
-        timeout=15
-    )
-
+    response = requests.post(VK_API_URL, data=params, timeout=15)
     result = response.json()
-
     if "error" in result:
-        print(
-            "Ошибка VK API:",
-            result["error"],
-            flush=True
-        )
-
+        print("Ошибка VK API:", result["error"], flush=True)
     return result
+
+
+def handle_message(peer_id: int, text: str):
+    try:
+        reply = ask_ai(text)
+    except Exception as e:
+        reply = "Что-то я сейчас подвис 😅 Попробуй написать позже."
+        print("Ошибка при обращении к ИИ:", e, flush=True)
+    send_vk_message(peer_id, reply)
 
 
 @app.route("/callback", methods=["POST"])
 def callback():
-
     data = request.get_json(force=True)
 
-    # Проверяем секрет Callback API
-    if (
-        VK_GROUP_SECRET
-        and data.get("secret") != VK_GROUP_SECRET
-    ):
+    if VK_GROUP_SECRET and data.get("secret") != VK_GROUP_SECRET:
         return "invalid secret", 403
 
     event_type = data.get("type")
 
-    # =====================================================
-    # ПОДТВЕРЖДЕНИЕ СЕРВЕРА CALLBACK API
-    # =====================================================
-
     if event_type == "confirmation":
         return VK_CONFIRMATION_CODE
 
-    # =====================================================
-    # НОВОЕ СООБЩЕНИЕ
-    # =====================================================
-
     if event_type == "message_new":
-
         message = data["object"]["message"]
-
-        user_id = message["from_id"]
         peer_id = message["peer_id"]
         text = message.get("text", "")
 
         if text.strip():
-
-            try:
-
-                reply = ask_groq(text)
-
-            except Exception as e:
-
-                reply = (
-                    "Что-то я сейчас подвис 😅 "
-                    "Попробуй написать ещё раз."
-                )
-
-                print(
-                    "Ошибка при обращении к Groq:",
-                    e,
-                    flush=True
-                )
-
-            # Отправляем ответ туда же,
-            # откуда пришло сообщение
-            send_vk_message(
-                peer_id,
-                reply
-            )
+            threading.Thread(
+                target=handle_message,
+                args=(peer_id, text)
+            ).start()
 
         return "ok"
 
@@ -324,15 +199,5 @@ def callback():
 
 
 if __name__ == "__main__":
-
-    port = int(
-        os.environ.get(
-            "PORT",
-            5000
-        )
-    )
-
-    app.run(
-        host="0.0.0.0",
-        port=port
-    )
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
