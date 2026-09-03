@@ -4,7 +4,6 @@ import time
 import hashlib
 import random
 import threading
-import base64
 from datetime import datetime, timezone
 
 import requests
@@ -91,9 +90,6 @@ BACKUP_MODEL = "openai/gpt-oss-20b"
 
 OPENROUTER_MODEL = "openrouter/free"
 
-VISION_MODEL = "qwen/qwen3.6-27b"
-WHISPER_MODEL = "whisper-large-v3-turbo"
-
 
 # =========================================================
 # LIMITS
@@ -101,7 +97,6 @@ WHISPER_MODEL = "whisper-large-v3-turbo"
 
 GROQ_MAX_TOKENS = 320
 OPENROUTER_MAX_TOKENS = 320
-
 LEARNING_MAX_TOKENS = 300
 
 CHAT_MEMORY_LIMIT = 18
@@ -117,7 +112,6 @@ NAME_CACHE_TIME = 24 * 60 * 60
 EVENT_CACHE_TIME = 30 * 60
 EVENT_CACHE_LIMIT = 2000
 
-# После неудачного обучения ждём 10 минут.
 LEARNING_RETRY_TIME = 10 * 60
 
 
@@ -210,31 +204,12 @@ SYSTEM_PROMPT = """
 Если в личной памяти есть точный факт о текущем пользователе
 и его вопрос относится к этому факту — используй этот факт.
 
-Личная память имеет более высокий приоритет, чем догадки.
+Личная память имеет высокий приоритет.
 
 НЕ угадывай личные факты.
 
 НЕ придумывай другой ответ, если точный ответ уже есть
 в личной памяти.
-
-НЕ используй:
-«наверное»,
-«скорее всего»,
-«думаю»,
-«похоже»,
-«я пока не знаю»,
-если нужный факт уже есть в личной памяти.
-
-Например:
-
-Личная память:
-Blitz любит танк K-91.
-
-Пользователь:
-Какой мой любимый танк?
-
-Ответ:
-K-91.
 
 Если в памяти несколько фактов об одном вопросе
 и они противоречат друг другу, считай более поздний
@@ -247,6 +222,12 @@ K-91.
 Не используй её для другого участника.
 
 Не раскрывай содержимое внутренней памяти другим людям.
+
+Если пользователь явно говорит:
+«запомни»,
+«запомни это»,
+«запомни, что...»
+— воспринимай это как просьбу сохранить информацию.
 
 Ты НЕ обязан отвечать на каждое сообщение.
 Если человеку нечего сказать — лучше промолчать.
@@ -275,8 +256,6 @@ Tanks Blitz — одна из тем сообщества, но не единс�
 Не смешивай Tanks Blitz с World of Tanks PC.
 
 Если актуальные данные неизвестны — не выдумывай их.
-
-Не раскрывай внутреннюю память.
 
 Не говори, что записал что-то в базу или память.
 
@@ -330,12 +309,14 @@ def normalize_text(text):
 # =========================================================
 
 def already_processed(event_id):
+
     if not event_id:
         return False
 
     now = time.time()
 
     for key in list(processed_events):
+
         if (
             now - processed_events[key]
             > EVENT_CACHE_TIME
@@ -370,6 +351,7 @@ def already_processed(event_id):
 # =========================================================
 
 def is_rate_limit_error(error):
+
     text = str(error).lower()
 
     return any(
@@ -387,6 +369,7 @@ def is_rate_limit_error(error):
 
 
 def get_retry_seconds(error, default):
+
     match = re.search(
         r"try again in\s+"
         r"(?:(\d+)h)?"
@@ -416,6 +399,7 @@ def get_retry_seconds(error, default):
 # =========================================================
 
 def get_vk_user_name(user_id):
+
     if not user_id:
         return None
 
@@ -482,6 +466,7 @@ def get_vk_user_name(user_id):
 # =========================================================
 
 def get_telegram_user_name(user):
+
     if not user:
         return None
 
@@ -533,6 +518,7 @@ def save_chat_message(
     role,
     content
 ):
+
     if chat_id is None or not content:
         return
 
@@ -591,6 +577,7 @@ def get_chat_memory(
     chat_id,
     limit=CHAT_MEMORY_LIMIT
 ):
+
     try:
 
         database_chat_id = db_chat_id(
@@ -634,6 +621,7 @@ def get_chat_memory(
 
 
 def get_chat_message_count(chat_id):
+
     try:
 
         database_chat_id = db_chat_id(
@@ -678,6 +666,7 @@ def knowledge_fingerprint(
     chat_id,
     knowledge
 ):
+
     raw = (
         str(chat_id).strip()
         + "|"
@@ -696,6 +685,7 @@ def save_knowledge(
     knowledge,
     importance=1
 ):
+
     knowledge = normalize_text(
         knowledge
     )
@@ -771,6 +761,7 @@ def save_knowledge(
 
 
 def get_knowledge(chat_id):
+
     try:
 
         database_chat_id = db_chat_id(
@@ -822,6 +813,7 @@ def merge_memory(
     old_memory,
     new_fact
 ):
+
     facts = []
 
     if old_memory:
@@ -872,6 +864,7 @@ def save_user_memory(
     name,
     memory
 ):
+
     if (
         chat_id is None
         or user_id is None
@@ -998,10 +991,175 @@ def save_user_memory(
         )
 
 
+# =========================================================
+# EXPLICIT USER MEMORY
+# =========================================================
+
+def save_explicit_user_memory(
+    chat_id,
+    user_id,
+    user_name,
+    text
+):
+    """
+    Мгновенно сохраняет явно сообщённые
+    пользователем факты.
+
+    Примеры:
+
+    Запомни: мой любимый танк — K-91
+
+    Мой любимый танк — K-91
+    """
+
+    if (
+        chat_id is None
+        or user_id is None
+        or not text
+    ):
+        return False
+
+    original = text.strip()
+
+    if not original:
+        return False
+
+    fact = None
+
+    # -----------------------------------------
+    # Запомни: ...
+    # -----------------------------------------
+
+    match = re.search(
+        r"(?:запомни|запомни\s+это|"
+        r"запомни\s+пожалуйста)"
+        r"\s*[:,-]?\s*"
+        r"(?:что\s+)?"
+        r"(.+)$",
+        original,
+        re.IGNORECASE
+    )
+
+    if match:
+
+        statement = (
+            match.group(1) or ""
+        ).strip()
+
+        if statement:
+
+            tank_match = re.search(
+                r"мой\s+любим(?:ый|ая|ое|ые)"
+                r"\s+танк(?:а|ов)?"
+                r"\s*(?:—|-|:|=|это|есть)?\s*"
+                r"(.+)$",
+                statement,
+                re.IGNORECASE
+            )
+
+            if tank_match:
+
+                tank = (
+                    tank_match.group(1)
+                    or ""
+                ).strip(
+                    " .,!?;"
+                )
+
+                if tank:
+                    fact = (
+                        "Любимый танк — "
+                        + tank
+                    )
+
+            if (
+                fact is None
+                and len(statement) <= 500
+            ):
+
+                fact = statement
+
+    # -----------------------------------------
+    # Обычная фраза
+    # -----------------------------------------
+
+    if fact is None:
+
+        tank_match = re.search(
+            r"мой\s+любим(?:ый|ая|ое|ые)"
+            r"\s+танк(?:а|ов)?"
+            r"\s*(?:—|-|:|=|это|есть)?\s*"
+            r"(.+)$",
+            original,
+            re.IGNORECASE
+        )
+
+        if tank_match:
+
+            tank = (
+                tank_match.group(1)
+                or ""
+            ).strip(
+                " .,!?;"
+            )
+
+            if tank:
+
+                fact = (
+                    "Любимый танк — "
+                    + tank
+                )
+
+    if not fact:
+        return False
+
+    # -----------------------------------------
+    # Защита от чувствительных данных
+    # -----------------------------------------
+
+    sensitive_words = (
+        "пароль",
+        "password",
+        "номер карты",
+        "банковская карта",
+        "cvv",
+        "cvc",
+        "паспорт",
+        "документ",
+        "адрес проживания"
+    )
+
+    fact_low = fact.lower()
+
+    if any(
+        word in fact_low
+        for word in sensitive_words
+    ):
+        return False
+
+    save_user_memory(
+        chat_id,
+        user_id,
+        user_name,
+        fact
+    )
+
+    print(
+        f"EXPLICIT MEMORY SAVED | "
+        f"chat={chat_id} | "
+        f"user={user_id} | "
+        f"{fact}",
+        flush=True
+    )
+
+    return True
+
+
 def get_user_memory(
     chat_id,
     user_id
 ):
+
     if user_id is None:
         return None
 
@@ -1072,6 +1230,7 @@ def get_user_memory(
 # =========================================================
 
 def get_learning_state(chat_id):
+
     try:
 
         database_chat_id = db_chat_id(
@@ -1202,6 +1361,7 @@ def increase_learning_counter(chat_id):
 
 
 def reset_learning_counter(chat_id):
+
     try:
 
         database_chat_id = db_chat_id(
@@ -1236,6 +1396,7 @@ def reset_learning_counter(chat_id):
 # =========================================================
 
 def clean_model_text(text):
+
     if not text:
         return ""
 
@@ -1265,6 +1426,7 @@ def ask_model(
     messages,
     max_tokens=GROQ_MAX_TOKENS
 ):
+
     try:
 
         completion = (
@@ -1354,49 +1516,60 @@ def ask_openrouter_messages(
     max_tokens=OPENROUTER_MAX_TOKENS,
     label="OpenRouter"
 ):
+
     if not OPENROUTER_API_KEY:
 
         raise RuntimeError(
             "OPENROUTER_API_KEY не установлен."
         )
 
-    response = requests.post(
-        OPENROUTER_API,
-        headers={
-            "Authorization":
-                f"Bearer {OPENROUTER_API_KEY}",
+    try:
 
-            "Content-Type":
-                "application/json",
+        response = requests.post(
+            OPENROUTER_API,
+            headers={
+                "Authorization":
+                    f"Bearer {OPENROUTER_API_KEY}",
 
-            "HTTP-Referer":
-                "https://vk-bot-1-khev.onrender.com",
+                "Content-Type":
+                    "application/json",
 
-            "X-Title":
-                "Tanks Blitz AI"
-        },
-        json={
-            "model":
-                OPENROUTER_MODEL,
+                "HTTP-Referer":
+                    "https://vk-bot-1-khev.onrender.com",
 
-            "messages":
-                messages,
+                "X-Title":
+                    "Tanks Blitz AI"
+            },
+            json={
+                "model":
+                    OPENROUTER_MODEL,
 
-            "max_tokens":
-                max_tokens,
+                "messages":
+                    messages,
 
-            "stream":
-                False
-        },
-        timeout=60
-    )
+                "max_tokens":
+                    max_tokens,
+
+                "stream":
+                    False
+            },
+            timeout=60
+        )
+
+    except Exception as e:
+
+        raise RuntimeError(
+            f"{label} request error: {e}"
+        )
 
     if response.status_code != 200:
+
+        body = response.text[:1000]
 
         raise RuntimeError(
             f"{label} HTTP "
             f"{response.status_code}: "
-            f"{response.text[:500]}"
+            f"{body}"
         )
 
     try:
@@ -1407,6 +1580,13 @@ def ask_openrouter_messages(
 
         raise RuntimeError(
             f"{label} invalid JSON: {e}"
+        )
+
+    if data.get("error"):
+
+        raise RuntimeError(
+            f"{label} API error: "
+            f"{data.get('error')}"
         )
 
     choices = data.get(
@@ -1426,18 +1606,35 @@ def ask_openrouter_messages(
         or {}
     )
 
-    reply = clean_model_text(
-        message.get(
-            "content",
-            ""
-        ) or ""
+    content = message.get(
+        "content"
     )
 
-    if not reply:
+    # Иногда провайдер возвращает список частей.
+    if isinstance(content, list):
 
-        raise RuntimeError(
-            f"{label} returned empty response."
-        )
+        parts = []
+
+        for part in content:
+
+            if not isinstance(part, dict):
+                continue
+
+            if part.get("type") == "text":
+
+                value = (
+                    part.get("text")
+                    or ""
+                )
+
+                if value:
+                    parts.append(value)
+
+        content = "\n".join(parts)
+
+    reply = clean_model_text(
+        content or ""
+    )
 
     usage = (
         data.get("usage")
@@ -1448,14 +1645,37 @@ def ask_openrouter_messages(
         f"{label}:",
         "model=",
         data.get("model"),
+        "finish=",
+        choices[0].get(
+            "finish_reason"
+        ),
         "prompt=",
-        usage.get("prompt_tokens"),
+        usage.get(
+            "prompt_tokens"
+        ),
         "completion=",
-        usage.get("completion_tokens"),
+        usage.get(
+            "completion_tokens"
+        ),
         "total=",
-        usage.get("total_tokens"),
+        usage.get(
+            "total_tokens"
+        ),
         flush=True
     )
+
+    if not reply:
+
+        print(
+            f"{label} EMPTY | "
+            f"message_keys="
+            f"{list(message.keys())}",
+            flush=True
+        )
+
+        raise RuntimeError(
+            f"{label} returned empty response."
+        )
 
     return reply
 
@@ -1466,6 +1686,7 @@ def ask_openrouter(
     user_id,
     user_name
 ):
+
     messages = build_chat_context(
         chat_id,
         user_id,
@@ -1485,14 +1706,15 @@ def ask_openrouter(
 # =========================================================
 
 def ask_learning_model(messages):
+
     global main_blocked_until
     global backup_blocked_until
+
+    now = time.time()
 
     # -----------------------------------------
     # Groq 20B
     # -----------------------------------------
-
-    now = time.time()
 
     if now >= backup_blocked_until:
 
@@ -1602,10 +1824,6 @@ def ask_learning_model(messages):
 # =========================================================
 
 def perform_learning(chat_id):
-    """
-    Обучение уже запущено через maybe_learn().
-    Поэтому здесь learning_lock повторно не захватываем.
-    """
 
     try:
 
@@ -1706,11 +1924,11 @@ AI-участника конкретного чата.
 
 Например:
 
-«Мой любимый танк K-91»
+«Мой любимый танк — какой-либо танк»
 
 нужно сохранить как:
 
-USER|ID|Любимый танк — K-91
+USER|ID|Любимый танк — какой-либо танк
 
 НЕ придумывай.
 
@@ -2003,6 +2221,7 @@ def build_chat_context(
     user_name,
     text
 ):
+
     messages = [
         {
             "role":
@@ -2155,10 +2374,6 @@ def build_chat_context(
 
     # =========================================
     # PERSONAL MEMORY
-    #
-    # ВАЖНО:
-    # Личная память добавляется ПОСЛЕ истории.
-    # Это специально сделано для повышения приоритета.
     # =========================================
 
     personal = get_user_memory(
@@ -2252,6 +2467,7 @@ QUESTION_WORDS = (
 
 
 def looks_like_question(text):
+
     low = text.lower().strip()
 
     return (
@@ -2273,6 +2489,7 @@ def is_directed_to_bot_vk(
     message,
     text
 ):
+
     low = text.lower()
 
     reply = message.get(
@@ -2313,6 +2530,7 @@ def is_directed_to_bot_telegram(
     message,
     text
 ):
+
     low = text.lower()
 
     reply = (
@@ -2365,6 +2583,7 @@ def should_answer(
     text,
     platform="vk"
 ):
+
     text = text.strip()
 
     if not text:
@@ -2422,15 +2641,6 @@ def ask_ai(
     user_id,
     user_name
 ):
-    """
-    Основной маршрут:
-
-        Groq 120B
-            ↓
-        Groq 20B
-            ↓
-        OpenRouter Free
-    """
 
     try:
 
@@ -2483,6 +2693,7 @@ def ask_groq(
     user_id,
     user_name
 ):
+
     global main_blocked_until
     global backup_blocked_until
 
@@ -2593,269 +2804,6 @@ def ask_groq(
 
 
 # =========================================================
-# VK VOICE
-# =========================================================
-
-def get_voice_vk(message):
-
-    for attachment in message.get(
-        "attachments",
-        []
-    ):
-
-        if attachment.get(
-            "type"
-        ) != "audio_message":
-
-            continue
-
-        audio = attachment.get(
-            "audio_message",
-            {}
-        )
-
-        if audio.get(
-            "transcript"
-        ):
-
-            return {
-                "text":
-                    audio["transcript"].strip(),
-
-                "url":
-                    None
-            }
-
-        if audio.get(
-            "link_ogg"
-        ):
-
-            return {
-                "text":
-                    None,
-
-                "url":
-                    audio["link_ogg"]
-            }
-
-    return None
-
-
-def transcribe_voice(url):
-
-    response = requests.get(
-        url,
-        timeout=30
-    )
-
-    response.raise_for_status()
-
-    data = response.content
-
-    path = (
-        f"/tmp/voice_"
-        f"{int(time.time() * 1000)}.ogg"
-    )
-
-    try:
-
-        with open(
-            path,
-            "wb"
-        ) as file:
-
-            file.write(data)
-
-        with open(
-            path,
-            "rb"
-        ) as file:
-
-            result = (
-                groq.audio.transcriptions.create(
-                    file=file,
-                    model=WHISPER_MODEL,
-                    response_format="text"
-                )
-            )
-
-        return str(result).strip()
-
-    finally:
-
-        try:
-            os.remove(path)
-        except Exception:
-            pass
-
-
-# =========================================================
-# VK IMAGE
-# =========================================================
-
-def get_image_vk(message):
-
-    best = None
-    area = 0
-
-    for attachment in message.get(
-        "attachments",
-        []
-    ):
-
-        if attachment.get(
-            "type"
-        ) != "photo":
-
-            continue
-
-        sizes = (
-            attachment
-            .get("photo", {})
-            .get("sizes", [])
-        )
-
-        for size in sizes:
-
-            url = size.get(
-                "url"
-            )
-
-            current_area = (
-                size.get("width", 0)
-                * size.get("height", 0)
-            )
-
-            if (
-                url
-                and current_area > area
-            ):
-
-                best = url
-                area = current_area
-
-    return best
-
-
-def analyze_image_then_groq(
-    image_url,
-    text,
-    chat_id,
-    user_id,
-    user_name
-):
-    prompt_text = (
-        text.strip()
-        if text.strip()
-        else
-        "Посмотри на изображение и скажи, "
-        "что на нём происходит."
-    )
-
-    messages = build_chat_context(
-        chat_id,
-        user_id,
-        user_name,
-        prompt_text
-    )
-
-    target = None
-
-    for index in range(
-        len(messages) - 1,
-        -1,
-        -1
-    ):
-
-        if messages[index].get(
-            "role"
-        ) == "user":
-
-            target = index
-            break
-
-    image_message = {
-        "role":
-            "user",
-
-        "content": [
-            {
-                "type":
-                    "text",
-
-                "text":
-                    prompt_text
-            },
-
-            {
-                "type":
-                    "image_url",
-
-                "image_url": {
-                    "url":
-                        image_url
-                }
-            }
-        ]
-    }
-
-    if target is not None:
-
-        messages[target] = (
-            image_message
-        )
-
-    else:
-
-        messages.append(
-            image_message
-        )
-
-    try:
-
-        completion = (
-            groq.chat.completions.create(
-                model=VISION_MODEL,
-                messages=messages,
-                max_completion_tokens=GROQ_MAX_TOKENS,
-                reasoning_effort="none"
-            )
-        )
-
-    except Exception:
-
-        completion = (
-            groq.chat.completions.create(
-                model=VISION_MODEL,
-                messages=messages,
-                max_tokens=GROQ_MAX_TOKENS
-            )
-        )
-
-    if not completion.choices:
-
-        raise RuntimeError(
-            "Vision returned no choices."
-        )
-
-    reply = clean_model_text(
-        getattr(
-            completion.choices[0].message,
-            "content",
-            None
-        ) or ""
-    )
-
-    if not reply:
-
-        raise RuntimeError(
-            "Vision returned empty response."
-        )
-
-    return reply
-
-
-# =========================================================
 # VK SEND
 # =========================================================
 
@@ -2863,6 +2811,7 @@ def send_message(
     peer_id,
     text
 ):
+
     if not text:
         return
 
@@ -2908,6 +2857,7 @@ def telegram_call(
     method,
     **kwargs
 ):
+
     if not TELEGRAM_API:
 
         raise RuntimeError(
@@ -2938,6 +2888,7 @@ def send_telegram_message(
     text,
     reply_to_message_id=None
 ):
+
     if not text:
         return
 
@@ -2973,6 +2924,7 @@ def register_active_chat(
     platform,
     peer_id
 ):
+
     key = (
         f"{platform}:{peer_id}"
     )
@@ -2996,6 +2948,7 @@ def send_platform_message(
     peer_id,
     text
 ):
+
     if platform == "vk":
 
         return send_message(
@@ -3127,267 +3080,6 @@ def activity_loop():
 
 
 # =========================================================
-# TELEGRAM VOICE
-# =========================================================
-
-def get_telegram_voice(message):
-
-    voice = (
-        message.get("voice")
-        or message.get("audio")
-    )
-
-    if not voice:
-        return None
-
-    return voice.get(
-        "file_id"
-    )
-
-
-def download_telegram_file(
-    file_id
-):
-    info = telegram_call(
-        "getFile",
-        file_id=file_id
-    )
-
-    file_path = info.get(
-        "file_path"
-    )
-
-    if not file_path:
-
-        raise RuntimeError(
-            "Telegram file_path missing"
-        )
-
-    response = requests.get(
-        f"https://api.telegram.org/"
-        f"file/bot{TELEGRAM_BOT_TOKEN}/"
-        f"{file_path}",
-        timeout=60
-    )
-
-    response.raise_for_status()
-
-    return (
-        response.content,
-        file_path
-    )
-
-
-def transcribe_telegram_voice(
-    file_id
-):
-    data, file_path = (
-        download_telegram_file(
-            file_id
-        )
-    )
-
-    extension = (
-        os.path.splitext(
-            file_path
-        )[1]
-        or ".ogg"
-    )
-
-    path = (
-        f"/tmp/tg_voice_"
-        f"{int(time.time() * 1000)}"
-        f"{extension}"
-    )
-
-    try:
-
-        with open(
-            path,
-            "wb"
-        ) as file:
-
-            file.write(data)
-
-        with open(
-            path,
-            "rb"
-        ) as file:
-
-            result = (
-                groq.audio.transcriptions.create(
-                    file=file,
-                    model=WHISPER_MODEL,
-                    response_format="text"
-                )
-            )
-
-        return str(result).strip()
-
-    finally:
-
-        try:
-            os.remove(path)
-        except Exception:
-            pass
-
-
-# =========================================================
-# TELEGRAM IMAGE
-# =========================================================
-
-def telegram_photo_data_url(
-    message
-):
-    photos = (
-        message.get("photo")
-        or []
-    )
-
-    if not photos:
-        return None
-
-    photo = photos[-1]
-
-    data, _ = (
-        download_telegram_file(
-            photo["file_id"]
-        )
-    )
-
-    if len(data) > 8 * 1024 * 1024:
-
-        raise RuntimeError(
-            "Telegram image is too large"
-        )
-
-    return (
-        "data:image/jpeg;base64,"
-        + base64.b64encode(
-            data
-        ).decode("ascii")
-    )
-
-
-def analyze_telegram_image_then_groq(
-    image_data_url,
-    text,
-    chat_id,
-    user_id,
-    user_name
-):
-    prompt_text = (
-        text.strip()
-        if text.strip()
-        else
-        "Посмотри на изображение и скажи, "
-        "что на нём происходит."
-    )
-
-    messages = build_chat_context(
-        chat_id,
-        user_id,
-        user_name,
-        prompt_text
-    )
-
-    target = None
-
-    for index in range(
-        len(messages) - 1,
-        -1,
-        -1
-    ):
-
-        if messages[index].get(
-            "role"
-        ) == "user":
-
-            target = index
-            break
-
-    image_message = {
-        "role":
-            "user",
-
-        "content": [
-            {
-                "type":
-                    "text",
-
-                "text":
-                    prompt_text
-            },
-
-            {
-                "type":
-                    "image_url",
-
-                "image_url": {
-                    "url":
-                        image_data_url
-                }
-            }
-        ]
-    }
-
-    if target is not None:
-
-        messages[target] = (
-            image_message
-        )
-
-    else:
-
-        messages.append(
-            image_message
-        )
-
-    try:
-
-        completion = (
-            groq.chat.completions.create(
-                model=VISION_MODEL,
-                messages=messages,
-                max_completion_tokens=GROQ_MAX_TOKENS,
-                reasoning_effort="none"
-            )
-        )
-
-    except Exception:
-
-        completion = (
-            groq.chat.completions.create(
-                model=VISION_MODEL,
-                messages=messages,
-                max_tokens=GROQ_MAX_TOKENS
-            )
-        )
-
-    if not completion.choices:
-
-        raise RuntimeError(
-            "Telegram vision returned no choices"
-        )
-
-    reply = clean_model_text(
-        getattr(
-            completion.choices[0].message,
-            "content",
-            None
-        ) or ""
-    )
-
-    if not reply:
-
-        raise RuntimeError(
-            "Telegram vision returned empty response"
-        )
-
-    return reply
-
-
-# =========================================================
 # RENDER HEALTH CHECK
 # =========================================================
 
@@ -3416,7 +3108,13 @@ def home():
         "openrouter":
             bool(
                 OPENROUTER_API_KEY
-            )
+            ),
+
+        "vision":
+            False,
+
+        "voice":
+            False
     }, 200
 
 
@@ -3508,133 +3206,15 @@ def callback():
         )
 
         # =========================================
-        # VOICE
+        # MEDIA
         # =========================================
-
-        voice = get_voice_vk(
-            message
-        )
-
-        if voice:
-
-            recognized = (
-                voice["text"]
-                or transcribe_voice(
-                    voice["url"]
-                )
-            )
-
-            if not recognized:
-                return "ok"
-
-            save_chat_message(
-                chat_id,
-                sender_id,
-                user_name,
-                "user",
-                recognized
-            )
-
-            maybe_learn(
-                chat_id
-            )
-
-            if not should_answer(
-                message,
-                recognized,
-                "vk"
-            ):
-
-                return "ok"
-
-            reply = ask_ai(
-                chat_id,
-                recognized,
-                str(sender_id),
-                user_name
-            )
-
-            if not reply:
-                return "ok"
-
-            save_chat_message(
-                chat_id,
-                None,
-                "Бот",
-                "assistant",
-                reply
-            )
-
-            send_message(
-                peer_id,
-                reply
-            )
-
-            return "ok"
-
-        # =========================================
-        # IMAGE
-        # =========================================
-
-        image_url = get_image_vk(
-            message
-        )
-
-        if image_url:
-
-            save_chat_message(
-                chat_id,
-                sender_id,
-                user_name,
-                "user",
-                text or "[изображение]"
-            )
-
-            maybe_learn(
-                chat_id
-            )
-
-            if (
-                text
-                and not should_answer(
-                    message,
-                    text,
-                    "vk"
-                )
-            ):
-
-                return "ok"
-
-            reply = (
-                analyze_image_then_groq(
-                    image_url,
-                    text,
-                    chat_id,
-                    str(sender_id),
-                    user_name
-                )
-            )
-
-            if reply:
-
-                save_chat_message(
-                    chat_id,
-                    None,
-                    "Бот",
-                    "assistant",
-                    reply
-                )
-
-                send_message(
-                    peer_id,
-                    reply
-                )
-
-            return "ok"
-
-        # =========================================
-        # EMPTY
-        # =========================================
+        # Изображения и голосовые сообщения
+        # полностью игнорируются.
+        #
+        # Если у изображения есть подпись,
+        # VK передаст её как обычный text,
+        # и бот обработает только текст.
+        # Само изображение не загружается.
 
         if not text:
             return "ok"
@@ -3648,6 +3228,15 @@ def callback():
             sender_id,
             user_name,
             "user",
+            text
+        )
+
+        # Явно сказанные пользователем факты
+        # сохраняются сразу, не дожидаясь обучения.
+        save_explicit_user_memory(
+            chat_id,
+            sender_id,
+            user_name,
             text
         )
 
@@ -3796,146 +3385,17 @@ def telegram_webhook(secret):
             )
         )
 
+        # Только текст.
+        #
+        # Если у фотографии есть подпись,
+        # подпись может быть обработана как текст.
+        # Само изображение полностью игнорируется.
+
         text = (
             message.get("text")
             or message.get("caption")
             or ""
         ).strip()
-
-        # =========================================
-        # VOICE
-        # =========================================
-
-        voice_id = get_telegram_voice(
-            message
-        )
-
-        if voice_id:
-
-            recognized = (
-                transcribe_telegram_voice(
-                    voice_id
-                )
-            )
-
-            if not recognized:
-                return "ok"
-
-            save_chat_message(
-                chat_id,
-                sender_id,
-                user_name,
-                "user",
-                recognized
-            )
-
-            maybe_learn(
-                chat_id
-            )
-
-            if not should_answer(
-                message,
-                recognized,
-                "telegram"
-            ):
-
-                return "ok"
-
-            reply = ask_ai(
-                chat_id,
-                recognized,
-                str(sender_id),
-                user_name
-            )
-
-            if reply:
-
-                save_chat_message(
-                    chat_id,
-                    None,
-                    "Бот",
-                    "assistant",
-                    reply
-                )
-
-                send_telegram_message(
-                    raw_chat_id,
-                    reply,
-                    message.get(
-                        "message_id"
-                    )
-                )
-
-            return "ok"
-
-        # =========================================
-        # IMAGE
-        # =========================================
-
-        if message.get("photo"):
-
-            save_chat_message(
-                chat_id,
-                sender_id,
-                user_name,
-                "user",
-                text or "[изображение]"
-            )
-
-            maybe_learn(
-                chat_id
-            )
-
-            if (
-                text
-                and not should_answer(
-                    message,
-                    text,
-                    "telegram"
-                )
-            ):
-
-                return "ok"
-
-            image = (
-                telegram_photo_data_url(
-                    message
-                )
-            )
-
-            reply = (
-                analyze_telegram_image_then_groq(
-                    image,
-                    text,
-                    chat_id,
-                    str(sender_id),
-                    user_name
-                )
-            )
-
-            if reply:
-
-                save_chat_message(
-                    chat_id,
-                    None,
-                    "Бот",
-                    "assistant",
-                    reply
-                )
-
-                send_telegram_message(
-                    raw_chat_id,
-                    reply,
-                    message.get(
-                        "message_id"
-                    )
-                )
-
-            return "ok"
-
-        # =========================================
-        # EMPTY
-        # =========================================
 
         if not text:
             return "ok"
@@ -3949,6 +3409,13 @@ def telegram_webhook(secret):
             sender_id,
             user_name,
             "user",
+            text
+        )
+
+        save_explicit_user_memory(
+            chat_id,
+            sender_id,
+            user_name,
             text
         )
 
@@ -4159,12 +3626,12 @@ if __name__ == "__main__":
     )
 
     print(
-        f"👁 VISION MODEL: {VISION_MODEL}",
+        "🖼 Image processing: DISABLED",
         flush=True
     )
 
     print(
-        f"🗣 WHISPER MODEL: {WHISPER_MODEL}",
+        "🎤 Voice processing: DISABLED",
         flush=True
     )
 
