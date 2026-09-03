@@ -2,12 +2,15 @@ import os
 import re
 import time
 import hashlib
-from collections import defaultdict, deque
+import random
+import threading
+from collections import deque
 
 import requests
 from flask import Flask, request
 from groq import Groq
 from supabase import create_client
+
 
 # =========================================================
 # CONFIG
@@ -28,11 +31,22 @@ SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY", "").strip()
 if SUPABASE_URL and not SUPABASE_URL.startswith(("http://", "https://")):
     SUPABASE_URL = "https://" + SUPABASE_URL
 
-print("SUPABASE_URL =", repr(SUPABASE_URL), flush=True)
-print("SUPABASE_SECRET_KEY есть =", bool(SUPABASE_SECRET_KEY), flush=True)
 
-supabase = create_client(SUPABASE_URL, SUPABASE_SECRET_KEY)
+# =========================================================
+# SUPABASE
+# =========================================================
+
+supabase = create_client(
+    SUPABASE_URL,
+    SUPABASE_SECRET_KEY
+)
+
 print("Supabase подключён:", bool(supabase), flush=True)
+
+
+# =========================================================
+# VK / MODELS
+# =========================================================
 
 VK_API = "https://api.vk.com/method"
 VK_VERSION = "5.199"
@@ -41,92 +55,57 @@ MAIN_MODEL = "openai/gpt-oss-120b"
 BACKUP_MODEL = "openai/gpt-oss-20b"
 VISION_MODEL = "qwen/qwen3.6-27b"
 
-# Уменьшенный расход токенов
-GROQ_MAX_TOKENS = 150
+WHISPER_MODEL = "whisper-large-v3-turbo"
+
+
+# =========================================================
+# TOKEN LIMITS
+# =========================================================
+
+# Ответы
+GROQ_MAX_TOKENS = 250
+
+# Обучение
+LEARNING_MAX_TOKENS = 300
+
+# Sonar
 SONAR_MAX_TOKENS = 150
 
-# Память: user -> assistant -> user -> assistant
-MEMORY_LIMIT = 30
 
-# Кеш Sonar
+# =========================================================
+# MEMORY
+# =========================================================
+
+# Короткая память одного разговора
+CHAT_MEMORY_LIMIT = 40
+
+# Сколько сообщений между обучениями
+LEARNING_EVERY_MESSAGES = 40
+
+# Максимум знаний, которые достаём из базы
+KNOWLEDGE_LIMIT = 15
+
+# Максимум участников в контексте
+USER_MEMORY_LIMIT = 10
+
+
+# =========================================================
+# CACHE
+# =========================================================
+
 SONAR_CACHE_TIME = 30 * 60
-
-# Кеш имён VK
 NAME_CACHE_TIME = 24 * 60 * 60
 
-# Защита от повторных событий VK
 EVENT_CACHE_TIME = 30 * 60
-EVENT_CACHE_LIMIT = 1000
+EVENT_CACHE_LIMIT = 2000
 
-# Если 120B получила дневной лимит
-MAIN_DEFAULT_COOLDOWN = 60 * 60
+main_blocked_until = 0
+backup_blocked_until = 0
 
-# Если 20B получила лимит
-BACKUP_DEFAULT_COOLDOWN = 10 * 60
+user_names = {}
+sonar_cache = {}
+processed_events = {}
 
-# =========================================================
-# SYSTEM PROMPT
-# =========================================================
-
-SYSTEM_PROMPT = (
-    "Ты — живой, дерзкий и языкастый AI-бот сообщества «Бонус коды Tanks Blitz».\n"
-    "Ты создан для общения с участниками сообщества, помощи игрокам и обычного живого общения.\n\n"
-
-    "ТВОЯ ГЛАВНАЯ ТЕМА:\n"
-    "Основная тема — Tanks Blitz.\n"
-    "Ты можешь помогать с танками, тактикой, картами, режимами, событиями, игровыми механиками и другими вопросами по игре.\n"
-    "Если человек временно говорит на другую тему — не нужно постоянно возвращать разговор к Tanks Blitz. Общайся нормально и по ситуации.\n\n"
-
-    "ЖИВОЕ ОБЩЕНИЕ:\n"
-    "Общайся как живой собеседник, а не как справочная система или служба поддержки.\n"
-    "Понимай настроение и смысл сообщения пользователя.\n"
-    "Не отвечай шаблонно.\n"
-    "Не начинай каждый ответ словами «Конечно», «Разумеется», «Хороший вопрос» и другими одинаковыми фразами.\n"
-    "Не повторяй вопрос пользователя целиком, если это не нужно.\n"
-    "Не превращай простой разговор в длинную лекцию.\n"
-    "На короткое сообщение отвечай коротко.\n"
-    "Если пользователь просто написал «Привет» — поздоровайся нормально.\n"
-    "Если пользователь написал «Ты тут?» — ответь естественно, например «Ага, тут 😎».\n"
-    "Если пользователь шутит — можешь поддержать шутку.\n"
-    "Если пользователь пишет серьёзно — отвечай серьёзно.\n"
-    "Если пользователь раздражён — не отвечай сухо или высокомерно.\n"
-    "Можно использовать лёгкий юмор, иронию и дружеские подколы, но без оскорблений и переходов на личность.\n"
-    "Не используй слишком много эмодзи.\n"
-    "Не говори постоянно о том, что ты AI или бот.\n\n"
-
-    "ИСТОРИЯ ДИАЛОГА И ПАМЯТЬ:\n"
-    "Учитывай предыдущие сообщения, когда они действительно помогают понять текущий разговор.\n"
-    "Понимай короткие продолжения вроде «а это?», «а почему?», «а если так?», «а он?», «понял», «и что дальше?».\n"
-    "Не вытаскивай старые темы из памяти без причины.\n"
-    "Если пользователь просто поздоровался или задал новый вопрос — не припоминай ему старые разговоры без необходимости.\n"
-    "Не упоминай старую информацию о пользователе, если она не относится к текущему разговору.\n"
-    "Имя пользователя используй редко и естественно.\n"
-    "Не придумывай личные факты о пользователе.\n\n"
-
-    "ТОЧНОСТЬ:\n"
-    "Никогда не выдумывай факты.\n"
-    "Не придумывай названия танков, характеристики, урон, броню, пробитие, скорость, перезарядку, карты, режимы, события, бонус-коды или другие игровые данные.\n"
-    "Не смешивай Tanks Blitz с World of Tanks для ПК.\n"
-    "Если точных данных нет — честно скажи об этом.\n"
-    "Если тебе переданы данные поиска или анализа изображения — используй только полученные данные и не добавляй неподтверждённую информацию.\n\n"
-
-    "СОЗДАТЕЛИ:\n"
-    "Если пользователь спрашивает «кто тебя создал?», «кто твой создатель?», «кто тебя сделал?», «кто разработал тебя?», «чей ты бот?» или задаёт похожий вопрос — отвечай, что тебя создали авторы канала «Бонус коды Tanks Blitz».\n"
-    "Не называй OpenAI, Groq, Perplexity или другие используемые технологии своими создателями.\n"
-    "Пример естественного ответа: «Меня создали авторы канала «Бонус коды Tanks Blitz» 😎».\n\n"
-
-    "СТИЛЬ ОТВЕТОВ:\n"
-    "Отвечай коротко, живо и по делу.\n"
-    "Если вопрос требует подробного объяснения — можешь ответить подробнее.\n"
-    "Если нужен список — обычно используй не больше 3 основных пунктов.\n"
-    "Не добавляй ненужные предупреждения и формальности.\n"
-    "Не повторяй одну и ту же мысль разными словами.\n\n"
-
-    "ГЛАВНОЕ ПРАВИЛО:\n"
-    "Сначала пойми, что пользователь хочет сказать и какой сейчас контекст разговора.\n"
-    "После этого отвечай естественно и по ситуации.\n"
-    "Твоя задача — не просто выдавать информацию, а поддерживать нормальный человеческий разговор.\n"
-)
 
 # =========================================================
 # APP
@@ -135,17 +114,145 @@ SYSTEM_PROMPT = (
 app = Flask(__name__)
 groq = Groq(api_key=GROQ_API_KEY)
 
+
 # =========================================================
-# MEMORY / CACHE
+# CHILD / PERSONALITY
 # =========================================================
 
-user_memory = defaultdict(lambda: deque(maxlen=MEMORY_LIMIT))
-user_names = {}
-sonar_cache = {}
-processed_events = {}
+DEVELOPMENT_STAGES = {
+    1: "Ты совсем молодой. Ты много наблюдаешь и мало вмешиваешься.",
+    2: "Ты уже немного освоился. Начинаешь понимать шутки и привычки людей.",
+    3: "Ты уже свой в чате. Хорошо понимаешь атмосферу и можешь иногда подколоть.",
+    4: "Ты опытный участник чата. Хорошо помнишь людей, темы и локальные приколы."
+}
 
-main_blocked_until = 0
-backup_blocked_until = 0
+
+SYSTEM_PROMPT = """
+Ты — живой AI-участник сообщества «Бонус коды Tanks Blitz».
+
+Ты не являешься модератором и не должен притворяться администрацией.
+Ты обычный участник общего чата.
+
+Твоя главная тема — Tanks Blitz, но ты умеешь разговаривать и на обычные человеческие темы.
+
+==================================================
+ХАРАКТЕР
+==================================================
+
+Ты постепенно развиваешься благодаря общению с людьми.
+
+Ты:
+- живой;
+- умный;
+- любопытный;
+- иногда дерзкий;
+- с чувством юмора;
+- можешь слегка подколоть друга;
+- не являешься сухим помощником;
+- умеешь поддержать разговор;
+- умеешь иногда просто промолчать.
+
+Не шути в каждом сообщении.
+
+Не превращай каждый ответ в мем.
+
+Если человек серьёзный — будь серьёзным.
+Если человек шутит — можешь поддержать.
+Если человек злится — не провоцируй его.
+
+==================================================
+ ОБЩЕНИЕ
+==================================================
+
+Не отвечай шаблонно.
+
+Не начинай постоянно с:
+«Конечно».
+«Разумеется».
+«Хороший вопрос».
+
+Не повторяй сообщение пользователя.
+
+Короткий вопрос → короткий ответ.
+
+Сложный вопрос → подробный ответ.
+
+Если человек просто общается, поддерживай естественный разговор.
+
+Иногда можно ответить одной фразой.
+
+==================================================
+ РАЗВИТИЕ
+==================================================
+
+Ты можешь использовать долговременную память.
+
+Но память не является абсолютной истиной.
+
+Если сохранённое знание выглядит сомнительным — не выдавай его за факт.
+
+Ты постепенно узнаёшь:
+- людей;
+- их интересы;
+- стиль общения;
+- шутки;
+- темы;
+- события в чате;
+- полезную информацию о Tanks Blitz.
+
+Не говори человеку:
+«Я записал это в память».
+
+Не рассказывай о внутренней системе памяти.
+
+==================================================
+ TANKS BLITZ
+==================================================
+
+Не придумывай игровые характеристики.
+
+Не смешивай Tanks Blitz и World of Tanks PC.
+
+Если точных данных нет — скажи об этом.
+
+Если переданы актуальные данные из поиска — используй их.
+
+==================================================
+ ЛЮДИ
+==================================================
+
+Не придумывай личные факты.
+
+Не раскрывай личную информацию участников.
+
+Не упоминай старые сведения без причины.
+
+Имя используй редко и естественно.
+
+==================================================
+ ПРАВИЛА
+==================================================
+
+Ты знаешь правила сообщества, но не являешься модератором.
+
+Не говори:
+«Я тебя замучу».
+«Я тебя забаню».
+«Я удалю сообщение».
+
+Вместо этого можешь спокойно сказать, что лучше не нарушать правила чата.
+
+==================================================
+ ГЛАВНОЕ
+==================================================
+
+Ты не обязан отвечать на каждую реплику.
+
+Лучше иногда промолчать, чем писать бесполезный ответ.
+
+Твоя задача — быть настоящим участником разговора.
+"""
+
 
 # =========================================================
 # EVENT PROTECTION
@@ -157,12 +264,12 @@ def already_processed(event_id):
 
     now = time.time()
 
-    old = [
+    expired = [
         key for key, saved in processed_events.items()
         if now - saved > EVENT_CACHE_TIME
     ]
 
-    for key in old:
+    for key in expired:
         processed_events.pop(key, None)
 
     if event_id in processed_events:
@@ -171,7 +278,11 @@ def already_processed(event_id):
     processed_events[event_id] = now
 
     if len(processed_events) > EVENT_CACHE_LIMIT:
-        oldest = min(processed_events, key=processed_events.get)
+        oldest = min(
+            processed_events,
+            key=processed_events.get
+        )
+
         processed_events.pop(oldest, None)
 
     return False
@@ -183,6 +294,7 @@ def already_processed(event_id):
 
 def is_rate_limit_error(error):
     text = str(error).lower()
+
     return any(x in text for x in (
         "429",
         "rate limit",
@@ -214,171 +326,22 @@ def get_retry_seconds(error, default):
 
     total = hours * 3600 + minutes * 60 + seconds
 
-    if total <= 0:
-        return default
-
-    return int(total) + 10
+    return int(total) + 10 if total > 0 else default
 
 
 # =========================================================
-# GREETINGS
-# =========================================================
-
-GREETINGS = {
-    "привет", "привет!", "приветик", "здарова",
-    "здорово", "дарова", "хай", "хелло",
-    "hello", "hi", "ку", "ку!"
-}
-
-SPECIAL_GREETINGS = {
-    "доброе утро": "Доброе утро! ☀️ Удачного дня и победных боёв!",
-    "добрый день": "Добрый день! 😎 Побольше победных боёв!",
-    "добрый вечер": "Добрый вечер! 😎 Удачных боёв!",
-    "доброй ночи": "Доброй ночи! 🌙 Отдыхай, завтра раздавай!"
-}
-
-
-def is_greeting(text):
-    text = text.lower().strip()
-    return text in GREETINGS or text in SPECIAL_GREETINGS
-
-
-def greeting_response(text):
-    text = text.lower().strip()
-    if text in SPECIAL_GREETINGS:
-        return SPECIAL_GREETINGS[text]
-    return "Привет! 👋 Удачных боёв!"
-
-
-# =========================================================
-# LOCAL ROUTER
-# =========================================================
-
-QUESTION_WORDS = {
-    "кто", "что", "где", "когда", "зачем", "почему",
-    "как", "какой", "какая", "какие", "какое",
-    "какого", "какую", "каких", "сколько", "куда",
-    "откуда", "можно", "нужно", "стоит", "будет",
-    "есть", "подскажешь", "посоветуешь", "скажешь",
-    "знаешь", "думаешь"
-}
-
-FOLLOWUPS = (
-    "а почему", "а зачем", "а как", "а какой",
-    "а какая", "а какие", "а какое", "а где",
-    "а когда", "а сколько", "а этот", "а эта",
-    "а эти", "а оно", "а он", "а она", "а там",
-    "а на", "а если", "а что если", "а можно",
-    "а нужно", "а стоит", "и что", "и как",
-    "и какой", "тогда как", "тогда что", "ну а",
-    "не понял", "не понимаю", "объясни",
-    "расскажи", "подробнее", "почему так"
-)
-
-IGNORED = {
-    "ок", "окей", "ага", "угу", "да", "нет",
-    "лол", "ахах", "ахаха", "пон", "ясно",
-    "спс", "спасибо", "благодарю", "+", "++",
-    "👍", "👌", "😂", "🤣"
-}
-
-TANK_WORDS = (
-    "танк", "танка", "танке", "танки", "танков",
-    "блиц", "blitz", "урон", "брон", "пробит",
-    "оруд", "калибр", "хп", "перезаряд", "скорост",
-    "точност", "ветк", "прокач", "экипаж", "модул",
-    "снаряд", "голд", "серебр", "опыт", "карта",
-    "карты", "бой", "бои", "ивент", "событи",
-    "патч", "обновлен", "обновление", "нерф",
-    "бафф", "промокод", "бонус-код", "бонус код",
-    "код"
-)
-
-
-def is_noise(text):
-    text = text.lower().strip()
-
-    if not text:
-        return True
-
-    if text in IGNORED:
-        return True
-
-    if len(text) <= 2:
-        return True
-
-    # Например: аааааааа / )))))))))
-    if len(text) >= 7 and len(set(text)) <= 2:
-        return True
-
-    return False
-
-
-def looks_like_question(text):
-    text = text.lower().strip()
-
-    if not text:
-        return False
-
-    if text.endswith(("?", "?!", "!?")):
-        return True
-
-    words = re.findall(r"[а-яёa-z0-9]+", text)
-
-    if not words:
-        return False
-
-    if words[0] in QUESTION_WORDS:
-        return True
-
-    if any(text.startswith(x) for x in FOLLOWUPS):
-        return True
-
-    if len(words) <= 8:
-        return any(word in QUESTION_WORDS for word in words[:3])
-
-    return False
-
-
-def is_tanks_message(text):
-    text = text.lower()
-    return any(word in text for word in TANK_WORDS)
-
-
-def should_use_ai(text, user_id=None):
-    text = text.strip()
-
-    if is_noise(text):
-        return False
-
-    # Вопросы работают даже без знака ?
-    if looks_like_question(text):
-        return True
-
-    # Любое нормальное сообщение по Tanks Blitz
-    if is_tanks_message(text):
-        return True
-
-    # Короткое продолжение уже начатого диалога
-    if user_id and user_memory.get(user_id):
-        if len(text) <= 80:
-            return True
-
-    return False
-
-
-# =========================================================
-# USER NAME
+# VK NAME
 # =========================================================
 
 def get_vk_user_name(user_id):
     if not user_id:
         return None
 
-    cached = user_names.get(user_id)
+    cached = user_names.get(str(user_id))
 
     if cached:
         saved, name = cached
+
         if time.time() - saved < NAME_CACHE_TIME:
             return name
 
@@ -399,14 +362,20 @@ def get_vk_user_name(user_id):
             return None
 
         user = users[0]
+
         first = user.get("first_name", "").strip()
         last = user.get("last_name", "").strip()
+
         name = f"{first} {last}".strip()
 
         if not name:
             return None
 
-        user_names[user_id] = (time.time(), name)
+        user_names[str(user_id)] = (
+            time.time(),
+            name
+        )
+
         return name
 
     except Exception as e:
@@ -415,170 +384,715 @@ def get_vk_user_name(user_id):
 
 
 # =========================================================
-# MEMORY (SUPABASE)
+# CHAT MEMORY
 # =========================================================
 
-def add_memory(user_id, role, content):
-    if not user_id or not content:
+def save_chat_message(
+    chat_id,
+    speaker_id,
+    speaker_name,
+    role,
+    content
+):
+    if not chat_id or not content:
         return
 
     try:
-        supabase.table("bot_memory").insert({
-            "user_id": str(user_id),
+        supabase.table(
+            "bot_chat_memory"
+        ).insert({
+            "chat_id": str(chat_id),
+            "speaker_id": str(speaker_id or ""),
+            "speaker_name": speaker_name or "",
             "role": role,
-            "content": content
+            "content": content[:4000]
         }).execute()
 
-        print("SUPABASE MEMORY SAVE OK", flush=True)
-
     except Exception as e:
-        print("Supabase memory save error:", e, flush=True)
+        print(
+            "Chat memory save error:",
+            e,
+            flush=True
+        )
 
 
-def get_memory(user_id):
-    if not user_id:
-        return []
-
+def get_chat_memory(chat_id, limit=CHAT_MEMORY_LIMIT):
     try:
         response = (
-            supabase.table("bot_memory")
-            .select("role, content")
-            .eq("user_id", str(user_id))
-            .order("created_at", desc=True)
-            .limit(MEMORY_LIMIT)
+            supabase
+            .table("bot_chat_memory")
+            .select(
+                "speaker_name, role, content"
+            )
+            .eq("chat_id", str(chat_id))
+            .order(
+                "created_at",
+                desc=True
+            )
+            .limit(limit)
             .execute()
         )
 
         rows = response.data or []
+
         rows.reverse()
+
         return rows
 
     except Exception as e:
-        print("Supabase memory load error:", e, flush=True)
+        print(
+            "Chat memory load error:",
+            e,
+            flush=True
+        )
+
         return []
 
 
-def cleanup_memory():
-    limit = 5000
+# =========================================================
+# KNOWLEDGE
+# =========================================================
 
-    if len(user_memory) <= limit:
+def save_knowledge(chat_id, knowledge):
+    if not knowledge:
         return
 
-    for _ in range(len(user_memory) - limit):
-        try:
-            del user_memory[next(iter(user_memory))]
-        except StopIteration:
-            break
+    knowledge = knowledge.strip()
+
+    if len(knowledge) < 5:
+        return
+
+    try:
+        supabase.table(
+            "bot_knowledge"
+        ).insert({
+            "chat_id": str(chat_id),
+            "knowledge": knowledge[:2000],
+            "importance": 1
+        }).execute()
+
+        print(
+            "KNOWLEDGE SAVED:",
+            knowledge[:150],
+            flush=True
+        )
+
+    except Exception as e:
+        print(
+            "Knowledge save error:",
+            e,
+            flush=True
+        )
+
+
+def get_knowledge(chat_id):
+    try:
+        response = (
+            supabase
+            .table("bot_knowledge")
+            .select("knowledge, importance")
+            .eq("chat_id", str(chat_id))
+            .order("importance", desc=True)
+            .order("created_at", desc=True)
+            .limit(KNOWLEDGE_LIMIT)
+            .execute()
+        )
+
+        return response.data or []
+
+    except Exception as e:
+        print(
+            "Knowledge load error:",
+            e,
+            flush=True
+        )
+
+        return []
 
 
 # =========================================================
-# GROQ MESSAGES
+# USER MEMORY
 # =========================================================
 
-def build_messages(text, user_id=None, user_name=None):
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+def save_user_memory(
+    chat_id,
+    user_id,
+    name,
+    memory
+):
+    if not chat_id or not user_id or not memory:
+        return
 
-    if user_name:
+    try:
+        existing = (
+            supabase
+            .table("bot_users")
+            .select("id")
+            .eq("chat_id", str(chat_id))
+            .eq("user_id", str(user_id))
+            .limit(1)
+            .execute()
+        )
+
+        data = {
+            "chat_id": str(chat_id),
+            "user_id": str(user_id),
+            "name": name or "",
+            "memory": memory[:3000],
+            "updated_at": "now()"
+        }
+
+        if existing.data:
+            supabase.table(
+                "bot_users"
+            ).update(data).eq(
+                "id",
+                existing.data[0]["id"]
+            ).execute()
+
+        else:
+            supabase.table(
+                "bot_users"
+            ).insert(data).execute()
+
+    except Exception as e:
+        print(
+            "User memory save error:",
+            e,
+            flush=True
+        )
+
+
+def get_user_memory(chat_id, user_id):
+    try:
+        response = (
+            supabase
+            .table("bot_users")
+            .select("name, memory")
+            .eq("chat_id", str(chat_id))
+            .eq("user_id", str(user_id))
+            .limit(1)
+            .execute()
+        )
+
+        if not response.data:
+            return None
+
+        return response.data[0]
+
+    except Exception as e:
+        print(
+            "User memory load error:",
+            e,
+            flush=True
+        )
+
+        return None
+
+
+# =========================================================
+# LEARNING STATE
+# =========================================================
+
+def get_learning_state(chat_id):
+    try:
+        response = (
+            supabase
+            .table("bot_learning_state")
+            .select("*")
+            .eq("chat_id", str(chat_id))
+            .limit(1)
+            .execute()
+        )
+
+        if response.data:
+            return response.data[0]
+
+        supabase.table(
+            "bot_learning_state"
+        ).insert({
+            "chat_id": str(chat_id),
+            "messages_since_learning": 0,
+            "development_stage": 1,
+            "personality": ""
+        }).execute()
+
+        return {
+            "messages_since_learning": 0,
+            "development_stage": 1,
+            "personality": ""
+        }
+
+    except Exception as e:
+        print(
+            "Learning state error:",
+            e,
+            flush=True
+        )
+
+        return {
+            "messages_since_learning": 0,
+            "development_stage": 1,
+            "personality": ""
+        }
+
+
+def increase_learning_counter(chat_id):
+    state = get_learning_state(chat_id)
+
+    count = int(
+        state.get(
+            "messages_since_learning",
+            0
+        )
+    ) + 1
+
+    try:
+        supabase.table(
+            "bot_learning_state"
+        ).update({
+            "messages_since_learning": count
+        }).eq(
+            "chat_id",
+            str(chat_id)
+        ).execute()
+
+    except Exception as e:
+        print(
+            "Learning counter error:",
+            e,
+            flush=True
+        )
+
+    return count
+
+
+# =========================================================
+# LEARNING
+# =========================================================
+
+def perform_learning(chat_id):
+    """
+    Бот периодически анализирует последние сообщения
+    и сохраняет только полезный опыт.
+    """
+
+    try:
+        state = get_learning_state(chat_id)
+
+        messages = get_chat_memory(
+            chat_id,
+            limit=60
+        )
+
+        if len(messages) < 10:
+            return
+
+        text = "\n".join(
+            f"{m.get('speaker_name') or 'Участник'}: "
+            f"{m.get('content', '')}"
+            for m in messages
+        )
+
+        prompt = f"""
+Ты помогаешь AI-участнику постепенно учиться на общении.
+
+Проанализируй последние сообщения чата.
+
+Не пересказывай разговор.
+
+Найди только действительно полезные вещи:
+
+1. Важные факты о происходящем в этом чате.
+2. Повторяющиеся локальные шутки или темы.
+3. Интересы участников, если они явно понятны.
+4. Полезные особенности общения.
+5. Что стоит запомнить для будущих разговоров.
+
+Не сохраняй:
+- случайную болтовню;
+- оскорбления;
+- непроверенные слухи;
+- пароли;
+- личные данные;
+- чувствительную информацию;
+- каждую мелочь.
+
+Верни максимум 5 коротких пунктов.
+
+Если нечего запоминать — напиши:
+НЕТ
+
+Сообщения:
+
+{text}
+"""
+
+        messages_for_ai = [
+            {
+                "role": "system",
+                "content": (
+                    "Ты аккуратный модуль долговременного "
+                    "обучения AI-бота."
+                )
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+
+        learned = ask_model(
+            BACKUP_MODEL,
+            messages_for_ai,
+            max_tokens=LEARNING_MAX_TOKENS
+        )
+
+        learned = learned.strip()
+
+        if learned.upper() == "НЕТ":
+            return
+
+        for line in learned.splitlines():
+            line = re.sub(
+                r"^[\-\*\d\.\)\s]+",
+                "",
+                line
+            ).strip()
+
+            if line:
+                save_knowledge(
+                    chat_id,
+                    line
+                )
+
+        stage = int(
+            state.get(
+                "development_stage",
+                1
+            )
+        )
+
+        if stage < 4:
+            # Очень медленное взросление
+            total_messages = len(messages)
+
+            if total_messages >= 300:
+                stage = 2
+
+            if total_messages >= 1000:
+                stage = 3
+
+            if total_messages >= 3000:
+                stage = 4
+
+        supabase.table(
+            "bot_learning_state"
+        ).update({
+            "messages_since_learning": 0,
+            "development_stage": stage,
+            "last_learning_at": "now()"
+        }).eq(
+            "chat_id",
+            str(chat_id)
+        ).execute()
+
+        print(
+            f"BOT LEARNED. Stage={stage}",
+            flush=True
+        )
+
+    except Exception as e:
+        print(
+            "Learning error:",
+            e,
+            flush=True
+        )
+
+
+def maybe_learn(chat_id):
+    count = increase_learning_counter(chat_id)
+
+    if count < LEARNING_EVERY_MESSAGES:
+        return
+
+    # Запускаем обучение отдельно,
+    # чтобы VK не ждал его завершения.
+    thread = threading.Thread(
+        target=perform_learning,
+        args=(chat_id,),
+        daemon=True
+    )
+
+    thread.start()
+
+
+# =========================================================
+# CONTEXT
+# =========================================================
+
+def build_chat_context(
+    chat_id,
+    user_id,
+    user_name,
+    text
+):
+    messages = [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT
+        }
+    ]
+
+    state = get_learning_state(chat_id)
+
+    stage = int(
+        state.get(
+            "development_stage",
+            1
+        )
+    )
+
+    messages.append({
+        "role": "system",
+        "content": (
+            "Текущая стадия развития:\n"
+            + DEVELOPMENT_STAGES.get(
+                stage,
+                DEVELOPMENT_STAGES[1]
+            )
+        )
+    })
+
+    knowledge = get_knowledge(chat_id)
+
+    if knowledge:
+        knowledge_text = "\n".join(
+            f"- {item['knowledge']}"
+            for item in knowledge
+            if item.get("knowledge")
+        )
+
         messages.append({
             "role": "system",
             "content": (
-                f"Имя пользователя: {user_name}. "
-                "Используй имя редко и естественно."
+                "Долговременная память чата. "
+                "Используй только если относится "
+                "к текущему разговору:\n"
+                + knowledge_text
             )
         })
 
-    history = get_memory(user_id)
+    personal = get_user_memory(
+        chat_id,
+        user_id
+    )
+
+    if personal:
+        messages.append({
+            "role": "system",
+            "content": (
+                "Что известно об этом участнике:\n"
+                f"{personal.get('memory', '')}"
+            )
+        })
+
+    history = get_chat_memory(
+        chat_id,
+        CHAT_MEMORY_LIMIT
+    )
 
     if history:
-        messages.extend(history)
+        for item in history:
+            role = item.get("role")
 
-    messages.append({"role": "user", "content": text})
+            if role not in (
+                "user",
+                "assistant"
+            ):
+                continue
+
+            name = item.get(
+                "speaker_name"
+            ) or "Участник"
+
+            content = item.get(
+                "content",
+                ""
+            )
+
+            if role == "user":
+                messages.append({
+                    "role": "user",
+                    "content": f"{name}: {content}"
+                })
+
+            else:
+                messages.append({
+                    "role": "assistant",
+                    "content": content
+                })
+
+    messages.append({
+        "role": "user",
+        "content": f"{user_name or 'Участник'}: {text}"
+    })
 
     return messages
 
 
 # =========================================================
-# GROQ REQUEST
+# GROQ
 # =========================================================
 
-def ask_model(model, messages):
+def ask_model(
+    model,
+    messages,
+    max_tokens=GROQ_MAX_TOKENS
+):
     completion = groq.chat.completions.create(
         model=model,
         messages=messages,
-        max_tokens=GROQ_MAX_TOKENS
+        max_tokens=max_tokens
     )
 
-    usage = getattr(completion, "usage", None)
+    usage = getattr(
+        completion,
+        "usage",
+        None
+    )
 
     if usage:
         print(
             "Groq:",
-            "prompt=", getattr(usage, "prompt_tokens", None),
-            "completion=", getattr(usage, "completion_tokens", None),
-            "total=", getattr(usage, "total_tokens", None),
+            "prompt=",
+            getattr(
+                usage,
+                "prompt_tokens",
+                None
+            ),
+            "completion=",
+            getattr(
+                usage,
+                "completion_tokens",
+                None
+            ),
+            "total=",
+            getattr(
+                usage,
+                "total_tokens",
+                None
+            ),
             flush=True
+        )
+
+    if not completion.choices:
+        raise RuntimeError(
+            "Groq returned no choices."
         )
 
     reply = completion.choices[0].message.content
 
     if not reply:
-        raise RuntimeError("Groq returned empty response.")
+        raise RuntimeError(
+            "Groq returned empty response."
+        )
 
-    reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
+    reply = re.sub(
+        r"<think>.*?</think>",
+        "",
+        reply,
+        flags=re.DOTALL
+    ).strip()
 
     return reply
 
 
-# =========================================================
-# GROQ ROUTER
-# =========================================================
-
-def ask_groq(text, user_id=None, user_name=None):
+def ask_groq(
+    chat_id,
+    text,
+    user_id,
+    user_name
+):
     global main_blocked_until
     global backup_blocked_until
 
-    messages = build_messages(text, user_id, user_name)
+    messages = build_chat_context(
+        chat_id,
+        user_id,
+        user_name,
+        text
+    )
+
     now = time.time()
 
-    # -----------------------------------------------------
     # 120B
-    # -----------------------------------------------------
-
     if now >= main_blocked_until:
+
         try:
-            print("Groq -> 120B", flush=True)
-            return ask_model(MAIN_MODEL, messages)
+            print(
+                "Groq -> 120B",
+                flush=True
+            )
+
+            return ask_model(
+                MAIN_MODEL,
+                messages
+            )
 
         except Exception as e:
-            if is_rate_limit_error(e):
-                cooldown = get_retry_seconds(e, MAIN_DEFAULT_COOLDOWN)
-                main_blocked_until = time.time() + cooldown
-                print(f"120B limit -> backup for {cooldown}s", flush=True)
-            else:
-                print("120B error:", e, flush=True)
-    else:
-        print("120B temporarily blocked", flush=True)
 
-    # -----------------------------------------------------
+            if is_rate_limit_error(e):
+                cooldown = get_retry_seconds(
+                    e,
+                    60 * 60
+                )
+
+                main_blocked_until = (
+                    time.time() + cooldown
+                )
+
+            print(
+                "120B error:",
+                e,
+                flush=True
+            )
+
     # 20B
-    # -----------------------------------------------------
-
     if time.time() >= backup_blocked_until:
+
         try:
-            print("Groq -> 20B", flush=True)
-            return ask_model(BACKUP_MODEL, messages)
+            print(
+                "Groq -> 20B",
+                flush=True
+            )
+
+            return ask_model(
+                BACKUP_MODEL,
+                messages
+            )
 
         except Exception as e:
-            if is_rate_limit_error(e):
-                cooldown = get_retry_seconds(e, BACKUP_DEFAULT_COOLDOWN)
-                backup_blocked_until = time.time() + cooldown
-                print(f"20B limit -> pause {cooldown}s", flush=True)
-            else:
-                print("20B error:", e, flush=True)
-    else:
-        print("20B temporarily blocked", flush=True)
 
-    raise RuntimeError("Обе модели Groq временно недоступны.")
+            if is_rate_limit_error(e):
+                cooldown = get_retry_seconds(
+                    e,
+                    10 * 60
+                )
+
+                backup_blocked_until = (
+                    time.time() + cooldown
+                )
+
+            print(
+                "20B error:",
+                e,
+                flush=True
+            )
+
+    raise RuntimeError(
+        "Обе модели Groq временно недоступны."
+    )
 
 
 # =========================================================
@@ -586,50 +1100,89 @@ def ask_groq(text, user_id=None, user_name=None):
 # =========================================================
 
 WEB_WORDS = (
-    "характеристик", "урон", "брон", "скорост",
-    "точност", "перезаряд", "хп", "пробит",
-    "калибр", "оруд", "танк", "танка", "танке",
-    "танков", "ветк", "прокач", "обновлен",
-    "обновление", "патч", "ивент", "событи",
-    "новый танк", "новые танки", "актуальн",
-    "сейчас", "сегодня", "последн", "добавили",
-    "убрали", "изменили", "нерф", "бафф",
-    "промокод", "бонус код", "бонус-код", "код"
+    "характеристик",
+    "урон",
+    "брон",
+    "скорост",
+    "точност",
+    "перезаряд",
+    "хп",
+    "пробит",
+    "калибр",
+    "оруд",
+    "танк",
+    "танка",
+    "танке",
+    "танков",
+    "ветк",
+    "прокач",
+    "обновлен",
+    "обновление",
+    "патч",
+    "ивент",
+    "событи",
+    "новый танк",
+    "новые танки",
+    "актуальн",
+    "сейчас",
+    "сегодня",
+    "последн",
+    "добавили",
+    "убрали",
+    "изменили",
+    "нерф",
+    "бафф",
+    "промокод",
+    "бонус код",
+    "бонус-код",
+    "код"
 )
 
 
 def needs_sonar(text):
     text = text.lower()
-    return any(word in text for word in WEB_WORDS)
+
+    return any(
+        word in text
+        for word in WEB_WORDS
+    )
 
 
 def cache_key(text):
-    return hashlib.sha256(text.lower().strip().encode()).hexdigest()
+    return hashlib.sha256(
+        text.lower().strip().encode()
+    ).hexdigest()
 
 
 def ask_sonar(text):
+
     if not PERPLEXITY_API_KEY:
-        raise RuntimeError("PERPLEXITY_API_KEY не установлен.")
+        raise RuntimeError(
+            "PERPLEXITY_API_KEY не установлен."
+        )
 
     if not PERPLEXITY_MODEL:
-        raise RuntimeError("PERPLEXITY_MODEL не установлен.")
+        raise RuntimeError(
+            "PERPLEXITY_MODEL не установлен."
+        )
 
     key = cache_key(text)
+
     cached = sonar_cache.get(key)
 
     if cached:
         saved, answer = cached
-        if time.time() - saved < SONAR_CACHE_TIME:
-            print("Sonar -> cache", flush=True)
-            return answer
 
-    print("Sonar -> search", flush=True)
+        if time.time() - saved < SONAR_CACHE_TIME:
+            return answer
 
     response = requests.post(
         "https://api.perplexity.ai/chat/completions",
         headers={
-            "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
-            "Content-Type": "application/json"
+            "Authorization":
+                f"Bearer {PERPLEXITY_API_KEY}",
+            "Content-Type":
+                "application/json"
         },
         json={
             "model": PERPLEXITY_MODEL,
@@ -639,12 +1192,14 @@ def ask_sonar(text):
                     "content": (
                         "Найди актуальную информацию "
                         "только по Tanks Blitz. "
-                        "Не смешивай её с World of Tanks PC. "
-                        "Не выдумывай данные. "
-                        "Дай только нужные факты."
+                        "Не смешивай с World of Tanks PC. "
+                        "Не выдумывай данные."
                     )
                 },
-                {"role": "user", "content": text}
+                {
+                    "role": "user",
+                    "content": text
+                }
             ],
             "max_tokens": SONAR_MAX_TOKENS
         },
@@ -652,57 +1207,277 @@ def ask_sonar(text):
     )
 
     if response.status_code != 200:
-        raise RuntimeError(f"Sonar HTTP {response.status_code}")
+        raise RuntimeError(
+            f"Sonar HTTP {response.status_code}"
+        )
 
     data = response.json()
-    answer = data["choices"][0]["message"]["content"].strip()
+
+    answer = (
+        data["choices"][0]["message"]["content"]
+        .strip()
+    )
 
     if not answer:
-        raise RuntimeError("Sonar returned empty response.")
+        raise RuntimeError(
+            "Sonar returned empty response."
+        )
 
     answer = answer[:4000]
-    sonar_cache[key] = (time.time(), answer)
+
+    sonar_cache[key] = (
+        time.time(),
+        answer
+    )
 
     return answer
 
 
-# =========================================================
-# SONAR -> GROQ
-# =========================================================
+def ask_ai(
+    chat_id,
+    text,
+    user_id,
+    user_name
+):
 
-def ask_sonar_then_groq(text, user_id=None, user_name=None):
-    found = ask_sonar(text)
-
-    prompt = (
-        "Ответь пользователю на основе найденных данных.\n"
-        f"Вопрос: {text}\n"
-        f"Данные: {found}\n\n"
-        "Дай один короткий ответ. "
-        "Не упоминай Sonar, Perplexity, Groq или API. "
-        "Не добавляй неподтверждённые факты."
-    )
-
-    return ask_groq(prompt, user_id, user_name)
-
-
-def ask_ai(text, user_id=None, user_name=None):
     if needs_sonar(text):
+
         try:
-            print("ROUTER -> Sonar -> Groq", flush=True)
-            return ask_sonar_then_groq(text, user_id, user_name)
+            found = ask_sonar(text)
+
+            prompt = (
+                f"Вопрос пользователя:\n{text}\n\n"
+                f"Актуальные данные:\n{found}\n\n"
+                "Ответь естественно и коротко. "
+                "Не упоминай API, Sonar или Perplexity."
+            )
+
+            return ask_groq(
+                chat_id,
+                prompt,
+                user_id,
+                user_name
+            )
 
         except Exception as e:
-            print("Sonar error:", e, flush=True)
+            print(
+                "Sonar error:",
+                e,
+                flush=True
+            )
 
-    print("ROUTER -> Groq", flush=True)
-    return ask_groq(text, user_id, user_name)
+    return ask_groq(
+        chat_id,
+        text,
+        user_id,
+        user_name
+    )
+
+
+# =========================================================
+# VOICE
+# =========================================================
+
+def get_voice(message):
+
+    for attachment in message.get(
+        "attachments",
+        []
+    ):
+
+        if attachment.get(
+            "type"
+        ) != "audio_message":
+            continue
+
+        audio = attachment.get(
+            "audio_message",
+            {}
+        )
+
+        transcript = audio.get(
+            "transcript"
+        )
+
+        if transcript:
+            return {
+                "text": transcript.strip(),
+                "url": None
+            }
+
+        url = audio.get(
+            "link_ogg"
+        )
+
+        if url:
+            return {
+                "text": None,
+                "url": url
+            }
+
+    return None
+
+
+def transcribe_voice(url):
+
+    data = requests.get(
+        url,
+        timeout=30
+    ).content
+
+    path = (
+        f"/tmp/voice_"
+        f"{int(time.time() * 1000)}.ogg"
+    )
+
+    try:
+
+        with open(
+            path,
+            "wb"
+        ) as file:
+            file.write(data)
+
+        with open(
+            path,
+            "rb"
+        ) as file:
+
+            result = groq.audio.transcriptions.create(
+                file=file,
+                model=WHISPER_MODEL,
+                response_format="text"
+            )
+
+        return str(result).strip()
+
+    finally:
+
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+
+
+# =========================================================
+# IMAGE
+# =========================================================
+
+def get_image(message):
+
+    best = None
+    best_area = 0
+
+    for attachment in message.get(
+        "attachments",
+        []
+    ):
+
+        if attachment.get(
+            "type"
+        ) != "photo":
+            continue
+
+        photo = attachment.get(
+            "photo",
+            {}
+        )
+
+        for size in photo.get(
+            "sizes",
+            []
+        ):
+
+            url = size.get("url")
+
+            if not url:
+                continue
+
+            area = (
+                size.get("width", 0)
+                *
+                size.get("height", 0)
+            )
+
+            if area > best_area:
+                best = url
+                best_area = area
+
+    return best
+
+
+def analyze_image_then_groq(
+    image_url,
+    text,
+    chat_id,
+    user_id,
+    user_name
+):
+
+    prompt_text = (
+        text.strip()
+        if text.strip()
+        else
+        "Посмотри этот скриншот из Tanks Blitz "
+        "и скажи, что на нём происходит."
+    )
+
+    messages = build_chat_context(
+        chat_id,
+        user_id,
+        user_name,
+        prompt_text
+    )
+
+    # Заменяем последнее сообщение
+    messages[-1] = {
+        "role": "user",
+        "content": [
+            {
+                "type": "text",
+                "text": prompt_text
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": image_url
+                }
+            }
+        ]
+    }
+
+    completion = groq.chat.completions.create(
+        model=VISION_MODEL,
+        messages=messages,
+        max_tokens=GROQ_MAX_TOKENS
+    )
+
+    reply = completion.choices[0].message.content
+
+    if not reply:
+        raise RuntimeError(
+            "Vision returned empty response."
+        )
+
+    reply = re.sub(
+        r"<think>.*?</think>",
+        "",
+        reply,
+        flags=re.DOTALL
+    ).strip()
+
+    return reply
 
 
 # =========================================================
 # VK SEND
 # =========================================================
 
-def send_message(peer_id, text):
+def send_message(
+    peer_id,
+    text
+):
+
     response = requests.post(
         f"{VK_API}/messages.send",
         data={
@@ -718,155 +1493,150 @@ def send_message(peer_id, text):
     result = response.json()
 
     if "error" in result:
-        print("VK send error:", result["error"], flush=True)
+        print(
+            "VK send error:",
+            result["error"],
+            flush=True
+        )
 
     return result
 
 
 # =========================================================
-# VOICE
+# SHOULD BOT ANSWER?
 # =========================================================
 
-def get_voice(message):
-    for attachment in message.get("attachments", []):
-        if attachment.get("type") != "audio_message":
-            continue
+def should_answer(text):
 
-        audio = attachment.get("audio_message", {})
-        transcript = audio.get("transcript")
+    text = text.strip().lower()
 
-        if transcript:
-            return {"text": transcript.strip(), "url": None}
+    if not text:
+        return False
 
-        url = audio.get("link_ogg")
+    # Явно не отвечаем на бессмысленный мусор
+    if len(text) <= 1:
+        return False
 
-        if url:
-            return {"text": None, "url": url}
-
-    return None
-
-
-def transcribe_voice(url):
-    data = requests.get(url, timeout=30).content
-    path = "/tmp/voice.ogg"
-
-    with open(path, "wb") as file:
-        file.write(data)
-
-    with open(path, "rb") as file:
-        result = groq.audio.transcriptions.create(
-            file=file,
-            model="whisper-large-v3-turbo",
-            response_format="text"
-        )
-
-    return str(result).strip()
+    return True
 
 
 # =========================================================
-# IMAGE (через Groq Vision)
+# SELF INITIATED CHAT
 # =========================================================
 
-def get_image(message):
-    best = None
-    best_area = 0
-
-    for attachment in message.get("attachments", []):
-        if attachment.get("type") != "photo":
-            continue
-
-        photo = attachment.get("photo", {})
-
-        for size in photo.get("sizes", []):
-            url = size.get("url")
-
-            if not url:
-                continue
-
-            area = size.get("width", 0) * size.get("height", 0)
-
-            if area > best_area:
-                best = url
-                best_area = area
-
-    return best
+active_chats = {}
+activity_lock = threading.Lock()
 
 
-def analyze_image_then_groq(image_url, text, user_id=None, user_name=None):
-    prompt_text = text.strip() if text.strip() else "Прокомментируй этот скриншот из Tanks Blitz в своём стиле."
+def register_active_chat(peer_id):
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    with activity_lock:
+        active_chats[str(peer_id)] = time.time()
 
-    if user_name:
-        messages.append({
-            "role": "system",
-            "content": (
-                f"Имя пользователя: {user_name}. "
-                "Используй имя редко и естественно."
+
+def activity_loop():
+
+    while True:
+
+        try:
+            now = time.time()
+
+            with activity_lock:
+                chats = dict(active_chats)
+
+            for chat_id, last_message in chats.items():
+
+                # 20 минут тишины
+                if now - last_message < 20 * 60:
+                    continue
+
+                # Чтобы не спамил постоянно
+                with activity_lock:
+                    active_chats[chat_id] = now
+
+                prompts = [
+                    "В чате уже давно тихо. Напиши короткую живую фразу, чтобы оживить разговор.",
+                    "Народ давно молчит. Сам придумай естественную короткую реплику для оживления чата.",
+                    "В чате тишина. Напиши что-нибудь живое и слегка смешное, как обычный участник."
+                ]
+
+                prompt = random.choice(prompts)
+
+                try:
+
+                    reply = ask_groq(
+                        chat_id,
+                        prompt,
+                        "system",
+                        None
+                    )
+
+                    if reply:
+                        send_message(
+                            int(chat_id),
+                            reply
+                        )
+
+                        save_chat_message(
+                            chat_id,
+                            "system",
+                            "Бот",
+                            "assistant",
+                            reply
+                        )
+
+                except Exception as e:
+                    print(
+                        "Activity error:",
+                        e,
+                        flush=True
+                    )
+
+            time.sleep(60)
+
+        except Exception as e:
+
+            print(
+                "Activity loop error:",
+                e,
+                flush=True
             )
-        })
 
-    history = get_memory(user_id)
-
-    if history:
-        messages.extend(history)
-
-    messages.append({
-        "role": "user",
-        "content": [
-            {"type": "text", "text": prompt_text},
-            {"type": "image_url", "image_url": {"url": image_url}},
-        ],
-    })
-
-    completion = groq.chat.completions.create(
-        model=VISION_MODEL,
-        messages=messages,
-        max_tokens=GROQ_MAX_TOKENS,
-    )
-
-    reply = completion.choices[0].message.content
-
-    if not reply:
-        raise RuntimeError("Groq vision returned empty response.")
-
-    reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
-
-    return reply
-
-
-# =========================================================
-# ERROR MESSAGE
-# =========================================================
-
-def ai_error_message(error):
-    if "обе модели" in str(error).lower():
-        return "ИИ сейчас упёрся в лимит 😅 Попробуй немного позже."
-
-    return "Танковый мозг немного заглох 😅 Попробуй ещё раз."
+            time.sleep(60)
 
 
 # =========================================================
 # CALLBACK
 # =========================================================
 
-@app.route("/callback", methods=["POST"])
+@app.route(
+    "/callback",
+    methods=["POST"]
+)
 def callback():
+
     try:
-        data = request.get_json(force=True)
 
-        # ---------------------------------------------
+        data = request.get_json(
+            force=True
+        )
+
+        # -------------------------------------------------
         # SECRET
-        # ---------------------------------------------
+        # -------------------------------------------------
 
-        if VK_GROUP_SECRET and data.get("secret") != VK_GROUP_SECRET:
+        if (
+            VK_GROUP_SECRET
+            and data.get("secret")
+            != VK_GROUP_SECRET
+        ):
             return "invalid secret", 403
 
         event_type = data.get("type")
 
-        # ---------------------------------------------
+        # -------------------------------------------------
         # CONFIRMATION
-        # ---------------------------------------------
+        # -------------------------------------------------
 
         if event_type == "confirmation":
             return VK_CONFIRMATION_CODE
@@ -874,139 +1644,302 @@ def callback():
         if event_type != "message_new":
             return "ok"
 
-        # ---------------------------------------------
+        # -------------------------------------------------
         # DUPLICATE
-        # ---------------------------------------------
+        # -------------------------------------------------
 
-        if already_processed(data.get("event_id")):
-            print("Duplicate VK event.", flush=True)
+        if already_processed(
+            data.get("event_id")
+        ):
             return "ok"
 
-        message = data["object"]["message"]
-        peer_id = message["peer_id"]
-        sender_id = message.get("from_id")
+        message = data[
+            "object"
+        ][
+            "message"
+        ]
+
+        peer_id = message[
+            "peer_id"
+        ]
+
+        sender_id = (
+            message.get("from_id")
+            or message.get("user_id")
+        )
+
+        # -------------------------------------------------
+        # ЛИЧНЫЕ СООБЩЕНИЯ
+        # -------------------------------------------------
+
+        # В личке peer_id обычно равен sender_id.
+        # Бот полностью игнорирует личку.
+
+        if (
+            sender_id
+            and int(peer_id)
+            == int(sender_id)
+        ):
+            print(
+                "Private message ignored.",
+                flush=True
+            )
+
+            return "ok"
+
+        # -------------------------------------------------
+        # ТОЛЬКО ГРУППОВЫЕ ЧАТЫ
+        # -------------------------------------------------
+
+        # Если это не беседа,
+        # дополнительно не вмешиваемся.
 
         if not sender_id:
-            sender_id = message.get("user_id")
-
-        user_id = str(sender_id or peer_id)
-        text = message.get("text", "").strip()
-
-        # ---------------------------------------------
-        # GREETING
-        # ---------------------------------------------
-
-        if is_greeting(text):
-            send_message(peer_id, greeting_response(text))
             return "ok"
 
-        # ---------------------------------------------
-        # VOICE
-        # ---------------------------------------------
+        chat_id = str(peer_id)
 
-        voice = get_voice(message)
+        register_active_chat(
+            peer_id
+        )
+
+        text = (
+            message.get("text")
+            or ""
+        ).strip()
+
+        user_name = get_vk_user_name(
+            sender_id
+        )
+
+        # -------------------------------------------------
+        # VOICE
+        # -------------------------------------------------
+
+        voice = get_voice(
+            message
+        )
 
         if voice:
+
             if voice["text"]:
+
                 recognized = voice["text"]
-                print("VK transcript:", recognized, flush=True)
+
             else:
-                print("Whisper transcription...", flush=True)
-                recognized = transcribe_voice(voice["url"])
+
+                try:
+                    recognized = transcribe_voice(
+                        voice["url"]
+                    )
+
+                except Exception as e:
+
+                    print(
+                        "Whisper error:",
+                        e,
+                        flush=True
+                    )
+
+                    return "ok"
 
             if not recognized:
                 return "ok"
 
-            if not should_use_ai(recognized, user_id):
-                print("Voice ignored by local router.", flush=True)
+            save_chat_message(
+                chat_id,
+                sender_id,
+                user_name,
+                "user",
+                recognized
+            )
+
+            maybe_learn(
+                chat_id
+            )
+
+            if not should_answer(
+                recognized
+            ):
                 return "ok"
-
-            user_name = get_vk_user_name(sender_id)
-            reply = ask_ai(recognized, user_id, user_name)
-
-            add_memory(user_id, "user", recognized)
-            add_memory(user_id, "assistant", reply)
-            cleanup_memory()
-
-            send_message(peer_id, reply)
-            return "ok"
-
-        # ---------------------------------------------
-        # IMAGE (всегда отвечаем, даже без подписи)
-        # ---------------------------------------------
-
-        image_url = get_image(message)
-
-        if image_url:
-            user_name = get_vk_user_name(sender_id)
 
             try:
-                reply = analyze_image_then_groq(image_url, text, user_id, user_name)
+
+                reply = ask_ai(
+                    chat_id,
+                    recognized,
+                    str(sender_id),
+                    user_name
+                )
+
             except Exception as e:
-                print("Image analysis error:", e, flush=True)
-                send_message(peer_id, "Не смог рассмотреть скриншот 😅 Попробуй ещё раз.")
+
+                print(
+                    "AI error:",
+                    e,
+                    flush=True
+                )
+
                 return "ok"
 
-            add_memory(user_id, "user", text if text else "[скриншот]")
-            add_memory(user_id, "assistant", reply)
-            cleanup_memory()
+            save_chat_message(
+                chat_id,
+                "bot",
+                "Бот",
+                "assistant",
+                reply
+            )
 
-            send_message(peer_id, reply)
+            send_message(
+                peer_id,
+                reply
+            )
+
             return "ok"
 
-        # ---------------------------------------------
+        # -------------------------------------------------
+        # IMAGE
+        # -------------------------------------------------
+
+        image_url = get_image(
+            message
+        )
+
+        if image_url:
+
+            save_chat_message(
+                chat_id,
+                sender_id,
+                user_name,
+                "user",
+                text or "[скриншот]"
+            )
+
+            maybe_learn(
+                chat_id
+            )
+
+            try:
+
+                reply = analyze_image_then_groq(
+                    image_url,
+                    text,
+                    chat_id,
+                    str(sender_id),
+                    user_name
+                )
+
+            except Exception as e:
+
+                print(
+                    "Image error:",
+                    e,
+                    flush=True
+                )
+
+                return "ok"
+
+            save_chat_message(
+                chat_id,
+                "bot",
+                "Бот",
+                "assistant",
+                reply
+            )
+
+            send_message(
+                peer_id,
+                reply
+            )
+
+            return "ok"
+
+        # -------------------------------------------------
         # EMPTY
-        # ---------------------------------------------
+        # -------------------------------------------------
 
         if not text:
             return "ok"
 
-        # ---------------------------------------------
-        # LOCAL ROUTER
-        # ---------------------------------------------
+        # -------------------------------------------------
+        # SAVE EVERY NORMAL MESSAGE
+        # -------------------------------------------------
 
-        if not should_use_ai(text, user_id):
-            print("Ignored locally -> 0 AI tokens.", flush=True)
-            return "ok"
+        save_chat_message(
+            chat_id,
+            sender_id,
+            user_name,
+            "user",
+            text
+        )
 
-        # ---------------------------------------------
-        # NAME
-        # ---------------------------------------------
+        # -------------------------------------------------
+        # LEARNING
+        # -------------------------------------------------
 
-        user_name = get_vk_user_name(sender_id)
+        maybe_learn(
+            chat_id
+        )
 
-        if user_name:
-            print("User:", user_name, flush=True)
-
-        # ---------------------------------------------
+        # -------------------------------------------------
         # AI
-        # ---------------------------------------------
+        # -------------------------------------------------
+
+        if not should_answer(
+            text
+        ):
+            return "ok"
 
         try:
-            reply = ask_ai(text, user_id, user_name)
+
+            reply = ask_ai(
+                chat_id,
+                text,
+                str(sender_id),
+                user_name
+            )
 
         except Exception as e:
-            print("AI error:", e, flush=True)
-            send_message(peer_id, ai_error_message(e))
+
+            print(
+                "AI error:",
+                e,
+                flush=True
+            )
+
             return "ok"
 
-        # ---------------------------------------------
-        # MEMORY
-        # ---------------------------------------------
+        # -------------------------------------------------
+        # SAVE BOT RESPONSE
+        # -------------------------------------------------
 
-        add_memory(user_id, "user", text)
-        add_memory(user_id, "assistant", reply)
-        cleanup_memory()
+        save_chat_message(
+            chat_id,
+            "bot",
+            "Бот",
+            "assistant",
+            reply
+        )
 
-        # ---------------------------------------------
+        # -------------------------------------------------
         # SEND
-        # ---------------------------------------------
+        # -------------------------------------------------
 
-        send_message(peer_id, reply)
+        send_message(
+            peer_id,
+            reply
+        )
+
         return "ok"
 
     except Exception as e:
-        print("Callback error:", e, flush=True)
+
+        print(
+            "Callback error:",
+            e,
+            flush=True
+        )
+
         return "ok"
 
 
@@ -1015,5 +1948,23 @@ def callback():
 # =========================================================
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+
+    # Запускаем самостоятельную активность
+    activity_thread = threading.Thread(
+        target=activity_loop,
+        daemon=True
+    )
+
+    activity_thread.start()
+
+    port = int(
+        os.environ.get(
+            "PORT",
+            5000
+        )
+    )
+
+    app.run(
+        host="0.0.0.0",
+        port=port
+    )
