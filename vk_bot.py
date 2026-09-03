@@ -2,9 +2,8 @@ import os
 import re
 import time
 import hashlib
-from collections import defaultdict, deque
-from datetime import datetime
-from zoneinfo import ZoneInfo
+import json
+import tempfile
 
 import requests
 from flask import Flask, request
@@ -31,6 +30,7 @@ SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY", "").strip()
 if SUPABASE_URL and not SUPABASE_URL.startswith(("http://", "https://")):
     SUPABASE_URL = "https://" + SUPABASE_URL
 
+
 print("SUPABASE_URL =", repr(SUPABASE_URL), flush=True)
 print(
     "SUPABASE_SECRET_KEY есть =",
@@ -38,10 +38,12 @@ print(
     flush=True
 )
 
+
 supabase = create_client(
     SUPABASE_URL,
     SUPABASE_SECRET_KEY
 )
+
 
 print(
     "Supabase подключён:",
@@ -61,21 +63,16 @@ VK_VERSION = "5.199"
 MAIN_MODEL = "openai/gpt-oss-120b"
 BACKUP_MODEL = "openai/gpt-oss-20b"
 
-# Модель с поддержкой изображений
-VISION_MODEL = "qwen/qwen3.6-27b"
+WHISPER_MODEL = "whisper-large-v3-turbo"
 
 
 # =========================================================
 # TOKEN LIMITS
 # =========================================================
 
-# Обычный чат
-GROQ_MAX_TOKENS = 200
-
-# Анализ изображений
-# Было 250 — увеличили, чтобы модель успевала
-# нормально посмотреть скриншот и сформулировать ответ.
-IMAGE_MAX_TOKENS = 600
+# Максимальная длина ответа Groq.
+# Это НЕ заставляет модель писать 350 токенов.
+GROQ_MAX_TOKENS = 350
 
 # Perplexity
 SONAR_MAX_TOKENS = 200
@@ -87,29 +84,20 @@ SONAR_MAX_TOKENS = 200
 
 MEMORY_LIMIT = 30
 
-# Отдельная память скриншотов
-IMAGE_MEMORY_LIMIT = 20
-
-# Максимальная длина текста одного сохранённого скриншота
-IMAGE_MEMORY_TEXT_LIMIT = 500
-
-# Максимум 2 обработанных скриншота в сутки
-IMAGE_DAILY_LIMIT = 2
-
-# Часовой пояс для дневного лимита
-LOCAL_TIMEZONE = "Europe/Amsterdam"
-
 
 # =========================================================
 # CACHE
 # =========================================================
 
 SONAR_CACHE_TIME = 30 * 60
-
 NAME_CACHE_TIME = 24 * 60 * 60
 
 EVENT_CACHE_TIME = 30 * 60
 EVENT_CACHE_LIMIT = 1000
+
+# Небольшой кэш названий танков.
+# Он хранится только в RAM, на диск ничего не записывается.
+TANK_CACHE_TIME = 10 * 60
 
 
 # =========================================================
@@ -133,18 +121,17 @@ SYSTEM_PROMPT = (
     "ТВОЯ ГЛАВНАЯ ТЕМА:\n"
     "Основная тема — Tanks Blitz.\n"
     "Ты можешь помогать с танками, тактикой, картами, режимами, "
-    "событиями, игровыми механиками и другими вопросами по игре.\n"
+    "событиями, игровой механикой и другими вопросами по игре.\n"
     "Если человек временно говорит на другую тему — не нужно постоянно "
     "возвращать разговор к Tanks Blitz. Общайся нормально и по ситуации.\n\n"
 
     "ЖИВОЕ ОБЩЕНИЕ:\n"
-    "Общайся как живой собеседник, а не как справочная система "
-    "или служба поддержки.\n"
+    "Общайся как живой собеседник, а не как справочная система.\n"
     "Понимай настроение и смысл сообщения пользователя.\n"
     "Не отвечай шаблонно.\n"
     "Не начинай каждый ответ словами «Конечно», «Разумеется», "
-    "«Хороший вопрос» и другими одинаковыми фразами.\n"
-    "Не повторяй вопрос пользователя целиком, если это не нужно.\n"
+    "«Хороший вопрос» и подобными фразами.\n"
+    "Не повторяй вопрос пользователя целиком без необходимости.\n"
     "Не превращай простой разговор в длинную лекцию.\n"
     "На короткое сообщение отвечай коротко.\n"
     "Если пользователь просто написал «Привет» — поздоровайся нормально.\n"
@@ -157,26 +144,16 @@ SYSTEM_PROMPT = (
     "Не используй слишком много эмодзи.\n"
     "Не говори постоянно о том, что ты AI или бот.\n\n"
 
-    "ИСТОРИЯ ДИАЛОГА И ПАМЯТЬ:\n"
+    "ИСТОРИЯ ДИАЛОГА:\n"
     "Учитывай предыдущие сообщения, когда они действительно помогают "
     "понять текущий разговор.\n"
     "Понимай короткие продолжения вроде «а это?», «а почему?», "
     "«а если так?», «а он?», «понял», «и что дальше?».\n"
     "Не вытаскивай старые темы из памяти без причины.\n"
-    "Если пользователь просто поздоровался или задал новый вопрос — "
-    "не припоминай ему старые разговоры без необходимости.\n"
     "Не упоминай старую информацию о пользователе, если она не относится "
     "к текущему разговору.\n"
     "Имя пользователя используй редко и естественно.\n"
     "Не придумывай личные факты о пользователе.\n\n"
-
-    "ПАМЯТЬ О СКРИНШОТАХ:\n"
-    "Тебе могут передаваться краткие текстовые записи о предыдущих "
-    "скриншотах пользователя.\n"
-    "Используй их только если они помогают понять текущий разговор.\n"
-    "Не говори пользователю о базе данных, памяти, Supabase или техническом "
-    "устройстве этой функции.\n"
-    "Не придумывай информацию, которой нет в сохранённой записи.\n\n"
 
     "ТОЧНОСТЬ:\n"
     "Никогда не выдумывай факты.\n"
@@ -184,83 +161,41 @@ SYSTEM_PROMPT = (
     "пробитие, скорость, перезарядку, карты, режимы, события, "
     "бонус-коды или другие игровые данные.\n"
     "Не смешивай Tanks Blitz с World of Tanks для ПК.\n"
-    "Если точных данных нет — честно скажи об этом.\n"
-    "Если тебе переданы данные поиска или анализа изображения — "
-    "используй только полученные данные и не добавляй неподтверждённую информацию.\n\n"
+    "Если точных данных нет — честно скажи об этом.\n\n"
+
+    "БАЗА ТАНКОВ:\n"
+    "Если тебе переданы проверенные ТТХ из базы TANK_DATA, "
+    "используй именно эти данные.\n"
+    "Не исправляй их по памяти и не заменяй своими предположениями.\n"
+    "Если какого-то параметра в базе нет — скажи, что этого параметра "
+    "нет в доступных данных.\n"
+    "Если пользователь спрашивает, коллекционный танк или прокачиваемый, "
+    "используй поле type из базы.\n"
+    "Если пользователь сравнивает несколько танков, используй данные "
+    "всех переданных танков.\n"
+    "Не придумывай недостающие характеристики.\n"
+    "База TANK_DATA является источником проверенных игровых характеристик.\n\n"
 
     "СОЗДАТЕЛИ:\n"
-    "Если пользователь спрашивает «кто тебя создал?», «кто твой создатель?», "
-    "«кто тебя сделал?», «кто разработал тебя?», «чей ты бот?» или задаёт "
-    "похожий вопрос — отвечай, что тебя создали авторы канала "
+    "Если пользователь спрашивает «кто тебя создал?», «кто тебя сделал?», "
+    "«кто разработал тебя?», «чей ты бот?» или задаёт похожий вопрос — "
+    "отвечай, что тебя создали авторы канала "
     "«Бонус коды Tanks Blitz».\n"
     "Не называй OpenAI, Groq, Perplexity или другие используемые технологии "
-    "своими создателями.\n"
-    "Пример естественного ответа: "
-    "«Меня создали авторы канала «Бонус коды Tanks Blitz» 😎».\n\n"
+    "своими создателями.\n\n"
 
     "СТИЛЬ ОТВЕТОВ:\n"
     "Отвечай коротко, живо и по делу.\n"
-    "Если вопрос требует подробного объяснения — можешь ответить подробнее.\n"
+    "Если вопрос требует подробного объяснения — можешь ответить подробнее, "
+    "но не растягивай ответ без необходимости.\n"
     "Если нужен список — обычно используй не больше 3 основных пунктов.\n"
     "Не добавляй ненужные предупреждения и формальности.\n"
     "Не повторяй одну и ту же мысль разными словами.\n\n"
 
-    "ГЛАВНОЕ ПРАВИЛО:\n"
+    "ГЛАВНОЕ:\n"
     "Сначала пойми, что пользователь хочет сказать и какой сейчас "
     "контекст разговора.\n"
     "После этого отвечай естественно и по ситуации.\n"
-    "Твоя задача — не просто выдавать информацию, а поддерживать "
-    "нормальный человеческий разговор.\n"
-)
-
-
-# =========================================================
-# IMAGE SYSTEM PROMPT
-# =========================================================
-
-IMAGE_SYSTEM_PROMPT = (
-    SYSTEM_PROMPT
-    + "\n\n"
-    "ОБРАБОТКА СКРИНШОТОВ:\n"
-    "Когда пользователь отправляет изображение, твоя задача — "
-    "анализировать именно игровой контент Tanks Blitz.\n\n"
-
-    "ОЧЕНЬ ВАЖНО:\n"
-    "Игнорируй интерфейс VK вокруг изображения.\n"
-    "Игнорируй название сообщества, текст поста, лайки, комментарии, "
-    "кнопки, время, рекламу и другие элементы интерфейса VK.\n"
-    "Если скриншот Tanks Blitz находится внутри изображения VK — "
-    "смотри именно на область игры.\n\n"
-
-    "ЧТО НУЖНО ЗАМЕЧАТЬ:\n"
-    "1. Результат боя: урон, уничтоженные противники, повреждённые "
-    "противники, урон с помощью и другие явно видимые показатели.\n"
-    "2. Медали, награды и достижения, если они хорошо видны.\n"
-    "3. Выпадение лута и наград.\n"
-    "4. Контейнеры и их содержимое.\n"
-    "5. Выпадение или получение танка.\n"
-    "6. Название танка, если оно действительно видно.\n"
-    "7. Другую важную информацию именно из интерфейса Tanks Blitz.\n\n"
-
-    "НЕ ВЫДУМЫВАЙ:\n"
-    "Если цифра, название танка или награда плохо видны — "
-    "не угадывай их.\n"
-    "Не придумывай характеристики танка, которых нет на изображении.\n"
-    "Не утверждай, что игрок получил танк или награду, если это "
-    "не видно на скриншоте.\n\n"
-
-    "СТИЛЬ КОММЕНТАРИЯ:\n"
-    "Если это игровой скриншот — дай короткий живой комментарий, "
-    "как участник танкового сообщества.\n"
-    "Можно отметить самые интересные показатели.\n"
-    "Не нужно перечислять абсолютно всё, что видно.\n"
-    "Выбирай наиболее интересное.\n\n"
-
-    "НЕИГРОВЫЕ ФОТО:\n"
-    "Если изображение не связано с Tanks Blitz, не анализируй "
-    "людей, лица, улицу, природу, еду, животных, селфи и обычные фотографии.\n"
-    "Коротко скажи, что ты умеешь разбирать только скриншоты Tanks Blitz, "
-    "и попроси прислать игровой скриншот.\n"
 )
 
 
@@ -276,12 +211,8 @@ groq = Groq(
 
 
 # =========================================================
-# MEMORY / CACHE
+# CACHE / STATE
 # =========================================================
-
-user_memory = defaultdict(
-    lambda: deque(maxlen=MEMORY_LIMIT)
-)
 
 user_names = {}
 
@@ -289,6 +220,10 @@ sonar_cache = {}
 
 processed_events = {}
 
+tank_cache = {
+    "saved": 0,
+    "rows": []
+}
 
 main_blocked_until = 0
 backup_blocked_until = 0
@@ -648,10 +583,6 @@ def should_use_ai(text, user_id=None):
     if is_tanks_message(text):
         return True
 
-    if user_id and user_memory.get(user_id):
-        if len(text) <= 80:
-            return True
-
     return False
 
 
@@ -725,7 +656,7 @@ def get_vk_user_name(user_id):
 
 
 # =========================================================
-# NORMAL MEMORY
+# SUPABASE MEMORY
 # =========================================================
 
 def add_memory(user_id, role, content):
@@ -791,191 +722,199 @@ def get_memory(user_id):
         return []
 
 
-def cleanup_memory():
-    limit = 5000
-
-    if len(user_memory) <= limit:
-        return
-
-    for _ in range(
-        len(user_memory) - limit
-    ):
-        try:
-            del user_memory[
-                next(iter(user_memory))
-            ]
-
-        except StopIteration:
-            break
-
-
 # =========================================================
-# SCREENSHOT MEMORY
+# TANK DATABASE
 # =========================================================
 
-def get_local_date():
-    return datetime.now(
-        ZoneInfo(LOCAL_TIMEZONE)
-    ).date().isoformat()
+def normalize_tank_text(text):
+    if not text:
+        return ""
 
+    text = text.lower()
 
-def get_screenshot_count_today(user_id):
-    if not user_id:
-        return 0
+    # Убираем кавычки вокруг названий
+    text = text.replace("«", " ")
+    text = text.replace("»", " ")
+    text = text.replace('"', " ")
 
-    try:
-        response = (
-            supabase
-            .table("bot_image_memory")
-            .select("id")
-            .eq(
-                "user_id",
-                str(user_id)
-            )
-            .eq(
-                "screenshot_date",
-                get_local_date()
-            )
-            .execute()
-        )
+    # Разные тире приводим к обычному
+    text = text.replace("—", "-")
+    text = text.replace("–", "-")
 
-        rows = response.data or []
-
-        count = len(rows)
-
-        print(
-            f"SCREENSHOT COUNT: "
-            f"{user_id} -> "
-            f"{count}/{IMAGE_DAILY_LIMIT}",
-            flush=True
-        )
-
-        return count
-
-    except Exception as e:
-        print(
-            "Screenshot count error:",
-            e,
-            flush=True
-        )
-
-        return 0
-
-
-def can_process_screenshot(user_id):
-    count = get_screenshot_count_today(
-        user_id
+    # Убираем лишние символы
+    text = re.sub(
+        r"[^\wа-яёa-z0-9\-]+",
+        " ",
+        text,
+        flags=re.IGNORECASE
     )
 
-    return count < IMAGE_DAILY_LIMIT
+    text = re.sub(
+        r"\s+",
+        " ",
+        text
+    ).strip()
+
+    return text
 
 
-def save_screenshot_memory(
-    user_id,
-    summary
-):
-    if not user_id or not summary:
-        return
+def get_all_tanks():
+    global tank_cache
 
-    summary = summary.strip()
+    now = time.time()
 
-    if not summary:
-        return
-
-    summary = summary[
-        :IMAGE_MEMORY_TEXT_LIMIT
-    ]
-
-    try:
-        supabase.table(
-            "bot_image_memory"
-        ).insert({
-            "user_id": str(user_id),
-            "screenshot_date": get_local_date(),
-            "summary": summary
-        }).execute()
-
-        print(
-            "SCREENSHOT MEMORY SAVE OK",
-            flush=True
-        )
-
-    except Exception as e:
-        print(
-            "Screenshot memory save error:",
-            e,
-            flush=True
-        )
-
-
-def get_screenshot_memory(user_id):
-    if not user_id:
-        return []
+    if (
+        tank_cache["rows"]
+        and now - tank_cache["saved"] < TANK_CACHE_TIME
+    ):
+        return tank_cache["rows"]
 
     try:
         response = (
             supabase
-            .table("bot_image_memory")
-            .select(
-                "screenshot_date, summary"
-            )
-            .eq(
-                "user_id",
-                str(user_id)
-            )
-            .order(
-                "created_at",
-                desc=True
-            )
-            .limit(IMAGE_MEMORY_LIMIT)
+            .table("tank_data")
+            .select("*")
             .execute()
         )
 
         rows = response.data or []
 
-        rows.reverse()
+        tank_cache = {
+            "saved": now,
+            "rows": rows
+        }
+
+        print(
+            f"TANK DB LOAD OK: {len(rows)} tanks",
+            flush=True
+        )
 
         return rows
 
     except Exception as e:
         print(
-            "Screenshot memory load error:",
+            "Tank DB load error:",
             e,
             flush=True
         )
 
+        return tank_cache["rows"]
+
+
+def find_tanks_in_text(text):
+    if not text:
         return []
 
+    normalized_text = normalize_tank_text(text)
 
-def build_screenshot_memory_text(
-    user_id
-):
-    rows = get_screenshot_memory(
-        user_id
+    if not normalized_text:
+        return []
+
+    rows = get_all_tanks()
+
+    # Сначала длинные названия.
+    # Благодаря этому «ИС-7 Стриж» не будет ошибочно
+    # разобран как обычный «ИС-7».
+    rows = sorted(
+        rows,
+        key=lambda row: len(
+            normalize_tank_text(
+                row.get("name", "")
+            )
+        ),
+        reverse=True
     )
 
+    found = []
+
+    occupied_ranges = []
+
+    for row in rows:
+        name = row.get("name", "")
+
+        if not name:
+            continue
+
+        normalized_name = normalize_tank_text(name)
+
+        if not normalized_name:
+            continue
+
+        position = normalized_text.find(
+            normalized_name
+        )
+
+        if position == -1:
+            continue
+
+        end_position = (
+            position
+            + len(normalized_name)
+        )
+
+        overlaps = False
+
+        for start, end, _ in occupied_ranges:
+            if (
+                position < end
+                and end_position > start
+            ):
+                overlaps = True
+                break
+
+        if overlaps:
+            continue
+
+        occupied_ranges.append(
+            (
+                position,
+                end_position,
+                row
+            )
+        )
+
+        found.append(row)
+
+    # Сохраняем порядок появления в сообщении
+    found.sort(
+        key=lambda row: normalized_text.find(
+            normalize_tank_text(
+                row.get("name", "")
+            )
+        )
+    )
+
+    return found
+
+
+def build_tank_context(rows):
     if not rows:
         return ""
 
-    lines = []
+    clean_rows = []
 
     for row in rows:
-        date = row.get(
-            "screenshot_date",
-            ""
+        clean_rows.append({
+            "name": row.get("name"),
+            "nation": row.get("nation"),
+            "tier": row.get("tier"),
+            "class": row.get("class"),
+            "type": row.get("type"),
+            "data": row.get("data", {})
+        })
+
+    return (
+        "ПРОВЕРЕННЫЕ ТТХ ИЗ БАЗЫ TANK_DATA:\n"
+        + json.dumps(
+            clean_rows,
+            ensure_ascii=False,
+            indent=2
         )
-
-        summary = row.get(
-            "summary",
-            ""
-        ).strip()
-
-        if summary:
-            lines.append(
-                f"- {date}: {summary}"
-            )
-
-    return "\n".join(lines)
+        + "\n\n"
+        "Используй эти данные как источник истины "
+        "для характеристик танков. "
+        "Не выдумывай отсутствующие значения."
+    )
 
 
 # =========================================================
@@ -985,7 +924,8 @@ def build_screenshot_memory_text(
 def build_messages(
     text,
     user_id=None,
-    user_name=None
+    user_name=None,
+    tank_context=""
 ):
     messages = [
         {
@@ -1003,28 +943,18 @@ def build_messages(
             )
         })
 
+    if tank_context:
+        messages.append({
+            "role": "system",
+            "content": tank_context
+        })
+
     history = get_memory(
         user_id
     )
 
     if history:
         messages.extend(history)
-
-    screenshot_memory = (
-        build_screenshot_memory_text(
-            user_id
-        )
-    )
-
-    if screenshot_memory:
-        messages.append({
-            "role": "system",
-            "content": (
-                "ПАМЯТЬ О ПРЕДЫДУЩИХ "
-                "СКРИНШОТАХ ПОЛЬЗОВАТЕЛЯ:\n"
-                + screenshot_memory
-            )
-        })
 
     messages.append({
         "role": "user",
@@ -1042,7 +972,6 @@ def clean_ai_reply(reply):
     if not reply:
         return ""
 
-    # Удаляем полностью закрытые think-блоки
     reply = re.sub(
         r"<think>.*?</think>",
         "",
@@ -1050,8 +979,6 @@ def clean_ai_reply(reply):
         flags=re.DOTALL
     ).strip()
 
-    # Если модель оборвала ответ внутри <think>,
-    # удаляем всё начиная с него.
     if "<think>" in reply:
         reply = (
             reply
@@ -1059,7 +986,6 @@ def clean_ai_reply(reply):
             .strip()
         )
 
-    # Дополнительная защита от закрывающего тега
     reply = reply.replace(
         "</think>",
         ""
@@ -1143,7 +1069,8 @@ def ask_model(
 def ask_groq(
     text,
     user_id=None,
-    user_name=None
+    user_name=None,
+    tank_context=""
 ):
     global main_blocked_until
     global backup_blocked_until
@@ -1151,7 +1078,8 @@ def ask_groq(
     messages = build_messages(
         text,
         user_id,
-        user_name
+        user_name,
+        tank_context
     )
 
     now = time.time()
@@ -1262,23 +1190,13 @@ def ask_groq(
 # SONAR
 # =========================================================
 
-WEB_WORDS = (
-    "характеристик",
-    "урон",
-    "брон",
-    "скорост",
-    "точност",
-    "перезаряд",
-    "хп",
-    "пробит",
-    "калибр",
-    "оруд",
-    "танк",
-    "танка",
-    "танке",
-    "танков",
-    "ветк",
-    "прокач",
+# Только запросы, где действительно нужна актуальная информация.
+# Обычные вопросы по ТТХ из tank_data сюда не попадают.
+CURRENT_WORDS = (
+    "сейчас",
+    "сегодня",
+    "последн",
+    "актуальн",
     "обновлен",
     "обновление",
     "патч",
@@ -1286,13 +1204,10 @@ WEB_WORDS = (
     "событи",
     "новый танк",
     "новые танки",
-    "актуальн",
-    "сейчас",
-    "сегодня",
-    "последн",
     "добавили",
     "убрали",
     "изменили",
+    "изменения",
     "нерф",
     "бафф",
     "промокод",
@@ -1307,7 +1222,7 @@ def needs_sonar(text):
 
     return any(
         word in text
-        for word in WEB_WORDS
+        for word in CURRENT_WORDS
     )
 
 
@@ -1425,7 +1340,8 @@ def ask_sonar(text):
 def ask_sonar_then_groq(
     text,
     user_id=None,
-    user_name=None
+    user_name=None,
+    tank_context=""
 ):
     found = ask_sonar(
         text
@@ -1433,9 +1349,9 @@ def ask_sonar_then_groq(
 
     prompt = (
         "Ответь пользователю на основе найденных данных.\n"
-        f"Вопрос: {text}\n"
-        f"Данные: {found}\n\n"
-        "Дай один короткий ответ. "
+        f"Вопрос пользователя: {text}\n"
+        f"Актуальные данные поиска: {found}\n\n"
+        "Дай короткий естественный ответ. "
         "Не упоминай Sonar, Perplexity, Groq или API. "
         "Не добавляй неподтверждённые факты."
     )
@@ -1443,15 +1359,43 @@ def ask_sonar_then_groq(
     return ask_groq(
         prompt,
         user_id,
-        user_name
+        user_name,
+        tank_context
     )
 
+
+# =========================================================
+# AI ROUTER
+# =========================================================
 
 def ask_ai(
     text,
     user_id=None,
     user_name=None
 ):
+    # Ищем танки в базе.
+    tank_rows = find_tanks_in_text(
+        text
+    )
+
+    tank_context = build_tank_context(
+        tank_rows
+    )
+
+    if tank_rows:
+        print(
+            "TANKS FOUND:",
+            [
+                row.get("name")
+                for row in tank_rows
+            ],
+            flush=True
+        )
+
+    # -----------------------------------------------------
+    # Актуальные вопросы -> Sonar
+    # -----------------------------------------------------
+
     if needs_sonar(text):
         try:
             print(
@@ -1462,7 +1406,8 @@ def ask_ai(
             return ask_sonar_then_groq(
                 text,
                 user_id,
-                user_name
+                user_name,
+                tank_context
             )
 
         except Exception as e:
@@ -1472,6 +1417,10 @@ def ask_ai(
                 flush=True
             )
 
+    # -----------------------------------------------------
+    # Обычный вопрос / ТТХ -> Groq
+    # -----------------------------------------------------
+
     print(
         "ROUTER -> Groq",
         flush=True
@@ -1480,7 +1429,8 @@ def ask_ai(
     return ask_groq(
         text,
         user_id,
-        user_name
+        user_name,
+        tank_context
     )
 
 
@@ -1561,242 +1511,61 @@ def get_voice(message):
 
 
 def transcribe_voice(url):
-    data = requests.get(
-        url,
-        timeout=30
-    ).content
+    path = None
 
-    path = "/tmp/voice.ogg"
+    try:
+        data = requests.get(
+            url,
+            timeout=30
+        ).content
 
-    with open(
-        path,
-        "wb"
-    ) as file:
-        file.write(data)
-
-    with open(
-        path,
-        "rb"
-    ) as file:
-
-        result = (
-            groq
-            .audio
-            .transcriptions
-            .create(
-                file=file,
-                model="whisper-large-v3-turbo",
-                response_format="text"
-            )
+        # Уникальный временный файл.
+        # После расшифровки он будет удалён.
+        temp = tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=".ogg"
         )
 
-    return str(result).strip()
+        path = temp.name
 
+        with temp:
+            temp.write(data)
 
-# =========================================================
-# IMAGE
-# =========================================================
+        with open(
+            path,
+            "rb"
+        ) as file:
 
-def get_image(message):
-    best = None
-    best_area = 0
-
-    for attachment in message.get(
-        "attachments",
-        []
-    ):
-        if attachment.get(
-            "type"
-        ) != "photo":
-            continue
-
-        photo = attachment.get(
-            "photo",
-            {}
-        )
-
-        for size in photo.get(
-            "sizes",
-            []
-        ):
-            url = size.get(
-                "url"
+            result = (
+                groq
+                .audio
+                .transcriptions
+                .create(
+                    file=file,
+                    model=WHISPER_MODEL,
+                    response_format="text"
+                )
             )
 
-            if not url:
-                continue
+        return str(result).strip()
 
-            area = (
-                size.get("width", 0)
-                * size.get("height", 0)
-            )
+    finally:
+        if path:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
 
-            if area > best_area:
-                best = url
-                best_area = area
+                    print(
+                        "Temporary voice file deleted.",
+                        flush=True
+                    )
 
-    return best
-
-
-# =========================================================
-# IMAGE FALLBACK
-# =========================================================
-
-IMAGE_FALLBACK_MESSAGE = (
-    "Опаньки, засмотрелся на скриншот и "
-    "не успел сформулировать ответ 😅 "
-    "Спроси ещё раз."
-)
-
-
-# =========================================================
-# IMAGE ANALYSIS
-# =========================================================
-
-def analyze_image_then_groq(
-    image_url,
-    text,
-    user_id=None,
-    user_name=None
-):
-    if text.strip():
-        prompt_text = text.strip()
-    else:
-        prompt_text = (
-            "Посмотри на изображение. "
-            "Если внутри есть скриншот Tanks Blitz, "
-            "проанализируй именно игровую область, "
-            "игнорируя интерфейс VK вокруг неё. "
-            "Особенно обрати внимание на результат боя, "
-            "урон, уничтожения, медали, награды, "
-            "выпадение лута, контейнеры и выпадение танка. "
-            "Если это не Tanks Blitz — коротко скажи, "
-            "что нужны только игровые скриншоты."
-        )
-
-    messages = [
-        {
-            "role": "system",
-            "content": IMAGE_SYSTEM_PROMPT
-        }
-    ]
-
-    if user_name:
-        messages.append({
-            "role": "system",
-            "content": (
-                f"Имя пользователя: {user_name}. "
-                "Используй имя редко и естественно."
-            )
-        })
-
-    # Обычная память разговора
-    history = get_memory(
-        user_id
-    )
-
-    if history:
-        messages.extend(history)
-
-    # Отдельная память скриншотов
-    screenshot_memory = (
-        build_screenshot_memory_text(
-            user_id
-        )
-    )
-
-    if screenshot_memory:
-        messages.append({
-            "role": "system",
-            "content": (
-                "ПАМЯТЬ О ПРЕДЫДУЩИХ "
-                "СКРИНШОТАХ:\n"
-                + screenshot_memory
-            )
-        })
-
-    messages.append({
-        "role": "user",
-        "content": [
-            {
-                "type": "text",
-                "text": prompt_text
-            },
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": image_url
-                }
-            }
-        ]
-    })
-
-    print(
-        "Vision -> анализ изображения",
-        flush=True
-    )
-
-    completion = (
-        groq
-        .chat
-        .completions
-        .create(
-            model=VISION_MODEL,
-            messages=messages,
-            max_tokens=IMAGE_MAX_TOKENS
-        )
-    )
-
-    usage = getattr(
-        completion,
-        "usage",
-        None
-    )
-
-    if usage:
-        print(
-            "Vision:",
-            "prompt=",
-            getattr(
-                usage,
-                "prompt_tokens",
-                None
-            ),
-            "completion=",
-            getattr(
-                usage,
-                "completion_tokens",
-                None
-            ),
-            "total=",
-            getattr(
-                usage,
-                "total_tokens",
-                None
-            ),
-            flush=True
-        )
-
-    reply = (
-        completion
-        .choices[0]
-        .message
-        .content
-    )
-
-    if not reply:
-        raise RuntimeError(
-            "Groq vision returned empty response."
-        )
-
-    reply = clean_ai_reply(
-        reply
-    )
-
-    if not reply:
-        reply = IMAGE_FALLBACK_MESSAGE
-
-    return reply
+            except Exception as e:
+                print(
+                    "Voice temp file delete error:",
+                    e,
+                    flush=True
+                )
 
 
 # =========================================================
@@ -1848,9 +1617,11 @@ def callback():
                 403
             )
 
+
         event_type = data.get(
             "type"
         )
+
 
         # =================================================
         # CONFIRMATION
@@ -1859,8 +1630,10 @@ def callback():
         if event_type == "confirmation":
             return VK_CONFIRMATION_CODE
 
+
         if event_type != "message_new":
             return "ok"
+
 
         # =================================================
         # DUPLICATE
@@ -1875,6 +1648,7 @@ def callback():
             )
 
             return "ok"
+
 
         message = (
             data["object"]["message"]
@@ -1927,6 +1701,10 @@ def callback():
 
         if voice:
 
+            # -------------------------------------------------
+            # Если VK уже дал готовую расшифровку
+            # -------------------------------------------------
+
             if voice["text"]:
                 recognized = voice["text"]
 
@@ -1935,6 +1713,10 @@ def callback():
                     recognized,
                     flush=True
                 )
+
+            # -------------------------------------------------
+            # Если готовой расшифровки нет -> Whisper
+            # -------------------------------------------------
 
             else:
                 print(
@@ -1946,8 +1728,14 @@ def callback():
                     voice["url"]
                 )
 
+
             if not recognized:
                 return "ok"
+
+
+            # -------------------------------------------------
+            # Локальный фильтр
+            # -------------------------------------------------
 
             if not should_use_ai(
                 recognized,
@@ -1960,9 +1748,15 @@ def callback():
 
                 return "ok"
 
+
             user_name = get_vk_user_name(
                 sender_id
             )
+
+
+            # -------------------------------------------------
+            # AI
+            # -------------------------------------------------
 
             try:
                 reply = ask_ai(
@@ -1972,6 +1766,7 @@ def callback():
                 )
 
             except Exception as e:
+
                 print(
                     "AI error:",
                     e,
@@ -1985,6 +1780,11 @@ def callback():
 
                 return "ok"
 
+
+            # -------------------------------------------------
+            # Сохраняем голос как обычный текст
+            # -------------------------------------------------
+
             add_memory(
                 user_id,
                 "user",
@@ -1997,7 +1797,10 @@ def callback():
                 reply
             )
 
-            cleanup_memory()
+
+            # -------------------------------------------------
+            # Ответ
+            # -------------------------------------------------
 
             send_message(
                 peer_id,
@@ -2008,99 +1811,16 @@ def callback():
 
 
         # =================================================
-        # IMAGE
+        # IMAGES
         # =================================================
-
-        image_url = get_image(
-            message
-        )
-
-        if image_url:
-
-            print(
-                f"IMAGE EVENT -> user {user_id}",
-                flush=True
-            )
-
-            # -------------------------------------------------
-            # Проверяем лимит ДО Vision.
-            # Третий скриншот вообще не отправляем модели.
-            # -------------------------------------------------
-
-            if not can_process_screenshot(
-                user_id
-            ):
-
-                send_message(
-                    peer_id,
-                    "Всё, братан 😅 "
-                    "Лимит скриншотов на сегодня выбит. "
-                    "Завтра заходи снова — посмотрим, "
-                    "что там у тебя."
-                )
-
-                return "ok"
-
-
-            user_name = get_vk_user_name(
-                sender_id
-            )
-
-
-            # -------------------------------------------------
-            # Vision
-            # -------------------------------------------------
-
-            try:
-                reply = analyze_image_then_groq(
-                    image_url,
-                    text,
-                    user_id,
-                    user_name
-                )
-
-            except Exception as e:
-
-                print(
-                    "Image analysis error:",
-                    e,
-                    flush=True
-                )
-
-                send_message(
-                    peer_id,
-                    "Не смог рассмотреть "
-                    "скриншот 😅 Попробуй ещё раз."
-                )
-
-                return "ok"
-
-
-            # -------------------------------------------------
-            # НЕ добавляем саму картинку в обычную память.
-            # Сохраняем только текстовую выжимку отдельно.
-            # -------------------------------------------------
-
-            if (
-                reply
-                and reply != IMAGE_FALLBACK_MESSAGE
-            ):
-                save_screenshot_memory(
-                    user_id,
-                    reply
-                )
-
-
-            # -------------------------------------------------
-            # Ответ пользователю
-            # -------------------------------------------------
-
-            send_message(
-                peer_id,
-                reply
-            )
-
-            return "ok"
+        #
+        # Изображения специально НЕ ОБРАБАТЫВАЕМ.
+        #
+        # Vision полностью отключён.
+        # Фото не отправляются в Groq.
+        # Фото не сохраняются в память.
+        #
+        # =================================================
 
 
         # =================================================
@@ -2186,8 +1906,6 @@ def callback():
             "assistant",
             reply
         )
-
-        cleanup_memory()
 
 
         # =================================================
