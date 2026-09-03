@@ -112,7 +112,6 @@ active_chats = {}
 
 activity_lock = threading.Lock()
 
-# Защита от нескольких процессов обучения
 learning_running = set()
 learning_lock = threading.Lock()
 
@@ -541,20 +540,34 @@ def save_chat_message(
 
     try:
 
+        # BIGINT:
+        # пользователь = числовой VK ID
+        # бот / system = NULL
+        if speaker_id is None:
+            database_speaker_id = None
+        else:
+            try:
+                database_speaker_id = int(
+                    speaker_id
+                )
+            except (ValueError, TypeError):
+                database_speaker_id = None
+
         supabase.table(
             "bot_chat_memory"
         ).insert({
 
-            "chat_id": str(chat_id),
+            "chat_id":
+                str(chat_id),
 
-            "speaker_id": str(
-                speaker_id or ""
-            ),
+            "speaker_id":
+                database_speaker_id,
 
             "speaker_name":
                 speaker_name or "",
 
-            "role": role,
+            "role":
+                role,
 
             "content":
                 content[:4000]
@@ -1037,6 +1050,7 @@ def get_learning_state(chat_id):
         }).execute()
 
         return {
+
             "chat_id":
                 str(chat_id),
 
@@ -1059,6 +1073,7 @@ def get_learning_state(chat_id):
         )
 
         return {
+
             "chat_id":
                 str(chat_id),
 
@@ -1122,10 +1137,6 @@ def increase_learning_counter(
 
 def perform_learning(chat_id):
 
-    # -----------------------------------------------------
-    # Защита от параллельного обучения
-    # -----------------------------------------------------
-
     with learning_lock:
 
         if chat_id in learning_running:
@@ -1138,7 +1149,9 @@ def perform_learning(chat_id):
 
             return
 
-        learning_running.add(chat_id)
+        learning_running.add(
+            chat_id
+        )
 
     try:
 
@@ -1246,14 +1259,6 @@ CHAT|Факт|важность
 
 Важность от 1 до 5.
 
-Примеры:
-
-USER|123456|Любит играть в Tanks Blitz на тяжёлых танках
-
-USER|555777|Часто играет вечером
-
-CHAT|В этом чате часто шутят про кредиты|2
-
 Если полезной информации нет:
 
 NONE
@@ -1275,6 +1280,7 @@ NONE
                         "долговременного обучения. "
                         "Не придумывай факты."
                 },
+
                 {
                     "role":
                         "user",
@@ -1292,7 +1298,6 @@ NONE
         ).strip()
 
         if not learned:
-
             return
 
         if learned.upper() == "NONE":
@@ -1343,6 +1348,11 @@ NONE
                     )
 
                     if not user_id or not fact:
+                        continue
+
+                    try:
+                        int(user_id)
+                    except (ValueError, TypeError):
                         continue
 
                     name = get_vk_user_name(
@@ -1456,6 +1466,7 @@ NONE
     finally:
 
         with learning_lock:
+
             learning_running.discard(
                 chat_id
             )
@@ -1476,10 +1487,6 @@ def maybe_learn(chat_id):
 
     if count < LEARNING_EVERY_MESSAGES:
         return
-
-    # Сразу сбрасываем счётчик перед запуском,
-    # чтобы новые сообщения не создавали
-    # несколько потоков обучения.
 
     try:
 
@@ -1524,6 +1531,7 @@ def build_chat_context(
 ):
 
     messages = [
+
         {
             "role":
                 "system",
@@ -1664,6 +1672,7 @@ def build_chat_context(
             and speaker_id == str(user_id)
             and content == text
         ):
+
             current_already_saved = True
 
         if role == "user":
@@ -1688,8 +1697,6 @@ def build_chat_context(
                     content
             })
 
-    # Если текущее сообщение ещё не было
-    # сохранено в истории — добавляем его.
     if not current_already_saved:
 
         messages.append({
@@ -1748,7 +1755,6 @@ def is_directed_to_bot(
 
     low = text.lower()
 
-    # Ответ на сообщение сообщества
     reply_message = message.get(
         "reply_message"
     )
@@ -1769,7 +1775,6 @@ def is_directed_to_bot(
 
                 return True
 
-    # Упоминание сообщества
     if "[club" in low:
         return True
 
@@ -1902,7 +1907,6 @@ def ask_model(
             "Groq returned empty response."
         )
 
-    # Удаляем thinking-блоки
     reply = re.sub(
         r"<think>.*?</think>",
         "",
@@ -1943,10 +1947,6 @@ def ask_groq(
 
     now = time.time()
 
-    # =====================================================
-    # 120B
-    # =====================================================
-
     if now >= main_blocked_until:
 
         try:
@@ -1979,10 +1979,6 @@ def ask_groq(
                 e,
                 flush=True
             )
-
-    # =====================================================
-    # 20B
-    # =====================================================
 
     if time.time() >= backup_blocked_until:
 
@@ -2422,8 +2418,6 @@ def analyze_image_then_groq(
         prompt_text
     )
 
-    # Находим последнее сообщение пользователя
-    # вместо слепой замены messages[-1].
     target_index = None
 
     for index in range(
@@ -2655,7 +2649,7 @@ def activity_loop():
                     reply = ask_groq(
                         chat_id,
                         prompt,
-                        "system",
+                        None,
                         None
                     )
 
@@ -2669,7 +2663,7 @@ def activity_loop():
 
                     save_chat_message(
                         chat_id,
-                        "bot",
+                        None,
                         "Бот",
                         "assistant",
                         reply
@@ -2893,7 +2887,7 @@ def callback():
 
             save_chat_message(
                 chat_id,
-                "bot",
+                None,
                 "Бот",
                 "assistant",
                 reply
@@ -2965,7 +2959,7 @@ def callback():
 
             save_chat_message(
                 chat_id,
-                "bot",
+                None,
                 "Бот",
                 "assistant",
                 reply
@@ -3054,7 +3048,7 @@ def callback():
 
         save_chat_message(
             chat_id,
-            "bot",
+            None,
             "Бот",
             "assistant",
             reply
