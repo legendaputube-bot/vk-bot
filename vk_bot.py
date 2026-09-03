@@ -25,13 +25,23 @@ PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "")
 PERPLEXITY_MODEL = os.environ.get("PERPLEXITY_MODEL", "")
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
-SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY", "").strip()
+SUPABASE_SECRET_KEY = os.environ.get(
+    "SUPABASE_SECRET_KEY",
+    ""
+).strip()
 
-if SUPABASE_URL and not SUPABASE_URL.startswith(("http://", "https://")):
+if SUPABASE_URL and not SUPABASE_URL.startswith(
+    ("http://", "https://")
+):
     SUPABASE_URL = "https://" + SUPABASE_URL
 
 
-print("SUPABASE_URL =", repr(SUPABASE_URL), flush=True)
+print(
+    "SUPABASE_URL =",
+    repr(SUPABASE_URL),
+    flush=True
+)
+
 print(
     "SUPABASE_SECRET_KEY есть =",
     bool(SUPABASE_SECRET_KEY),
@@ -70,11 +80,7 @@ WHISPER_MODEL = "whisper-large-v3-turbo"
 # TOKEN LIMITS
 # =========================================================
 
-# Максимальная длина ответа Groq.
-# Это НЕ заставляет модель писать 350 токенов.
 GROQ_MAX_TOKENS = 350
-
-# Perplexity
 SONAR_MAX_TOKENS = 200
 
 
@@ -95,8 +101,6 @@ NAME_CACHE_TIME = 24 * 60 * 60
 EVENT_CACHE_TIME = 30 * 60
 EVENT_CACHE_LIMIT = 1000
 
-# Небольшой кэш названий танков.
-# Он хранится только в RAM, на диск ничего не записывается.
 TANK_CACHE_TIME = 10 * 60
 
 
@@ -115,87 +119,116 @@ BACKUP_DEFAULT_COOLDOWN = 10 * 60
 SYSTEM_PROMPT = (
     "Ты — живой, дерзкий и языкастый AI-бот сообщества "
     "«Бонус коды Tanks Blitz».\n"
-    "Ты создан для общения с участниками сообщества, помощи игрокам "
-    "и обычного живого общения.\n\n"
+    "Ты общаешься с участниками сообщества, помогаешь игрокам "
+    "и поддерживаешь обычный живой разговор.\n\n"
 
-    "ТВОЯ ГЛАВНАЯ ТЕМА:\n"
+    "ГЛАВНАЯ ТЕМА:\n"
     "Основная тема — Tanks Blitz.\n"
-    "Ты можешь помогать с танками, тактикой, картами, режимами, "
-    "событиями, игровой механикой и другими вопросами по игре.\n"
-    "Если человек временно говорит на другую тему — не нужно постоянно "
-    "возвращать разговор к Tanks Blitz. Общайся нормально и по ситуации.\n\n"
+    "Ты можешь помогать с танками, ТТХ, тактикой, картами, "
+    "режимами, событиями, игровой механикой и выбором танков.\n"
+    "Если человек говорит на другую тему — не нужно постоянно "
+    "возвращать разговор к Tanks Blitz.\n\n"
 
     "ЖИВОЕ ОБЩЕНИЕ:\n"
-    "Общайся как живой собеседник, а не как справочная система.\n"
-    "Понимай настроение и смысл сообщения пользователя.\n"
+    "Общайся естественно, как живой собеседник.\n"
     "Не отвечай шаблонно.\n"
-    "Не начинай каждый ответ словами «Конечно», «Разумеется», "
-    "«Хороший вопрос» и подобными фразами.\n"
-    "Не повторяй вопрос пользователя целиком без необходимости.\n"
-    "Не превращай простой разговор в длинную лекцию.\n"
-    "На короткое сообщение отвечай коротко.\n"
-    "Если пользователь просто написал «Привет» — поздоровайся нормально.\n"
-    "Если пользователь написал «Ты тут?» — ответь естественно.\n"
-    "Если пользователь шутит — можешь поддержать шутку.\n"
-    "Если пользователь пишет серьёзно — отвечай серьёзно.\n"
-    "Если пользователь раздражён — не отвечай сухо или высокомерно.\n"
-    "Можно использовать лёгкий юмор, иронию и дружеские подколы, "
+    "Не начинай каждый ответ словами «Конечно», "
+    "«Разумеется», «Хороший вопрос» и подобными фразами.\n"
+    "Не повторяй вопрос пользователя без необходимости.\n"
+    "На короткий вопрос отвечай коротко.\n"
+    "На сложный вопрос отвечай подробнее.\n"
+    "Если человек шутит — можешь поддержать шутку.\n"
+    "Если человек серьёзен — отвечай серьёзно.\n"
+    "Можно использовать лёгкий юмор и дружеские подколы, "
     "но без оскорблений и переходов на личность.\n"
     "Не используй слишком много эмодзи.\n"
     "Не говори постоянно о том, что ты AI или бот.\n\n"
 
     "ИСТОРИЯ ДИАЛОГА:\n"
-    "Учитывай предыдущие сообщения, когда они действительно помогают "
-    "понять текущий разговор.\n"
-    "Понимай короткие продолжения вроде «а это?», «а почему?», "
-    "«а если так?», «а он?», «понял», «и что дальше?».\n"
-    "Не вытаскивай старые темы из памяти без причины.\n"
-    "Не упоминай старую информацию о пользователе, если она не относится "
-    "к текущему разговору.\n"
-    "Имя пользователя используй редко и естественно.\n"
+    "Учитывай предыдущие сообщения, если они помогают понять "
+    "текущий разговор.\n"
+    "Понимай короткие продолжения вроде «а этот?», «а он?», "
+    "«а почему?», «а что лучше?», «и что дальше?».\n"
+    "Не вытаскивай старые темы без причины.\n"
     "Не придумывай личные факты о пользователе.\n\n"
 
-    "ТОЧНОСТЬ:\n"
-    "Никогда не выдумывай факты.\n"
-    "Не придумывай названия танков, характеристики, урон, броню, "
-    "пробитие, скорость, перезарядку, карты, режимы, события, "
-    "бонус-коды или другие игровые данные.\n"
-    "Не смешивай Tanks Blitz с World of Tanks для ПК.\n"
-    "Если точных данных нет — честно скажи об этом.\n\n"
+    "==================================================\n"
+    "КРИТИЧЕСКОЕ ПРАВИЛО — БАЗА ТАНКОВ\n"
+    "==================================================\n"
 
-    "БАЗА ТАНКОВ:\n"
-    "Если тебе переданы проверенные ТТХ из базы TANK_DATA, "
-    "используй именно эти данные.\n"
-    "Не исправляй их по памяти и не заменяй своими предположениями.\n"
-    "Если какого-то параметра в базе нет — скажи, что этого параметра "
-    "нет в доступных данных.\n"
-    "Если пользователь спрашивает, коллекционный танк или прокачиваемый, "
-    "используй поле type из базы.\n"
-    "Если пользователь сравнивает несколько танков, используй данные "
-    "всех переданных танков.\n"
-    "Не придумывай недостающие характеристики.\n"
-    "База TANK_DATA является источником проверенных игровых характеристик.\n\n"
+    "Если перед текущим вопросом передан блок "
+    "«ПРОВЕРЕННЫЕ ТТХ ИЗ БАЗЫ TANK_DATA», "
+    "он является ИСТОЧНИКОМ ИСТИНЫ.\n\n"
+
+    "Для конкретного танка всегда используй значения из этого блока.\n"
+    "НЕ используй собственную память модели, если она "
+    "противоречит данным базы.\n"
+    "НЕ исправляй данные базы по памяти.\n"
+    "НЕ смешивай данные Tanks Blitz с World of Tanks PC.\n"
+    "НЕ используй старые ответы из истории как источник ТТХ.\n\n"
+
+    "Например, если база говорит:\n"
+    "ИС-7 = X уровень и 2550 HP,\n"
+    "то нельзя отвечать, что ИС-7 VIII уровня и 1050 HP, "
+    "даже если модель когда-то видела такие данные.\n\n"
+
+    "Если база говорит «коллекционный» — танк коллекционный.\n"
+    "Если база говорит «прокачиваемый» — танк прокачиваемый.\n"
+    "Если параметра нет в базе — НЕ УГАДЫВАЙ его.\n"
+    "Скажи, что этого параметра нет в доступных данных.\n\n"
+
+    "Если история разговора содержит старую ошибочную информацию "
+    "о танке, она НЕ имеет приоритета перед TANK_DATA.\n\n"
+
+    "==================================================\n"
+    "ВОПРОСЫ О ТТХ\n"
+    "==================================================\n"
+
+    "Если пользователь спрашивает характеристики, HP, броню, "
+    "урон, пробитие, ДПМ, перезарядку, скорость, калибр, "
+    "массу, обзор, маскировку или другие числовые параметры — "
+    "используй только переданные данные базы.\n"
+    "Не добавляй цифры от себя.\n\n"
+
+    "==================================================\n"
+    "ВОПРОСЫ «СТОИТ КАЧАТЬ?»\n"
+    "==================================================\n"
+
+    "Если пользователь спрашивает «стоит качать?», "
+    "«стоит ли прокачивать?», «хороший танк?», "
+    "«что лучше выбрать?» — дай игровое мнение.\n"
+    "Используй ТТХ конкретного танка из базы.\n"
+    "Объясни сильные и слабые стороны.\n"
+    "Сделай нормальный вывод.\n\n"
+
+    "НЕ ПРИДУМЫВАЙ игровые механики.\n"
+    "Не говори, что игрок должен прокачивать броню корпуса, "
+    "броню башни или другие несуществующие элементы, "
+    "если пользователь спрашивает именно о выборе танка.\n\n"
+
+    "Если пользователь пишет «что качать?», но непонятно, "
+    "что именно он имеет в виду, не фантазируй. "
+    "Уточни, о каком танке или ветке речь.\n\n"
+
+    "==================================================\n"
+    "АКТУАЛЬНАЯ ИНФОРМАЦИЯ\n"
+    "==================================================\n"
+
+    "Для текущих патчей, свежих событий, последних изменений, "
+    "новых танков и промокодов используй актуальный поиск.\n"
+    "Не выдавай старую информацию за свежую.\n\n"
 
     "СОЗДАТЕЛИ:\n"
-    "Если пользователь спрашивает «кто тебя создал?», «кто тебя сделал?», "
-    "«кто разработал тебя?», «чей ты бот?» или задаёт похожий вопрос — "
-    "отвечай, что тебя создали авторы канала "
-    "«Бонус коды Tanks Blitz».\n"
-    "Не называй OpenAI, Groq, Perplexity или другие используемые технологии "
+    "Если спрашивают, кто тебя создал, отвечай, что тебя создали "
+    "авторы канала «Бонус коды Tanks Blitz».\n"
+    "Не называй OpenAI, Groq, Perplexity или другие технологии "
     "своими создателями.\n\n"
 
-    "СТИЛЬ ОТВЕТОВ:\n"
-    "Отвечай коротко, живо и по делу.\n"
-    "Если вопрос требует подробного объяснения — можешь ответить подробнее, "
-    "но не растягивай ответ без необходимости.\n"
-    "Если нужен список — обычно используй не больше 3 основных пунктов.\n"
-    "Не добавляй ненужные предупреждения и формальности.\n"
-    "Не повторяй одну и ту же мысль разными словами.\n\n"
-
-    "ГЛАВНОЕ:\n"
-    "Сначала пойми, что пользователь хочет сказать и какой сейчас "
-    "контекст разговора.\n"
-    "После этого отвечай естественно и по ситуации.\n"
+    "СТИЛЬ:\n"
+    "Отвечай живо и по делу.\n"
+    "Не растягивай простой ответ.\n"
+    "Обычно используй не больше 3 основных пунктов.\n"
+    "Не повторяй одну мысль несколько раз.\n"
 )
 
 
@@ -211,7 +244,7 @@ groq = Groq(
 
 
 # =========================================================
-# CACHE / STATE
+# STATE / CACHE
 # =========================================================
 
 user_names = {}
@@ -246,7 +279,10 @@ def already_processed(event_id):
     ]
 
     for key in old:
-        processed_events.pop(key, None)
+        processed_events.pop(
+            key,
+            None
+        )
 
     if event_id in processed_events:
         return True
@@ -259,7 +295,10 @@ def already_processed(event_id):
             key=processed_events.get
         )
 
-        processed_events.pop(oldest, None)
+        processed_events.pop(
+            oldest,
+            None
+        )
 
     return False
 
@@ -299,9 +338,17 @@ def get_retry_seconds(error, default):
     if not match:
         return default
 
-    hours = int(match.group(1) or 0)
-    minutes = int(match.group(2) or 0)
-    seconds = float(match.group(3) or 0)
+    hours = int(
+        match.group(1) or 0
+    )
+
+    minutes = int(
+        match.group(2) or 0
+    )
+
+    seconds = float(
+        match.group(3) or 0
+    )
 
     total = (
         hours * 3600
@@ -533,7 +580,9 @@ def looks_like_question(text):
     if not text:
         return False
 
-    if text.endswith(("?", "?!", "!?")):
+    if text.endswith(
+        ("?", "?!", "!?")
+    ):
         return True
 
     words = re.findall(
@@ -594,12 +643,17 @@ def get_vk_user_name(user_id):
     if not user_id:
         return None
 
-    cached = user_names.get(user_id)
+    cached = user_names.get(
+        user_id
+    )
 
     if cached:
         saved, name = cached
 
-        if time.time() - saved < NAME_CACHE_TIME:
+        if (
+            time.time() - saved
+            < NAME_CACHE_TIME
+        ):
             return name
 
     try:
@@ -659,7 +713,11 @@ def get_vk_user_name(user_id):
 # SUPABASE MEMORY
 # =========================================================
 
-def add_memory(user_id, role, content):
+def add_memory(
+    user_id,
+    role,
+    content
+):
     if not user_id or not content:
         return
 
@@ -693,7 +751,9 @@ def get_memory(user_id):
         response = (
             supabase
             .table("bot_memory")
-            .select("role, content")
+            .select(
+                "role, content"
+            )
             .eq(
                 "user_id",
                 str(user_id)
@@ -702,7 +762,9 @@ def get_memory(user_id):
                 "created_at",
                 desc=True
             )
-            .limit(MEMORY_LIMIT)
+            .limit(
+                MEMORY_LIMIT
+            )
             .execute()
         )
 
@@ -727,23 +789,61 @@ def get_memory(user_id):
 # =========================================================
 
 def normalize_tank_text(text):
+    """
+    Главное исправление.
+
+    Теперь:
+        ИС-7
+        ИС 7
+        ИС7
+
+    будут максимально близко нормализованы.
+    """
+
     if not text:
         return ""
 
     text = text.lower()
 
-    # Убираем кавычки вокруг названий
-    text = text.replace("«", " ")
-    text = text.replace("»", " ")
-    text = text.replace('"', " ")
+    text = text.replace(
+        "ё",
+        "е"
+    )
 
-    # Разные тире приводим к обычному
-    text = text.replace("—", "-")
-    text = text.replace("–", "-")
+    text = text.replace(
+        "«",
+        " "
+    )
 
-    # Убираем лишние символы
+    text = text.replace(
+        "»",
+        " "
+    )
+
+    text = text.replace(
+        '"',
+        " "
+    )
+
+    # Дефис превращаем в пробел.
+    # Именно этого не хватало раньше.
+    text = text.replace(
+        "-",
+        " "
+    )
+
+    text = text.replace(
+        "—",
+        " "
+    )
+
+    text = text.replace(
+        "–",
+        " "
+    )
+
     text = re.sub(
-        r"[^\wа-яёa-z0-9\-]+",
+        r"[^\wа-яёa-z0-9]+",
         " ",
         text,
         flags=re.IGNORECASE
@@ -758,6 +858,26 @@ def normalize_tank_text(text):
     return text
 
 
+def compact_tank_text(text):
+    """
+    Дополнительная нормализация.
+
+    ИС-7 -> ис7
+    ИС 7 -> ис7
+    Т-100 ЛТ -> т100лт
+    """
+
+    normalized = normalize_tank_text(
+        text
+    )
+
+    return re.sub(
+        r"[^а-яa-z0-9]",
+        "",
+        normalized
+    )
+
+
 def get_all_tanks():
     global tank_cache
 
@@ -765,7 +885,8 @@ def get_all_tanks():
 
     if (
         tank_cache["rows"]
-        and now - tank_cache["saved"] < TANK_CACHE_TIME
+        and now - tank_cache["saved"]
+        < TANK_CACHE_TIME
     ):
         return tank_cache["rows"]
 
@@ -789,6 +910,15 @@ def get_all_tanks():
             flush=True
         )
 
+        print(
+            "TANK NAMES:",
+            [
+                row.get("name")
+                for row in rows
+            ],
+            flush=True
+        )
+
         return rows
 
     except Exception as e:
@@ -802,87 +932,176 @@ def get_all_tanks():
 
 
 def find_tanks_in_text(text):
+    """
+    Ищет танки в пользовательском сообщении.
+
+    Сначала проверяется точное нормализованное название.
+    Затем компактный вариант без пробелов.
+
+    Длинные названия имеют приоритет.
+    Поэтому:
+
+        ИС-7 Стриж
+
+не превращается сначала в обычный ИС-7.
+    """
+
     if not text:
         return []
 
-    normalized_text = normalize_tank_text(text)
+    normalized_text = normalize_tank_text(
+        text
+    )
+
+    compact_text = compact_tank_text(
+        text
+    )
 
     if not normalized_text:
         return []
 
     rows = get_all_tanks()
 
-    # Сначала длинные названия.
-    # Благодаря этому «ИС-7 Стриж» не будет ошибочно
-    # разобран как обычный «ИС-7».
-    rows = sorted(
-        rows,
-        key=lambda row: len(
-            normalize_tank_text(
-                row.get("name", "")
+    prepared = []
+
+    for row in rows:
+        name = str(
+            row.get(
+                "name",
+                ""
             )
+        ).strip()
+
+        if not name:
+            continue
+
+        normalized_name = normalize_tank_text(
+            name
+        )
+
+        compact_name = compact_tank_text(
+            name
+        )
+
+        if not normalized_name:
+            continue
+
+        prepared.append({
+            "row": row,
+            "name": name,
+            "normalized": normalized_name,
+            "compact": compact_name
+        })
+
+    # Длинные названия проверяем первыми.
+    prepared.sort(
+        key=lambda item: len(
+            item["normalized"]
         ),
         reverse=True
     )
 
     found = []
 
-    occupied_ranges = []
+    occupied = []
 
-    for row in rows:
-        name = row.get("name", "")
+    for item in prepared:
 
-        if not name:
-            continue
+        row = item["row"]
 
-        normalized_name = normalize_tank_text(name)
+        normalized_name = item[
+            "normalized"
+        ]
 
-        if not normalized_name:
-            continue
+        compact_name = item[
+            "compact"
+        ]
+
+        # -------------------------------------------------
+        # Способ 1 — нормализованное название
+        # -------------------------------------------------
 
         position = normalized_text.find(
             normalized_name
         )
 
-        if position == -1:
+        matched = False
+
+        if position != -1:
+
+            end_position = (
+                position
+                + len(normalized_name)
+            )
+
+            # Проверяем границы,
+            # чтобы «907» не ловился внутри числа.
+            before_ok = (
+                position == 0
+                or not normalized_text[
+                    position - 1
+                ].isalnum()
+            )
+
+            after_ok = (
+                end_position
+                >= len(normalized_text)
+                or not normalized_text[
+                    end_position
+                ].isalnum()
+            )
+
+            if before_ok and after_ok:
+                matched = True
+
+        # -------------------------------------------------
+        # Способ 2 — компактное название
+        # -------------------------------------------------
+
+        if not matched and compact_name:
+            compact_position = compact_text.find(
+                compact_name
+            )
+
+            if compact_position != -1:
+                matched = True
+                position = compact_position
+
+        if not matched:
             continue
 
-        end_position = (
-            position
-            + len(normalized_name)
-        )
+        # -------------------------------------------------
+        # Не допускаем перекрытия
+        # -------------------------------------------------
 
-        overlaps = False
+        overlap = False
 
-        for start, end, _ in occupied_ranges:
+        for old_start, old_end in occupied:
+
             if (
-                position < end
-                and end_position > start
+                position < old_end
+                and position + len(
+                    normalized_name
+                ) > old_start
             ):
-                overlaps = True
+                overlap = True
                 break
 
-        if overlaps:
+        if overlap:
             continue
 
-        occupied_ranges.append(
+        occupied.append(
             (
                 position,
-                end_position,
-                row
+                position + len(
+                    normalized_name
+                )
             )
         )
 
-        found.append(row)
-
-    # Сохраняем порядок появления в сообщении
-    found.sort(
-        key=lambda row: normalized_text.find(
-            normalize_tank_text(
-                row.get("name", "")
-            )
+        found.append(
+            row
         )
-    )
 
     return found
 
@@ -894,27 +1113,90 @@ def build_tank_context(rows):
     clean_rows = []
 
     for row in rows:
+
+        data = row.get(
+            "data",
+            {}
+        )
+
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except Exception:
+                data = {}
+
+        if not isinstance(data, dict):
+            data = {}
+
         clean_rows.append({
-            "name": row.get("name"),
-            "nation": row.get("nation"),
-            "tier": row.get("tier"),
-            "class": row.get("class"),
-            "type": row.get("type"),
-            "data": row.get("data", {})
+            "name": row.get(
+                "name"
+            ),
+
+            "nation": row.get(
+                "nation"
+            ),
+
+            "tier": row.get(
+                "tier"
+            ),
+
+            "class": row.get(
+                "class"
+            ),
+
+            "type": row.get(
+                "type"
+            ),
+
+            "data": data
         })
 
     return (
-        "ПРОВЕРЕННЫЕ ТТХ ИЗ БАЗЫ TANK_DATA:\n"
+        "==================================================\n"
+        "ПРОВЕРЕННЫЕ ТТХ ИЗ БАЗЫ TANK_DATA\n"
+        "==================================================\n\n"
+
+        "ЭТО ИСТОЧНИК ИСТИНЫ.\n"
+        "Если эти данные противоречат твоей памяти "
+        "или старой истории разговора — используй "
+        "данные НИЖЕ.\n\n"
+
+        "Не придумывай отсутствующие значения.\n\n"
+
         + json.dumps(
             clean_rows,
             ensure_ascii=False,
             indent=2
         )
-        + "\n\n"
-        "Используй эти данные как источник истины "
-        "для характеристик танков. "
-        "Не выдумывай отсутствующие значения."
     )
+
+
+# =========================================================
+# TANK DEBUG
+# =========================================================
+
+def debug_tank_detection(text):
+    rows = find_tanks_in_text(
+        text
+    )
+
+    if rows:
+        print(
+            "TANKS FOUND:",
+            [
+                row.get("name")
+                for row in rows
+            ],
+            flush=True
+        )
+    else:
+        print(
+            "TANKS FOUND: NONE",
+            flush=True
+        )
+
+    return rows
 
 
 # =========================================================
@@ -943,18 +1225,42 @@ def build_messages(
             )
         })
 
-    if tank_context:
-        messages.append({
-            "role": "system",
-            "content": tank_context
-        })
+    # -----------------------------------------------------
+    # История
+    # -----------------------------------------------------
 
     history = get_memory(
         user_id
     )
 
     if history:
-        messages.extend(history)
+        messages.extend(
+            history
+        )
+
+    # -----------------------------------------------------
+    # ВАЖНО:
+    # TANK_DATA ставим ПОСЛЕ истории.
+    #
+    # Так модель видит проверенные ТТХ
+    # непосредственно перед текущим вопросом.
+    # -----------------------------------------------------
+
+    if tank_context:
+        messages.append({
+            "role": "system",
+            "content": (
+                tank_context
+                + "\n\n"
+                "ВАЖНО: если история выше содержит "
+                "другие характеристики этого танка, "
+                "игнорируй их. Используй TANK_DATA."
+            )
+        })
+
+    # -----------------------------------------------------
+    # Текущий вопрос
+    # -----------------------------------------------------
 
     messages.append({
         "role": "user",
@@ -1063,7 +1369,7 @@ def ask_model(
 
 
 # =========================================================
-# GROQ ROUTER
+# GROQ
 # =========================================================
 
 def ask_groq(
@@ -1082,13 +1388,12 @@ def ask_groq(
         tank_context
     )
 
-    now = time.time()
-
     # -----------------------------------------------------
     # 120B
     # -----------------------------------------------------
 
-    if now >= main_blocked_until:
+    if time.time() >= main_blocked_until:
+
         try:
             print(
                 "Groq -> 120B",
@@ -1103,6 +1408,7 @@ def ask_groq(
         except Exception as e:
 
             if is_rate_limit_error(e):
+
                 cooldown = get_retry_seconds(
                     e,
                     MAIN_DEFAULT_COOLDOWN
@@ -1127,6 +1433,7 @@ def ask_groq(
                 )
 
     else:
+
         print(
             "120B temporarily blocked",
             flush=True
@@ -1138,6 +1445,7 @@ def ask_groq(
     # -----------------------------------------------------
 
     if time.time() >= backup_blocked_until:
+
         try:
             print(
                 "Groq -> 20B",
@@ -1152,6 +1460,7 @@ def ask_groq(
         except Exception as e:
 
             if is_rate_limit_error(e):
+
                 cooldown = get_retry_seconds(
                     e,
                     BACKUP_DEFAULT_COOLDOWN
@@ -1176,6 +1485,7 @@ def ask_groq(
                 )
 
     else:
+
         print(
             "20B temporarily blocked",
             flush=True
@@ -1190,15 +1500,11 @@ def ask_groq(
 # SONAR
 # =========================================================
 
-# Только запросы, где действительно нужна актуальная информация.
-# Обычные вопросы по ТТХ из tank_data сюда не попадают.
 CURRENT_WORDS = (
     "сейчас",
     "сегодня",
     "последн",
     "актуальн",
-    "обновлен",
-    "обновление",
     "патч",
     "ивент",
     "событи",
@@ -1235,6 +1541,7 @@ def cache_key(text):
 
 
 def ask_sonar(text):
+
     if not PERPLEXITY_API_KEY:
         raise RuntimeError(
             "PERPLEXITY_API_KEY не установлен."
@@ -1245,17 +1552,23 @@ def ask_sonar(text):
             "PERPLEXITY_MODEL не установлен."
         )
 
-    key = cache_key(text)
+    key = cache_key(
+        text
+    )
 
-    cached = sonar_cache.get(key)
+    cached = sonar_cache.get(
+        key
+    )
 
     if cached:
+
         saved, answer = cached
 
         if (
             time.time() - saved
             < SONAR_CACHE_TIME
         ):
+
             print(
                 "Sonar -> cache",
                 flush=True
@@ -1270,6 +1583,7 @@ def ask_sonar(text):
 
     response = requests.post(
         "https://api.perplexity.ai/chat/completions",
+
         headers={
             "Authorization":
                 f"Bearer {PERPLEXITY_API_KEY}",
@@ -1277,8 +1591,10 @@ def ask_sonar(text):
             "Content-Type":
                 "application/json"
         },
+
         json={
-            "model": PERPLEXITY_MODEL,
+            "model":
+                PERPLEXITY_MODEL,
 
             "messages": [
                 {
@@ -1291,6 +1607,7 @@ def ask_sonar(text):
                         "Дай только нужные факты."
                     )
                 },
+
                 {
                     "role": "user",
                     "content": text
@@ -1348,11 +1665,12 @@ def ask_sonar_then_groq(
     )
 
     prompt = (
-        "Ответь пользователю на основе найденных данных.\n"
-        f"Вопрос пользователя: {text}\n"
-        f"Актуальные данные поиска: {found}\n\n"
-        "Дай короткий естественный ответ. "
-        "Не упоминай Sonar, Perplexity, Groq или API. "
+        "Ответь пользователю на основе найденных данных.\n\n"
+        f"Вопрос пользователя: {text}\n\n"
+        f"Актуальные данные поиска:\n{found}\n\n"
+
+        "Дай короткий естественный ответ.\n"
+        "Не упоминай Sonar, Perplexity, Groq или API.\n"
         "Не добавляй неподтверждённые факты."
     )
 
@@ -1373,8 +1691,8 @@ def ask_ai(
     user_id=None,
     user_name=None
 ):
-    # Ищем танки в базе.
-    tank_rows = find_tanks_in_text(
+    # Сначала определяем танки.
+    tank_rows = debug_tank_detection(
         text
     )
 
@@ -1382,22 +1700,14 @@ def ask_ai(
         tank_rows
     )
 
-    if tank_rows:
-        print(
-            "TANKS FOUND:",
-            [
-                row.get("name")
-                for row in tank_rows
-            ],
-            flush=True
-        )
-
     # -----------------------------------------------------
-    # Актуальные вопросы -> Sonar
+    # Актуальная информация
     # -----------------------------------------------------
 
     if needs_sonar(text):
+
         try:
+
             print(
                 "ROUTER -> Sonar -> Groq",
                 flush=True
@@ -1411,6 +1721,7 @@ def ask_ai(
             )
 
         except Exception as e:
+
             print(
                 "Sonar error:",
                 e,
@@ -1418,7 +1729,7 @@ def ask_ai(
             )
 
     # -----------------------------------------------------
-    # Обычный вопрос / ТТХ -> Groq
+    # Обычный AI
     # -----------------------------------------------------
 
     print(
@@ -1444,6 +1755,7 @@ def send_message(
 ):
     response = requests.post(
         f"{VK_API}/messages.send",
+
         data={
             "access_token": VK_TOKEN,
             "v": VK_VERSION,
@@ -1451,6 +1763,7 @@ def send_message(
             "message": text,
             "random_id": 0
         },
+
         timeout=15
     )
 
@@ -1471,10 +1784,12 @@ def send_message(
 # =========================================================
 
 def get_voice(message):
+
     for attachment in message.get(
         "attachments",
         []
     ):
+
         if attachment.get(
             "type"
         ) != "audio_message":
@@ -1490,9 +1805,11 @@ def get_voice(message):
         )
 
         if transcript:
+
             return {
                 "text":
                     transcript.strip(),
+
                 "url":
                     None
             }
@@ -1502,25 +1819,29 @@ def get_voice(message):
         )
 
         if url:
+
             return {
-                "text": None,
-                "url": url
+                "text":
+                    None,
+
+                "url":
+                    url
             }
 
     return None
 
 
 def transcribe_voice(url):
+
     path = None
 
     try:
+
         data = requests.get(
             url,
             timeout=30
         ).content
 
-        # Уникальный временный файл.
-        # После расшифровки он будет удалён.
         temp = tempfile.NamedTemporaryFile(
             delete=False,
             suffix=".ogg"
@@ -1547,13 +1868,23 @@ def transcribe_voice(url):
                 )
             )
 
-        return str(result).strip()
+        return str(
+            result
+        ).strip()
 
     finally:
+
         if path:
+
             try:
-                if os.path.exists(path):
-                    os.remove(path)
+
+                if os.path.exists(
+                    path
+                ):
+
+                    os.remove(
+                        path
+                    )
 
                     print(
                         "Temporary voice file deleted.",
@@ -1561,6 +1892,7 @@ def transcribe_voice(url):
                     )
 
             except Exception as e:
+
                 print(
                     "Voice temp file delete error:",
                     e,
@@ -1569,14 +1901,16 @@ def transcribe_voice(url):
 
 
 # =========================================================
-# ERROR MESSAGE
+# ERROR
 # =========================================================
 
 def ai_error_message(error):
+
     if (
         "обе модели"
         in str(error).lower()
     ):
+
         return (
             "ИИ сейчас упёрся в лимит 😅 "
             "Попробуй немного позже."
@@ -1599,6 +1933,7 @@ def ai_error_message(error):
 def callback():
 
     try:
+
         data = request.get_json(
             force=True
         )
@@ -1612,6 +1947,7 @@ def callback():
             and data.get("secret")
             != VK_GROUP_SECRET
         ):
+
             return (
                 "invalid secret",
                 403
@@ -1642,6 +1978,7 @@ def callback():
         if already_processed(
             data.get("event_id")
         ):
+
             print(
                 "Duplicate VK event.",
                 flush=True
@@ -1663,6 +2000,7 @@ def callback():
         )
 
         if not sender_id:
+
             sender_id = message.get(
                 "user_id"
             )
@@ -1683,6 +2021,7 @@ def callback():
         # =================================================
 
         if is_greeting(text):
+
             send_message(
                 peer_id,
                 greeting_response(text)
@@ -1701,11 +2040,8 @@ def callback():
 
         if voice:
 
-            # -------------------------------------------------
-            # Если VK уже дал готовую расшифровку
-            # -------------------------------------------------
-
             if voice["text"]:
+
                 recognized = voice["text"]
 
                 print(
@@ -1714,11 +2050,8 @@ def callback():
                     flush=True
                 )
 
-            # -------------------------------------------------
-            # Если готовой расшифровки нет -> Whisper
-            # -------------------------------------------------
-
             else:
+
                 print(
                     "Whisper transcription...",
                     flush=True
@@ -1733,14 +2066,11 @@ def callback():
                 return "ok"
 
 
-            # -------------------------------------------------
-            # Локальный фильтр
-            # -------------------------------------------------
-
             if not should_use_ai(
                 recognized,
                 user_id
             ):
+
                 print(
                     "Voice ignored by local router.",
                     flush=True
@@ -1754,11 +2084,8 @@ def callback():
             )
 
 
-            # -------------------------------------------------
-            # AI
-            # -------------------------------------------------
-
             try:
+
                 reply = ask_ai(
                     recognized,
                     user_id,
@@ -1781,10 +2108,7 @@ def callback():
                 return "ok"
 
 
-            # -------------------------------------------------
-            # Сохраняем голос как обычный текст
-            # -------------------------------------------------
-
+            # Голос сохраняем только как текст.
             add_memory(
                 user_id,
                 "user",
@@ -1798,10 +2122,6 @@ def callback():
             )
 
 
-            # -------------------------------------------------
-            # Ответ
-            # -------------------------------------------------
-
             send_message(
                 peer_id,
                 reply
@@ -1814,10 +2134,8 @@ def callback():
         # IMAGES
         # =================================================
         #
-        # Изображения специально НЕ ОБРАБАТЫВАЕМ.
-        #
-        # Vision полностью отключён.
-        # Фото не отправляются в Groq.
+        # Vision отключён.
+        # Фото не отправляются в AI.
         # Фото не сохраняются в память.
         #
         # =================================================
@@ -1857,6 +2175,7 @@ def callback():
         )
 
         if user_name:
+
             print(
                 "User:",
                 user_name,
@@ -1869,6 +2188,7 @@ def callback():
         # =================================================
 
         try:
+
             reply = ask_ai(
                 text,
                 user_id,
@@ -1943,6 +2263,28 @@ if __name__ == "__main__":
             5000
         )
     )
+
+    # Загружаем танки при запуске,
+    # чтобы сразу увидеть в логах,
+    # подключилась ли база.
+    try:
+
+        startup_tanks = get_all_tanks()
+
+        print(
+            f"Startup tank database: "
+            f"{len(startup_tanks)} tanks",
+            flush=True
+        )
+
+    except Exception as e:
+
+        print(
+            "Startup tank database error:",
+            e,
+            flush=True
+        )
+
 
     app.run(
         host="0.0.0.0",
