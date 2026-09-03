@@ -716,7 +716,13 @@ def ask_groq(
     raise RuntimeError(
         "Обе модели Groq временно недоступны."
     )
+# =========================================================
+# TANKS BLITZ — E 100
+# =========================================================
 
+E100_TANK_URL = (
+    "https://armor.wotinspector.com/ru/tanksblitz/9489-e-100/"
+)
 
 # =========================================================
 # SONAR
@@ -745,6 +751,83 @@ def needs_sonar(text):
 
 
 def cache_key(text):
+    def ask_e100_tanks_blitz(text):
+    if not PERPLEXITY_API_KEY:
+        raise RuntimeError(
+            "PERPLEXITY_API_KEY не установлен."
+        )
+
+    if not PERPLEXITY_MODEL:
+        raise RuntimeError(
+            "PERPLEXITY_MODEL не установлен."
+        )
+
+    print(
+        "Tanks Blitz → E 100 → WOTInspector",
+        flush=True
+    )
+
+    response = requests.post(
+        "https://api.perplexity.ai/chat/completions",
+        headers={
+            "Authorization":
+                f"Bearer {PERPLEXITY_API_KEY}",
+            "Content-Type":
+                "application/json"
+        },
+        json={
+            "model": PERPLEXITY_MODEL,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Ты ищешь данные только по Tanks Blitz "
+                        "(Lesta Games).\n\n"
+
+                        "Источник:\n"
+                        f"{E100_TANK_URL}\n\n"
+
+                        "Нужны характеристики E 100 именно "
+                        "для Tanks Blitz.\n"
+
+                        "Не используй World of Tanks Blitz "
+                        "или World of Tanks PC.\n"
+
+                        "Не выдумывай данные. Если характеристики "
+                        "нет в источнике — так и скажи."
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": text
+                }
+            ],
+            "max_tokens": SONAR_MAX_TOKENS
+        },
+        timeout=45
+    )
+
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"E100 HTTP {response.status_code}: "
+            f"{response.text[:500]}"
+        )
+
+    data = response.json()
+
+    answer = (
+        data["choices"][0]
+        ["message"]
+        ["content"]
+        .strip()
+    )
+
+    if not answer:
+        raise RuntimeError(
+            "E100: пустой ответ."
+        )
+
+    return answer[:5000]
     return hashlib.sha256(
         text.lower().strip().encode()
     ).hexdigest()
@@ -871,6 +954,51 @@ def ask_ai(
     user_id=None,
     user_name=None
 ):
+        # -----------------------------------------------------
+    # TANKS BLITZ — E 100
+    # -----------------------------------------------------
+
+    if any(word in text.lower() for word in (
+        "e100",
+        "e 100",
+        "е100",
+        "е 100",
+        "e-100",
+        "е-100"
+    )):
+        try:
+            print(
+                "ROUTER → Tanks Blitz E 100",
+                flush=True
+            )
+
+            found = ask_e100_tanks_blitz(text)
+
+            prompt = (
+                "Ответь пользователю на основе найденных "
+                "данных E 100.\n\n"
+                f"Вопрос: {text}\n"
+                f"Данные: {found}\n\n"
+                "Важно: это только Tanks Blitz.\n"
+                "Не смешивай с World of Tanks Blitz "
+                "или World of Tanks PC.\n"
+                "Не выдумывай характеристики.\n"
+                "Не упоминай Perplexity, Sonar, API "
+                "или внутреннюю систему."
+            )
+
+            return ask_groq(
+                prompt,
+                user_id,
+                user_name
+            )
+
+        except Exception as e:
+            print(
+                "E100 Tanks Blitz error:",
+                e,
+                flush=True
+            )
     if needs_sonar(text):
         try:
             print(
