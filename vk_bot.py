@@ -36,7 +36,9 @@ PERPLEXITY_MODEL = os.environ.get("PERPLEXITY_MODEL", "")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
 SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY", "").strip()
 
-if SUPABASE_URL and not SUPABASE_URL.startswith(("http://", "https://")):
+if SUPABASE_URL and not SUPABASE_URL.startswith(
+    ("http://", "https://")
+):
     SUPABASE_URL = "https://" + SUPABASE_URL
 
 
@@ -70,6 +72,7 @@ VK_VERSION = "5.199"
 
 MAIN_MODEL = "openai/gpt-oss-120b"
 BACKUP_MODEL = "openai/gpt-oss-20b"
+
 VISION_MODEL = "qwen/qwen3.6-27b"
 WHISPER_MODEL = "whisper-large-v3-turbo"
 
@@ -78,8 +81,14 @@ WHISPER_MODEL = "whisper-large-v3-turbo"
 # LIMITS
 # =========================================================
 
-GROQ_MAX_TOKENS = 220
-LEARNING_MAX_TOKENS = 350
+# GPT-OSS может тратить часть completion tokens
+# на внутреннее reasoning.
+#
+# 220 было слишком мало:
+# модель иногда доходила до лимита ещё до финального ответа.
+GROQ_MAX_TOKENS = 320
+
+LEARNING_MAX_TOKENS = 400
 SONAR_MAX_TOKENS = 150
 
 CHAT_MEMORY_LIMIT = 50
@@ -540,17 +549,33 @@ def save_chat_message(
 
     try:
 
-        # BIGINT:
-        # пользователь = числовой VK ID
-        # бот / system = NULL
+        # В БД speaker_id = BIGINT.
+        #
+        # Пользователь:
+        #   числовой VK ID
+        #
+        # Бот:
+        #   NULL
+        #
+        # Это важно для Supabase/PostgreSQL.
+
         if speaker_id is None:
+
             database_speaker_id = None
+
         else:
+
             try:
+
                 database_speaker_id = int(
                     speaker_id
                 )
-            except (ValueError, TypeError):
+
+            except (
+                ValueError,
+                TypeError
+            ):
+
                 database_speaker_id = None
 
         supabase.table(
@@ -1153,6 +1178,8 @@ def perform_learning(chat_id):
             chat_id
         )
 
+    learning_success = False
+
     try:
 
         state = get_learning_state(
@@ -1289,8 +1316,7 @@ NONE
                         prompt
                 }
             ],
-            max_tokens=
-                LEARNING_MAX_TOKENS
+            max_tokens=LEARNING_MAX_TOKENS
         )
 
         learned = (
@@ -1298,6 +1324,12 @@ NONE
         ).strip()
 
         if not learned:
+
+            print(
+                "LEARNING: empty response",
+                flush=True
+            )
+
             return
 
         if learned.upper() == "NONE":
@@ -1323,9 +1355,7 @@ NONE
                 # USER FACT
                 # -----------------------------------------
 
-                if line.startswith(
-                    "USER|"
-                ):
+                if line.startswith("USER|"):
 
                     parts = line.split(
                         "|",
@@ -1335,24 +1365,20 @@ NONE
                     if len(parts) != 3:
                         continue
 
-                    _,
-                    user_id,
-                    fact = parts
+                    _, user_id, fact = parts
 
-                    user_id = (
-                        user_id.strip()
-                    )
-
-                    fact = (
-                        fact.strip()
-                    )
+                    user_id = user_id.strip()
+                    fact = fact.strip()
 
                     if not user_id or not fact:
                         continue
 
                     try:
                         int(user_id)
-                    except (ValueError, TypeError):
+                    except (
+                        ValueError,
+                        TypeError
+                    ):
                         continue
 
                     name = get_vk_user_name(
@@ -1370,9 +1396,7 @@ NONE
                 # CHAT KNOWLEDGE
                 # -----------------------------------------
 
-                elif line.startswith(
-                    "CHAT|"
-                ):
+                elif line.startswith("CHAT|"):
 
                     parts = line.split(
                         "|",
@@ -1382,9 +1406,7 @@ NONE
                     if len(parts) != 3:
                         continue
 
-                    _,
-                    fact,
-                    importance = parts
+                    _, fact, importance = parts
 
                     try:
 
@@ -1413,10 +1435,8 @@ NONE
             )
         )
 
-        total_messages = (
-            get_chat_message_count(
-                chat_id
-            )
+        total_messages = get_chat_message_count(
+            chat_id
         )
 
         if stage < 2 and total_messages >= 300:
@@ -1446,6 +1466,8 @@ NONE
             str(chat_id)
         ).execute()
 
+        learning_success = True
+
         print(
             f"🧠 LEARNING COMPLETE | "
             f"version={BOT_VERSION} | "
@@ -1471,6 +1493,15 @@ NONE
                 chat_id
             )
 
+        # Если обучение действительно прошло,
+        # счётчик уже сброшен внутри perform_learning.
+        #
+        # Если обучение упало — новый цикл не теряем.
+
+
+# =========================================================
+# MAYBE LEARN
+# =========================================================
 
 def maybe_learn(chat_id):
 
@@ -1488,27 +1519,17 @@ def maybe_learn(chat_id):
     if count < LEARNING_EVERY_MESSAGES:
         return
 
-    try:
+    with learning_lock:
 
-        supabase.table(
-            "bot_learning_state"
-        ).update({
+        if chat_id in learning_running:
 
-            "messages_since_learning":
-                0
+            print(
+                f"LEARNING SKIP | already running | "
+                f"chat={chat_id}",
+                flush=True
+            )
 
-        }).eq(
-            "chat_id",
-            str(chat_id)
-        ).execute()
-
-    except Exception as e:
-
-        print(
-            "Learning pre-reset error:",
-            e,
-            flush=True
-        )
+            return
 
     thread = threading.Thread(
         target=perform_learning,
@@ -1837,6 +1858,41 @@ def should_answer(
 
 
 # =========================================================
+# GROQ RESPONSE CLEANING
+# =========================================================
+
+def clean_model_text(text):
+
+    if not text:
+        return ""
+
+    text = str(text)
+
+    # Удаляем возможные think-блоки,
+    # если модель всё-таки вернула их в content.
+
+    text = re.sub(
+        r"<think>.*?</think>",
+        "",
+        text,
+        flags=
+            re.DOTALL
+            | re.IGNORECASE
+    )
+
+    text = re.sub(
+        r"<think>.*$",
+        "",
+        text,
+        flags=
+            re.DOTALL
+            | re.IGNORECASE
+    )
+
+    return text.strip()
+
+
+# =========================================================
 # GROQ
 # =========================================================
 
@@ -1846,16 +1902,50 @@ def ask_model(
     max_tokens=GROQ_MAX_TOKENS
 ):
 
-    completion = (
-        groq
-        .chat
-        .completions
-        .create(
-            model=model,
-            messages=messages,
-            max_tokens=max_tokens
+    try:
+
+        completion = (
+            groq
+            .chat
+            .completions
+            .create(
+                model=model,
+                messages=messages,
+
+                # Актуальный параметр Groq.
+                max_completion_tokens=max_tokens,
+
+                # GPT-OSS:
+                # low = меньше reasoning,
+                # больше шансов быстро получить
+                # нормальный финальный ответ.
+                reasoning_effort="low",
+
+                # Никогда не отдаём reasoning
+                # пользователю.
+                reasoning_format="hidden"
+            )
         )
-    )
+
+    except Exception:
+
+        # Некоторые старые версии groq SDK
+        # могут не знать новый параметр.
+        #
+        # В таком случае повторяем запрос
+        # с более совместимым набором параметров.
+
+        completion = (
+            groq
+            .chat
+            .completions
+            .create(
+                model=model,
+                messages=messages,
+                max_tokens=max_tokens,
+                reasoning_effort="low"
+            )
+        )
 
     usage = getattr(
         completion,
@@ -1894,38 +1984,67 @@ def ask_model(
             "Groq returned no choices."
         )
 
-    reply = (
-        completion
-        .choices[0]
-        .message
-        .content
+    message = completion.choices[0].message
+
+    # Основной финальный ответ.
+    raw_reply = (
+        getattr(
+            message,
+            "content",
+            None
+        )
+        or ""
     )
 
-    if not reply:
+    reply = clean_model_text(
+        raw_reply
+    )
 
-        raise RuntimeError(
-            "Groq returned empty response."
+    if reply:
+
+        return reply
+
+    # =====================================================
+    # EMPTY CONTENT
+    # =====================================================
+
+    reasoning = (
+        getattr(
+            message,
+            "reasoning",
+            None
+        )
+        or ""
+    )
+
+    # Не отправляем reasoning пользователю.
+    #
+    # Если reasoning есть, но content отсутствует,
+    # значит модель, скорее всего, потратила весь
+    # completion budget на reasoning.
+    #
+    # Даём понятную ошибку вызывающему коду,
+    # чтобы сработал fallback.
+
+    if reasoning:
+
+        print(
+            "Groq DEBUG: content empty, "
+            "reasoning was returned. "
+            "Completion budget may be too small.",
+            flush=True
         )
 
-    reply = re.sub(
-        r"<think>.*?</think>",
-        "",
-        reply,
-        flags=
-            re.DOTALL
-            | re.IGNORECASE
-    ).strip()
+    else:
 
-    reply = re.sub(
-        r"<think>.*$",
-        "",
-        reply,
-        flags=
-            re.DOTALL
-            | re.IGNORECASE
-    ).strip()
+        print(
+            "Groq DEBUG: empty content and no reasoning.",
+            flush=True
+        )
 
-    return reply
+    raise RuntimeError(
+        "Groq returned empty final response."
+    )
 
 
 def ask_groq(
@@ -1947,6 +2066,10 @@ def ask_groq(
 
     now = time.time()
 
+    # =====================================================
+    # MAIN 120B
+    # =====================================================
+
     if now >= main_blocked_until:
 
         try:
@@ -1958,7 +2081,8 @@ def ask_groq(
 
             return ask_model(
                 MAIN_MODEL,
-                messages
+                messages,
+                GROQ_MAX_TOKENS
             )
 
         except Exception as e:
@@ -1980,6 +2104,22 @@ def ask_groq(
                 flush=True
             )
 
+    else:
+
+        remaining = int(
+            main_blocked_until - time.time()
+        )
+
+        print(
+            f"120B blocked | "
+            f"retry in ~{max(0, remaining)} sec",
+            flush=True
+        )
+
+    # =====================================================
+    # BACKUP 20B
+    # =====================================================
+
     if time.time() >= backup_blocked_until:
 
         try:
@@ -1991,7 +2131,8 @@ def ask_groq(
 
             return ask_model(
                 BACKUP_MODEL,
-                messages
+                messages,
+                GROQ_MAX_TOKENS
             )
 
         except Exception as e:
@@ -2012,6 +2153,18 @@ def ask_groq(
                 e,
                 flush=True
             )
+
+    else:
+
+        remaining = int(
+            backup_blocked_until - time.time()
+        )
+
+        print(
+            f"20B blocked | "
+            f"retry in ~{max(0, remaining)} sec",
+            flush=True
+        )
 
     raise RuntimeError(
         "Обе модели Groq временно недоступны."
@@ -2111,6 +2264,7 @@ def ask_sonar(text):
             time.time() - saved
             < SONAR_CACHE_TIME
         ):
+
             return answer
 
     response = requests.post(
@@ -2340,6 +2494,7 @@ def transcribe_voice(url):
 
         try:
             os.remove(path)
+
         except Exception:
             pass
 
@@ -2431,6 +2586,7 @@ def analyze_image_then_groq(
         ) == "user":
 
             target_index = index
+
             break
 
     image_message = {
@@ -2472,16 +2628,32 @@ def analyze_image_then_groq(
             image_message
         )
 
-    completion = (
-        groq
-        .chat
-        .completions
-        .create(
-            model=VISION_MODEL,
-            messages=messages,
-            max_tokens=GROQ_MAX_TOKENS
+    try:
+
+        completion = (
+            groq
+            .chat
+            .completions
+            .create(
+                model=VISION_MODEL,
+                messages=messages,
+                max_completion_tokens=GROQ_MAX_TOKENS,
+                reasoning_effort="none"
+            )
         )
-    )
+
+    except Exception:
+
+        completion = (
+            groq
+            .chat
+            .completions
+            .create(
+                model=VISION_MODEL,
+                messages=messages,
+                max_tokens=GROQ_MAX_TOKENS
+            )
+        )
 
     if not completion.choices:
 
@@ -2489,11 +2661,19 @@ def analyze_image_then_groq(
             "Vision returned no choices."
         )
 
+    message = completion.choices[0].message
+
     reply = (
-        completion
-        .choices[0]
-        .message
-        .content
+        getattr(
+            message,
+            "content",
+            None
+        )
+        or ""
+    )
+
+    reply = clean_model_text(
+        reply
     )
 
     if not reply:
@@ -2501,24 +2681,6 @@ def analyze_image_then_groq(
         raise RuntimeError(
             "Vision returned empty response."
         )
-
-    reply = re.sub(
-        r"<think>.*?</think>",
-        "",
-        reply,
-        flags=
-            re.DOTALL
-            | re.IGNORECASE
-    ).strip()
-
-    reply = re.sub(
-        r"<think>.*$",
-        "",
-        reply,
-        flags=
-            re.DOTALL
-            | re.IGNORECASE
-    ).strip()
 
     return reply
 
@@ -3099,6 +3261,26 @@ if __name__ == "__main__":
 
     print(
         "📚 Self-learning: ENABLED",
+        flush=True
+    )
+
+    print(
+        f"🧠 MAIN MODEL: {MAIN_MODEL}",
+        flush=True
+    )
+
+    print(
+        f"🔄 BACKUP MODEL: {BACKUP_MODEL}",
+        flush=True
+    )
+
+    print(
+        f"👁 VISION MODEL: {VISION_MODEL}",
+        flush=True
+    )
+
+    print(
+        f"🗣 WHISPER MODEL: {WHISPER_MODEL}",
         flush=True
     )
 
