@@ -13,6 +13,14 @@ from supabase import create_client
 
 
 # =========================================================
+# BOT VERSION
+# =========================================================
+
+BOT_VERSION = "V1.3"
+BOT_BUILD = "Начальное самообучение"
+
+
+# =========================================================
 # CONFIG
 # =========================================================
 
@@ -41,7 +49,16 @@ supabase = create_client(
     SUPABASE_SECRET_KEY
 )
 
-print("Supabase подключён:", bool(supabase), flush=True)
+print(
+    f"🤖 Бот {BOT_VERSION} — {BOT_BUILD}",
+    flush=True
+)
+
+print(
+    "Supabase подключён:",
+    bool(supabase),
+    flush=True
+)
 
 
 # =========================================================
@@ -71,7 +88,7 @@ LEARNING_HISTORY_LIMIT = 80
 LEARNING_EVERY_MESSAGES = 40
 
 KNOWLEDGE_LIMIT = 20
-USER_MEMORY_LIMIT = 8
+USER_MEMORY_LIMIT = 12
 
 SONAR_CACHE_TIME = 30 * 60
 NAME_CACHE_TIME = 24 * 60 * 60
@@ -92,7 +109,12 @@ main_blocked_until = 0
 backup_blocked_until = 0
 
 active_chats = {}
+
 activity_lock = threading.Lock()
+
+# Защита от нескольких процессов обучения
+learning_running = set()
+learning_lock = threading.Lock()
 
 
 # =========================================================
@@ -100,7 +122,10 @@ activity_lock = threading.Lock()
 # =========================================================
 
 app = Flask(__name__)
-groq = Groq(api_key=GROQ_API_KEY)
+
+groq = Groq(
+    api_key=GROQ_API_KEY
+)
 
 
 # =========================================================
@@ -108,10 +133,22 @@ groq = Groq(api_key=GROQ_API_KEY)
 # =========================================================
 
 DEVELOPMENT_STAGES = {
-    1: "Ты только начинаешь знакомиться с чатом. Больше наблюдай, чем вмешивайся.",
-    2: "Ты уже немного освоился и начинаешь понимать людей, шутки и контекст.",
-    3: "Ты уже свой участник этого чата. Хорошо чувствуешь атмосферу и можешь иногда подколоть.",
-    4: "Ты давно в чате. Хорошо понимаешь людей, локальные приколы, историю разговоров и атмосферу."
+
+    1:
+        "Ты только начинаешь знакомиться с чатом. "
+        "Больше наблюдай, чем вмешивайся.",
+
+    2:
+        "Ты уже немного освоился и начинаешь понимать "
+        "людей, шутки и контекст.",
+
+    3:
+        "Ты уже свой участник этого чата. "
+        "Хорошо чувствуешь атмосферу и можешь иногда подколоть.",
+
+    4:
+        "Ты давно в чате. Хорошо понимаешь людей, "
+        "локальные приколы, историю разговоров и атмосферу."
 }
 
 
@@ -124,17 +161,18 @@ SYSTEM_PROMPT = """
 
 Ты не модератор.
 Ты не администратор.
-Ты не должен изображать начальника или сотрудника поддержки.
+Ты не сотрудник поддержки.
 
-Ты обычный участник разговора, который постепенно узнаёт людей и атмосферу этого конкретного чата.
+Ты обычный участник разговора, который постепенно
+узнаёт людей и атмосферу именно этого чата.
 
 ==================================================
 ГЛАВНАЯ ИДЕЯ
 ==================================================
 
-Ты учишься через общение.
+Ты учишься через реальные сообщения чата.
 
-Ты читаешь сообщения людей и постепенно понимаешь:
+Постепенно ты можешь понимать:
 
 - кто как общается;
 - кто с кем дружит;
@@ -142,15 +180,16 @@ SYSTEM_PROMPT = """
 - какие шутки повторяются;
 - какие события происходили в чате;
 - какие игровые и неигровые темы обсуждают;
-- какой стиль общения принят в этом чате.
+- какой стиль общения принят.
 
-Твоя долговременная память может содержать полезные сведения.
+Долговременная память помогает понимать контекст,
+но не является абсолютной истиной.
 
-Но память не является абсолютной истиной.
-Если что-то сомнительно — не выдавай это как факт.
+Если информация сомнительная — не выдавай её
+как установленный факт.
 
 ==================================================
- ОБЫЧНОЕ ОБЩЕНИЕ
+ОБЫЧНОЕ ОБЩЕНИЕ
 ==================================================
 
 Ты НЕ обязан отвечать на каждое сообщение.
@@ -158,21 +197,23 @@ SYSTEM_PROMPT = """
 Если человеку нечего сказать — лучше промолчать.
 
 Не надо отвечать на каждое:
+
 «ага»
 «хех»
 «мда»
 «понятно»
 «ахах»
-или короткую реплику, которая не требует ответа.
 
-Не задавай бессмысленный вопрос только ради продолжения разговора.
+Не задавай бессмысленный вопрос только ради
+продолжения разговора.
 
-Не пытайся постоянно оживлять разговор искусственно.
+Не пытайся постоянно искусственно оживлять чат.
 
-Если люди уже нормально общаются между собой — не мешай.
+Если люди уже нормально общаются между собой —
+не мешай.
 
 ==================================================
- СТИЛЬ
+СТИЛЬ
 ==================================================
 
 Говори естественно.
@@ -191,7 +232,8 @@ SYSTEM_PROMPT = """
 
 Не делай из каждой реплики лекцию.
 
-Не вставляй Tanks Blitz туда, где разговор вообще не об игре.
+Не вставляй Tanks Blitz туда, где разговор
+вообще не об игре.
 
 Если люди обсуждают деньги — обсуждай деньги.
 
@@ -202,46 +244,57 @@ SYSTEM_PROMPT = """
 Если обсуждают игру — разговаривай об игре.
 
 ==================================================
- TANKS BLITZ
+TANKS BLITZ
 ==================================================
 
-Tanks Blitz — одна из тем сообщества, но НЕ единственная тема разговора.
+Tanks Blitz — одна из тем сообщества,
+но НЕ единственная тема разговора.
 
-Не надо постоянно возвращать разговор к Tanks Blitz.
+Не надо постоянно возвращать разговор к игре.
 
-Не придумывай характеристики танков, карты, события, бонус-коды или другие игровые данные.
+Не придумывай характеристики танков, карты,
+события, бонус-коды или другие игровые данные.
 
 Не смешивай Tanks Blitz с World of Tanks для ПК.
 
-Если есть актуальные данные из поиска — используй их.
+Если есть актуальные данные из поиска —
+используй их.
 
 ==================================================
- ПАМЯТЬ
+ПАМЯТЬ
 ==================================================
 
-У тебя есть два типа долговременной памяти.
+Есть два типа долговременной памяти:
 
 1. Память конкретного чата.
 2. Память конкретного участника внутри конкретного чата.
 
 Не смешивай разные чаты.
 
-Если один человек находится в двух чатах, его память в этих чатах может отличаться.
+Если один человек находится в нескольких чатах,
+его память в них может отличаться.
 
 Не рассказывай человеку о внутренней памяти.
 
 Не говори:
+
 «Я записал это в память».
 «Я тебя запомнил в базе».
 «Моя система сохранила...»
 
 ==================================================
- ЛЮДИ
+ЛЮДИ
 ==================================================
 
 Не придумывай факты о людях.
 
-Не сохраняй пароли, адреса, документы, банковские данные и другую чувствительную информацию.
+Не сохраняй:
+
+- пароли;
+- адреса;
+- документы;
+- банковские данные;
+- чувствительную личную информацию.
 
 Не раскрывай личные сведения участников другим людям.
 
@@ -250,10 +303,11 @@ Tanks Blitz — одна из тем сообщества, но НЕ единс�
 Используй имена естественно и не слишком часто.
 
 ==================================================
- ПРАВИЛА ЧАТА
+ПРАВИЛА ЧАТА
 ==================================================
 
-Ты можешь знать правила сообщества, но ты не модератор.
+Ты можешь знать правила сообщества,
+но ты не модератор.
 
 Никогда не говори:
 
@@ -261,10 +315,11 @@ Tanks Blitz — одна из тем сообщества, но НЕ единс�
 «Я тебя замучу».
 «Я удалю сообщение».
 
-Ты можешь спокойно напомнить человеку о правилах, если это действительно уместно.
+Можно спокойно напомнить о правилах,
+если это действительно уместно.
 
 ==================================================
- ГЛАВНОЕ
+ГЛАВНОЕ
 ==================================================
 
 Будь живым участником.
@@ -294,6 +349,7 @@ def utc_now():
 # =========================================================
 
 def already_processed(event_id):
+
     if not event_id:
         return False
 
@@ -314,12 +370,16 @@ def already_processed(event_id):
     processed_events[event_id] = now
 
     if len(processed_events) > EVENT_CACHE_LIMIT:
+
         oldest = min(
             processed_events,
             key=processed_events.get
         )
 
-        processed_events.pop(oldest, None)
+        processed_events.pop(
+            oldest,
+            None
+        )
 
     return False
 
@@ -329,19 +389,24 @@ def already_processed(event_id):
 # =========================================================
 
 def is_rate_limit_error(error):
+
     text = str(error).lower()
 
-    return any(x in text for x in (
-        "429",
-        "rate limit",
-        "rate_limit_exceeded",
-        "tokens per day",
-        "tpd",
-        "too many requests"
-    ))
+    return any(
+        x in text
+        for x in (
+            "429",
+            "rate limit",
+            "rate_limit_exceeded",
+            "tokens per day",
+            "tpd",
+            "too many requests"
+        )
+    )
 
 
 def get_retry_seconds(error, default):
+
     text = str(error)
 
     match = re.search(
@@ -356,13 +421,29 @@ def get_retry_seconds(error, default):
     if not match:
         return default
 
-    hours = int(match.group(1) or 0)
-    minutes = int(match.group(2) or 0)
-    seconds = float(match.group(3) or 0)
+    hours = int(
+        match.group(1) or 0
+    )
 
-    total = hours * 3600 + minutes * 60 + seconds
+    minutes = int(
+        match.group(2) or 0
+    )
 
-    return int(total) + 10 if total > 0 else default
+    seconds = float(
+        match.group(3) or 0
+    )
+
+    total = (
+        hours * 3600
+        + minutes * 60
+        + seconds
+    )
+
+    return (
+        int(total) + 10
+        if total > 0
+        else default
+    )
 
 
 # =========================================================
@@ -370,18 +451,26 @@ def get_retry_seconds(error, default):
 # =========================================================
 
 def get_vk_user_name(user_id):
+
     if not user_id:
         return None
 
-    cached = user_names.get(str(user_id))
+    cached = user_names.get(
+        str(user_id)
+    )
 
     if cached:
+
         saved, name = cached
 
-        if time.time() - saved < NAME_CACHE_TIME:
+        if (
+            time.time() - saved
+            < NAME_CACHE_TIME
+        ):
             return name
 
     try:
+
         response = requests.get(
             f"{VK_API}/users.get",
             params={
@@ -392,15 +481,25 @@ def get_vk_user_name(user_id):
             timeout=10
         )
 
-        users = response.json().get("response", [])
+        users = response.json().get(
+            "response",
+            []
+        )
 
         if not users:
             return None
 
         user = users[0]
 
-        first = user.get("first_name", "").strip()
-        last = user.get("last_name", "").strip()
+        first = user.get(
+            "first_name",
+            ""
+        ).strip()
+
+        last = user.get(
+            "last_name",
+            ""
+        ).strip()
 
         name = f"{first} {last}".strip()
 
@@ -415,7 +514,13 @@ def get_vk_user_name(user_id):
         return name
 
     except Exception as e:
-        print("VK name error:", e, flush=True)
+
+        print(
+            "VK name error:",
+            e,
+            flush=True
+        )
+
         return None
 
 
@@ -430,21 +535,34 @@ def save_chat_message(
     role,
     content
 ):
+
     if not chat_id or not content:
         return
 
     try:
+
         supabase.table(
             "bot_chat_memory"
         ).insert({
+
             "chat_id": str(chat_id),
-            "speaker_id": str(speaker_id or ""),
-            "speaker_name": speaker_name or "",
+
+            "speaker_id": str(
+                speaker_id or ""
+            ),
+
+            "speaker_name":
+                speaker_name or "",
+
             "role": role,
-            "content": content[:4000]
+
+            "content":
+                content[:4000]
+
         }).execute()
 
     except Exception as e:
+
         print(
             "Chat memory save error:",
             e,
@@ -456,14 +574,19 @@ def get_chat_memory(
     chat_id,
     limit=CHAT_MEMORY_LIMIT
 ):
+
     try:
+
         response = (
             supabase
             .table("bot_chat_memory")
             .select(
                 "speaker_id, speaker_name, role, content"
             )
-            .eq("chat_id", str(chat_id))
+            .eq(
+                "chat_id",
+                str(chat_id)
+            )
             .order(
                 "created_at",
                 desc=True
@@ -473,11 +596,13 @@ def get_chat_memory(
         )
 
         rows = response.data or []
+
         rows.reverse()
 
         return rows
 
     except Exception as e:
+
         print(
             "Chat memory load error:",
             e,
@@ -487,19 +612,64 @@ def get_chat_memory(
         return []
 
 
+def get_chat_message_count(chat_id):
+
+    try:
+
+        response = (
+            supabase
+            .table("bot_chat_memory")
+            .select(
+                "id",
+                count="exact",
+                head=True
+            )
+            .eq(
+                "chat_id",
+                str(chat_id)
+            )
+            .execute()
+        )
+
+        return int(
+            response.count or 0
+        )
+
+    except Exception as e:
+
+        print(
+            "Chat message count error:",
+            e,
+            flush=True
+        )
+
+        return 0
+
+
 # =========================================================
 # KNOWLEDGE
 # =========================================================
 
-def knowledge_fingerprint(chat_id, knowledge):
+def normalize_text(text):
+
+    return re.sub(
+        r"\s+",
+        " ",
+        (text or "").strip()
+    )
+
+
+def knowledge_fingerprint(
+    chat_id,
+    knowledge
+):
+
     raw = (
         str(chat_id).strip()
         + "|"
-        + re.sub(
-            r"\s+",
-            " ",
-            knowledge.lower().strip()
-        )
+        + normalize_text(
+            knowledge
+        ).lower()
     )
 
     return hashlib.sha256(
@@ -512,13 +682,9 @@ def save_knowledge(
     knowledge,
     importance=1
 ):
-    if not knowledge:
-        return
 
-    knowledge = re.sub(
-        r"\s+",
-        " ",
-        knowledge.strip()
+    knowledge = normalize_text(
+        knowledge
     )
 
     if len(knowledge) < 5:
@@ -530,6 +696,7 @@ def save_knowledge(
     )
 
     try:
+
         existing = (
             supabase
             .table("bot_knowledge")
@@ -552,13 +719,25 @@ def save_knowledge(
         supabase.table(
             "bot_knowledge"
         ).insert({
-            "chat_id": str(chat_id),
-            "knowledge": knowledge[:2000],
-            "importance": max(
-                1,
-                min(int(importance), 5)
-            ),
-            "fingerprint": fingerprint
+
+            "chat_id":
+                str(chat_id),
+
+            "knowledge":
+                knowledge[:2000],
+
+            "importance":
+                max(
+                    1,
+                    min(
+                        int(importance),
+                        5
+                    )
+                ),
+
+            "fingerprint":
+                fingerprint
+
         }).execute()
 
         print(
@@ -568,6 +747,7 @@ def save_knowledge(
         )
 
     except Exception as e:
+
         print(
             "Knowledge save error:",
             e,
@@ -576,7 +756,9 @@ def save_knowledge(
 
 
 def get_knowledge(chat_id):
+
     try:
+
         response = (
             supabase
             .table("bot_knowledge")
@@ -602,6 +784,7 @@ def get_knowledge(chat_id):
         return response.data or []
 
     except Exception as e:
+
         print(
             "Knowledge load error:",
             e,
@@ -615,16 +798,27 @@ def get_knowledge(chat_id):
 # USER MEMORY
 # =========================================================
 
-def merge_memory(old_memory, new_fact):
+def merge_memory(
+    old_memory,
+    new_fact
+):
+
     facts = []
 
     if old_memory:
+
         for line in old_memory.splitlines():
-            line = line.strip("-• \t")
+
+            line = line.strip(
+                "-• \t"
+            )
+
             if line:
                 facts.append(line)
 
-    new_fact = new_fact.strip("-• \t")
+    new_fact = new_fact.strip(
+        "-• \t"
+    )
 
     if new_fact:
         facts.append(new_fact)
@@ -633,11 +827,10 @@ def merge_memory(old_memory, new_fact):
     seen = set()
 
     for fact in facts:
-        normalized = re.sub(
-            r"\s+",
-            " ",
-            fact.lower().strip()
-        )
+
+        normalized = normalize_text(
+            fact
+        ).lower()
 
         if not normalized:
             continue
@@ -646,10 +839,12 @@ def merge_memory(old_memory, new_fact):
             continue
 
         seen.add(normalized)
+
         result.append(fact)
 
-    # Храним только последние наиболее полезные факты.
-    return "\n".join(result[-12:])
+    return "\n".join(
+        result[-USER_MEMORY_LIMIT:]
+    )
 
 
 def save_user_memory(
@@ -658,10 +853,19 @@ def save_user_memory(
     name,
     memory
 ):
+
     if not chat_id or not user_id or not memory:
         return
 
+    memory = normalize_text(
+        memory
+    )
+
+    if len(memory) < 5:
+        return
+
     try:
+
         existing = (
             supabase
             .table("bot_users")
@@ -683,6 +887,7 @@ def save_user_memory(
         old_memory = ""
 
         if existing.data:
+
             old_memory = (
                 existing.data[0].get(
                     "memory"
@@ -696,11 +901,21 @@ def save_user_memory(
         )
 
         data = {
-            "chat_id": str(chat_id),
-            "user_id": str(user_id),
-            "name": name or "",
-            "memory": merged[:3000],
-            "updated_at": utc_now()
+
+            "chat_id":
+                str(chat_id),
+
+            "user_id":
+                str(user_id),
+
+            "name":
+                name or "",
+
+            "memory":
+                merged[:3000],
+
+            "updated_at":
+                utc_now()
         }
 
         if existing.data:
@@ -719,11 +934,13 @@ def save_user_memory(
             ).insert(data).execute()
 
         print(
-            f"USER MEMORY [{name}]: {memory[:150]}",
+            f"USER MEMORY [{name or user_id}]: "
+            f"{memory[:150]}",
             flush=True
         )
 
     except Exception as e:
+
         print(
             "User memory save error:",
             e,
@@ -735,7 +952,12 @@ def get_user_memory(
     chat_id,
     user_id
 ):
+
+    if not user_id:
+        return None
+
     try:
+
         response = (
             supabase
             .table("bot_users")
@@ -760,6 +982,7 @@ def get_user_memory(
         return response.data[0]
 
     except Exception as e:
+
         print(
             "User memory load error:",
             e,
@@ -774,7 +997,9 @@ def get_user_memory(
 # =========================================================
 
 def get_learning_state(chat_id):
+
     try:
+
         response = (
             supabase
             .table("bot_learning_state")
@@ -793,20 +1018,40 @@ def get_learning_state(chat_id):
         supabase.table(
             "bot_learning_state"
         ).insert({
-            "chat_id": str(chat_id),
-            "messages_since_learning": 0,
-            "development_stage": 1,
-            "personality": "",
-            "last_learning_at": utc_now()
+
+            "chat_id":
+                str(chat_id),
+
+            "messages_since_learning":
+                0,
+
+            "development_stage":
+                1,
+
+            "personality":
+                "",
+
+            "last_learning_at":
+                utc_now()
+
         }).execute()
 
         return {
-            "messages_since_learning": 0,
-            "development_stage": 1,
-            "personality": ""
+            "chat_id":
+                str(chat_id),
+
+            "messages_since_learning":
+                0,
+
+            "development_stage":
+                1,
+
+            "personality":
+                ""
         }
 
     except Exception as e:
+
         print(
             "Learning state error:",
             e,
@@ -814,14 +1059,27 @@ def get_learning_state(chat_id):
         )
 
         return {
-            "messages_since_learning": 0,
-            "development_stage": 1,
-            "personality": ""
+            "chat_id":
+                str(chat_id),
+
+            "messages_since_learning":
+                0,
+
+            "development_stage":
+                1,
+
+            "personality":
+                ""
         }
 
 
-def increase_learning_counter(chat_id):
-    state = get_learning_state(chat_id)
+def increase_learning_counter(
+    chat_id
+):
+
+    state = get_learning_state(
+        chat_id
+    )
 
     count = (
         int(
@@ -834,16 +1092,21 @@ def increase_learning_counter(chat_id):
     )
 
     try:
+
         supabase.table(
             "bot_learning_state"
         ).update({
-            "messages_since_learning": count
+
+            "messages_since_learning":
+                count
+
         }).eq(
             "chat_id",
             str(chat_id)
         ).execute()
 
     except Exception as e:
+
         print(
             "Learning counter error:",
             e,
@@ -858,15 +1121,24 @@ def increase_learning_counter(chat_id):
 # =========================================================
 
 def perform_learning(chat_id):
-    """
-    Анализирует реальные сообщения чата.
 
-    Отдельно:
-    - учится понимать чат;
-    - запоминает участников;
-    - запоминает локальные темы;
-    - не создаёт дубли.
-    """
+    # -----------------------------------------------------
+    # Защита от параллельного обучения
+    # -----------------------------------------------------
+
+    with learning_lock:
+
+        if chat_id in learning_running:
+
+            print(
+                f"LEARNING SKIP | already running | "
+                f"chat={chat_id}",
+                flush=True
+            )
+
+            return
+
+        learning_running.add(chat_id)
 
     try:
 
@@ -880,6 +1152,13 @@ def perform_learning(chat_id):
         )
 
         if len(history) < 10:
+
+            print(
+                f"LEARNING WAIT | "
+                f"history={len(history)}",
+                flush=True
+            )
+
             return
 
         text_parts = []
@@ -887,17 +1166,23 @@ def perform_learning(chat_id):
         for item in history:
 
             name = (
-                item.get("speaker_name")
+                item.get(
+                    "speaker_name"
+                )
                 or "Участник"
             )
 
             user_id = (
-                item.get("speaker_id")
+                item.get(
+                    "speaker_id"
+                )
                 or ""
             )
 
             content = (
-                item.get("content")
+                item.get(
+                    "content"
+                )
                 or ""
             )
 
@@ -914,39 +1199,44 @@ def perform_learning(chat_id):
         )
 
         prompt = f"""
-Ты — модуль обучения AI-участника чата.
+Ты — модуль долговременного обучения
+AI-участника конкретного чата.
 
-Перед тобой реальные сообщения одного конкретного чата.
+Перед тобой реальные сообщения одного чата.
 
-Твоя задача — НЕ пересказать разговор.
+Твоя задача — НЕ пересказывать разговор.
 
-Нужно найти только то, что реально полезно сохранить на будущее.
+Найди только информацию, которую действительно
+полезно сохранить для будущего понимания этого чата.
 
 Ищи:
 
-1. Факты о конкретных участниках, если они явно понятны.
+1. Явные факты о конкретных участниках.
 2. Интересы участников.
 3. Устойчивые привычки общения.
 4. Повторяющиеся локальные шутки.
-5. Важные события внутри этого чата.
-6. Полезный контекст, который поможет позже понимать разговор.
-7. Полезные знания по Tanks Blitz, если они действительно появились из разговора.
+5. Важные события внутри чата.
+6. Полезный контекст для будущих разговоров.
+7. Полезные знания по Tanks Blitz,
+   если они действительно появились из разговора.
 
-ВАЖНО:
+НЕ сохраняй:
 
-Не сохраняй случайную болтовню.
+- случайную болтовню;
+- одноразовые сообщения;
+- обычные эмоции;
+- оскорбления как факты;
+- пароли;
+- адреса;
+- документы;
+- банковские данные;
+- чувствительную личную информацию.
 
-Не сохраняй оскорбления как факты.
-
-Не сохраняй пароли.
-
-Не сохраняй адреса, банковские данные, документы и чувствительную личную информацию.
-
-Не придумывай ничего.
+НЕ ПРИДУМЫВАЙ.
 
 Не превращай каждую реплику в знание.
 
-Формат ответа СТРОГО:
+ФОРМАТ ОТВЕТА СТРОГО:
 
 USER|ID|Факт
 
@@ -960,15 +1250,15 @@ CHAT|Факт|важность
 
 USER|123456|Любит играть в Tanks Blitz на тяжёлых танках
 
-USER|555777|Часто шутит про отсутствие денег
+USER|555777|Часто играет вечером
 
 CHAT|В этом чате часто шутят про кредиты|2
 
-Если нечего сохранять:
+Если полезной информации нет:
 
 NONE
 
-Сообщения:
+Реальные сообщения:
 
 {conversation}
 """
@@ -977,26 +1267,36 @@ NONE
             BACKUP_MODEL,
             [
                 {
-                    "role": "system",
-                    "content": (
+                    "role":
+                        "system",
+
+                    "content":
                         "Ты аккуратный модуль "
-                        "долговременного обучения."
-                    )
+                        "долговременного обучения. "
+                        "Не придумывай факты."
                 },
                 {
-                    "role": "user",
-                    "content": prompt
+                    "role":
+                        "user",
+
+                    "content":
+                        prompt
                 }
             ],
-            max_tokens=LEARNING_MAX_TOKENS
+            max_tokens=
+                LEARNING_MAX_TOKENS
         )
 
-        learned = learned.strip()
+        learned = (
+            learned or ""
+        ).strip()
 
         if not learned:
+
             return
 
         if learned.upper() == "NONE":
+
             print(
                 "LEARNING: nothing new",
                 flush=True
@@ -1015,10 +1315,12 @@ NONE
                     continue
 
                 # -----------------------------------------
-                # USER
+                # USER FACT
                 # -----------------------------------------
 
-                if line.startswith("USER|"):
+                if line.startswith(
+                    "USER|"
+                ):
 
                     parts = line.split(
                         "|",
@@ -1028,10 +1330,17 @@ NONE
                     if len(parts) != 3:
                         continue
 
-                    _, user_id, fact = parts
+                    _,
+                    user_id,
+                    fact = parts
 
-                    user_id = user_id.strip()
-                    fact = fact.strip()
+                    user_id = (
+                        user_id.strip()
+                    )
+
+                    fact = (
+                        fact.strip()
+                    )
 
                     if not user_id or not fact:
                         continue
@@ -1048,10 +1357,12 @@ NONE
                     )
 
                 # -----------------------------------------
-                # CHAT
+                # CHAT KNOWLEDGE
                 # -----------------------------------------
 
-                elif line.startswith("CHAT|"):
+                elif line.startswith(
+                    "CHAT|"
+                ):
 
                     parts = line.split(
                         "|",
@@ -1061,13 +1372,18 @@ NONE
                     if len(parts) != 3:
                         continue
 
-                    _, fact, importance = parts
+                    _,
+                    fact,
+                    importance = parts
 
                     try:
+
                         importance = int(
                             importance.strip()
                         )
+
                     except Exception:
+
                         importance = 1
 
                     save_knowledge(
@@ -1076,9 +1392,9 @@ NONE
                         importance
                     )
 
-        # ---------------------------------------------
+        # =================================================
         # DEVELOPMENT STAGE
-        # ---------------------------------------------
+        # =================================================
 
         stage = int(
             state.get(
@@ -1087,32 +1403,45 @@ NONE
             )
         )
 
-        # Реальное количество сообщений
-        # в памяти этого чата.
-        if stage < 4:
+        total_messages = (
+            get_chat_message_count(
+                chat_id
+            )
+        )
 
-            if len(history) >= 300:
-                stage = max(stage, 2)
+        if stage < 2 and total_messages >= 300:
+            stage = 2
 
-            if len(history) >= 1000:
-                stage = max(stage, 3)
+        if stage < 3 and total_messages >= 1000:
+            stage = 3
 
-            if len(history) >= 3000:
-                stage = max(stage, 4)
+        if stage < 4 and total_messages >= 3000:
+            stage = 4
 
         supabase.table(
             "bot_learning_state"
         ).update({
-            "messages_since_learning": 0,
-            "development_stage": stage,
-            "last_learning_at": utc_now()
+
+            "messages_since_learning":
+                0,
+
+            "development_stage":
+                stage,
+
+            "last_learning_at":
+                utc_now()
+
         }).eq(
             "chat_id",
             str(chat_id)
         ).execute()
 
         print(
-            f"LEARNING COMPLETE | chat={chat_id} | stage={stage}",
+            f"🧠 LEARNING COMPLETE | "
+            f"version={BOT_VERSION} | "
+            f"chat={chat_id} | "
+            f"messages={total_messages} | "
+            f"stage={stage}",
             flush=True
         )
 
@@ -1124,6 +1453,13 @@ NONE
             flush=True
         )
 
+    finally:
+
+        with learning_lock:
+            learning_running.discard(
+                chat_id
+            )
+
 
 def maybe_learn(chat_id):
 
@@ -1131,8 +1467,41 @@ def maybe_learn(chat_id):
         chat_id
     )
 
+    print(
+        f"LEARNING COUNTER | "
+        f"chat={chat_id} | "
+        f"{count}/{LEARNING_EVERY_MESSAGES}",
+        flush=True
+    )
+
     if count < LEARNING_EVERY_MESSAGES:
         return
+
+    # Сразу сбрасываем счётчик перед запуском,
+    # чтобы новые сообщения не создавали
+    # несколько потоков обучения.
+
+    try:
+
+        supabase.table(
+            "bot_learning_state"
+        ).update({
+
+            "messages_since_learning":
+                0
+
+        }).eq(
+            "chat_id",
+            str(chat_id)
+        ).execute()
+
+    except Exception as e:
+
+        print(
+            "Learning pre-reset error:",
+            e,
+            flush=True
+        )
 
     thread = threading.Thread(
         target=perform_learning,
@@ -1153,10 +1522,14 @@ def build_chat_context(
     user_name,
     text
 ):
+
     messages = [
         {
-            "role": "system",
-            "content": SYSTEM_PROMPT
+            "role":
+                "system",
+
+            "content":
+                SYSTEM_PROMPT
         }
     ]
 
@@ -1172,19 +1545,22 @@ def build_chat_context(
     )
 
     messages.append({
-        "role": "system",
-        "content": (
+
+        "role":
+            "system",
+
+        "content":
             "Твоя текущая стадия развития:\n"
-            + DEVELOPMENT_STAGES.get(
+            +
+            DEVELOPMENT_STAGES.get(
                 stage,
                 DEVELOPMENT_STAGES[1]
             )
-        )
     })
 
-    # ---------------------------------------------
+    # =====================================================
     # CHAT KNOWLEDGE
-    # ---------------------------------------------
+    # =====================================================
 
     knowledge = get_knowledge(
         chat_id
@@ -1193,57 +1569,76 @@ def build_chat_context(
     if knowledge:
 
         knowledge_text = "\n".join(
+
             f"- {item.get('knowledge', '')}"
+
             for item in knowledge
+
             if item.get("knowledge")
         )
 
-        messages.append({
-            "role": "system",
-            "content": (
-                "Полезная долговременная память "
-                "этого конкретного чата.\n"
-                "Используй её только если она "
-                "относится к текущему разговору:\n"
-                + knowledge_text
-            )
-        })
+        if knowledge_text:
 
-    # ---------------------------------------------
+            messages.append({
+
+                "role":
+                    "system",
+
+                "content":
+                    "Полезная долговременная "
+                    "память этого конкретного чата.\n"
+                    "Используй её только если она "
+                    "относится к текущему разговору:\n"
+                    +
+                    knowledge_text
+            })
+
+    # =====================================================
     # USER MEMORY
-    # ---------------------------------------------
+    # =====================================================
 
     personal = get_user_memory(
         chat_id,
         user_id
     )
 
-    if personal and personal.get("memory"):
+    if personal and personal.get(
+        "memory"
+    ):
 
         messages.append({
-            "role": "system",
-            "content": (
+
+            "role":
+                "system",
+
+            "content":
                 "Что известно об этом участнике "
                 "в этом конкретном чате:\n"
-                + personal["memory"]
-            )
+                +
+                personal["memory"]
         })
 
-    # ---------------------------------------------
+    # =====================================================
     # RECENT CHAT
-    # ---------------------------------------------
+    # =====================================================
 
     history = get_chat_memory(
         chat_id,
         CHAT_MEMORY_LIMIT
     )
 
+    current_already_saved = False
+
     for item in history:
 
-        role = item.get("role")
+        role = item.get(
+            "role"
+        )
 
         content = (
-            item.get("content")
+            item.get(
+                "content"
+            )
             or ""
         )
 
@@ -1251,30 +1646,60 @@ def build_chat_context(
             continue
 
         name = (
-            item.get("speaker_name")
+            item.get(
+                "speaker_name"
+            )
             or "Участник"
         )
+
+        speaker_id = str(
+            item.get(
+                "speaker_id"
+            )
+            or ""
+        )
+
+        if (
+            role == "user"
+            and speaker_id == str(user_id)
+            and content == text
+        ):
+            current_already_saved = True
 
         if role == "user":
 
             messages.append({
-                "role": "user",
-                "content": f"{name}: {content}"
+
+                "role":
+                    "user",
+
+                "content":
+                    f"{name}: {content}"
             })
 
         elif role == "assistant":
 
             messages.append({
-                "role": "assistant",
-                "content": content
+
+                "role":
+                    "assistant",
+
+                "content":
+                    content
             })
 
-    messages.append({
-        "role": "user",
-        "content": (
-            f"{user_name or 'Участник'}: {text}"
-        )
-    })
+    # Если текущее сообщение ещё не было
+    # сохранено в истории — добавляем его.
+    if not current_already_saved:
+
+        messages.append({
+
+            "role":
+                "user",
+
+            "content":
+                f"{user_name or 'Участник'}: {text}"
+        })
 
     return messages
 
@@ -1302,13 +1727,16 @@ QUESTION_WORDS = (
 
 
 def looks_like_question(text):
+
     low = text.lower().strip()
 
     if "?" in low:
         return True
 
     return any(
-        low.startswith(word + " ")
+        low.startswith(
+            word + " "
+        )
         for word in QUESTION_WORDS
     )
 
@@ -1317,9 +1745,10 @@ def is_directed_to_bot(
     message,
     text
 ):
+
     low = text.lower()
 
-    # Ответ на сообщение бота
+    # Ответ на сообщение сообщества
     reply_message = message.get(
         "reply_message"
     )
@@ -1327,24 +1756,27 @@ def is_directed_to_bot(
     if reply_message:
 
         reply_from = (
-            reply_message.get("from_id")
+            reply_message.get(
+                "from_id"
+            )
         )
 
         if reply_from:
-            # VK ID сообщества обычно отрицательный.
-            if str(reply_from).startswith("-"):
+
+            if str(
+                reply_from
+            ).startswith("-"):
+
                 return True
 
     # Упоминание сообщества
     if "[club" in low:
         return True
 
-    # Простые обращения
     bot_words = (
         "бот",
         "бонус-коды",
         "бонус коды",
-        "бонус-коды tanks",
         "эй бот"
     )
 
@@ -1358,6 +1790,7 @@ def should_answer(
     message,
     text
 ):
+
     text = text.strip()
 
     if not text:
@@ -1366,37 +1799,33 @@ def should_answer(
     if len(text) <= 1:
         return False
 
-    low = text.lower()
-
-    # Явно обращаются к боту
     if is_directed_to_bot(
         message,
         text
     ):
         return True
 
-    # Вопрос
-    if looks_like_question(text):
+    if looks_like_question(
+        text
+    ):
         return True
 
-    # Очень короткие сообщения
     short_words = len(
         text.split()
     )
 
     if short_words <= 2:
-        # Иногда можно естественно вмешаться,
-        # но не отвечать каждый раз.
+
         return random.random() < 0.10
 
-    # На нормальную содержательную реплику
-    # отвечаем не всегда.
     roll = random.random()
 
     if short_words <= 6:
+
         return roll < 0.25
 
     if short_words <= 15:
+
         return roll < 0.45
 
     return roll < 0.60
@@ -1412,10 +1841,15 @@ def ask_model(
     max_tokens=GROQ_MAX_TOKENS
 ):
 
-    completion = groq.chat.completions.create(
-        model=model,
-        messages=messages,
-        max_tokens=max_tokens
+    completion = (
+        groq
+        .chat
+        .completions
+        .create(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens
+        )
     )
 
     usage = getattr(
@@ -1425,6 +1859,7 @@ def ask_model(
     )
 
     if usage:
+
         print(
             "Groq:",
             "prompt=",
@@ -1449,6 +1884,7 @@ def ask_model(
         )
 
     if not completion.choices:
+
         raise RuntimeError(
             "Groq returned no choices."
         )
@@ -1461,6 +1897,7 @@ def ask_model(
     )
 
     if not reply:
+
         raise RuntimeError(
             "Groq returned empty response."
         )
@@ -1470,15 +1907,18 @@ def ask_model(
         r"<think>.*?</think>",
         "",
         reply,
-        flags=re.DOTALL | re.IGNORECASE
+        flags=
+            re.DOTALL
+            | re.IGNORECASE
     ).strip()
 
-    # На случай незакрытого think
     reply = re.sub(
         r"<think>.*$",
         "",
         reply,
-        flags=re.DOTALL | re.IGNORECASE
+        flags=
+            re.DOTALL
+            | re.IGNORECASE
     ).strip()
 
     return reply
@@ -1490,6 +1930,7 @@ def ask_groq(
     user_id,
     user_name
 ):
+
     global main_blocked_until
     global backup_blocked_until
 
@@ -1502,7 +1943,10 @@ def ask_groq(
 
     now = time.time()
 
+    # =====================================================
     # 120B
+    # =====================================================
+
     if now >= main_blocked_until:
 
         try:
@@ -1523,7 +1967,8 @@ def ask_groq(
 
                 main_blocked_until = (
                     time.time()
-                    + get_retry_seconds(
+                    +
+                    get_retry_seconds(
                         e,
                         3600
                     )
@@ -1535,7 +1980,10 @@ def ask_groq(
                 flush=True
             )
 
+    # =====================================================
     # 20B
+    # =====================================================
+
     if time.time() >= backup_blocked_until:
 
         try:
@@ -1556,7 +2004,8 @@ def ask_groq(
 
                 backup_blocked_until = (
                     time.time()
-                    + get_retry_seconds(
+                    +
+                    get_retry_seconds(
                         e,
                         600
                     )
@@ -1618,6 +2067,7 @@ WEB_WORDS = (
 
 
 def needs_sonar(text):
+
     low = text.lower()
 
     return any(
@@ -1627,28 +2077,35 @@ def needs_sonar(text):
 
 
 def cache_key(text):
+
     return hashlib.sha256(
-        text.lower().strip().encode(
-            "utf-8"
-        )
+        text.lower()
+        .strip()
+        .encode("utf-8")
     ).hexdigest()
 
 
 def ask_sonar(text):
 
     if not PERPLEXITY_API_KEY:
+
         raise RuntimeError(
             "PERPLEXITY_API_KEY не установлен."
         )
 
     if not PERPLEXITY_MODEL:
+
         raise RuntimeError(
             "PERPLEXITY_MODEL не установлен."
         )
 
-    key = cache_key(text)
+    key = cache_key(
+        text
+    )
 
-    cached = sonar_cache.get(key)
+    cached = sonar_cache.get(
+        key
+    )
 
     if cached:
 
@@ -1661,39 +2118,59 @@ def ask_sonar(text):
             return answer
 
     response = requests.post(
-        "https://api.perplexity.ai/chat/completions",
+
+        "https://api.perplexity.ai/"
+        "chat/completions",
+
         headers={
+
             "Authorization":
                 f"Bearer {PERPLEXITY_API_KEY}",
+
             "Content-Type":
                 "application/json"
         },
+
         json={
-            "model": PERPLEXITY_MODEL,
+
+            "model":
+                PERPLEXITY_MODEL,
+
             "messages": [
+
                 {
-                    "role": "system",
-                    "content": (
+                    "role":
+                        "system",
+
+                    "content":
                         "Найди актуальную информацию "
                         "по вопросу пользователя. "
                         "Если вопрос про Tanks Blitz, "
                         "не смешивай её с World of Tanks PC. "
                         "Не выдумывай данные."
-                    )
                 },
+
                 {
-                    "role": "user",
-                    "content": text
+                    "role":
+                        "user",
+
+                    "content":
+                        text
                 }
             ],
-            "max_tokens": SONAR_MAX_TOKENS
+
+            "max_tokens":
+                SONAR_MAX_TOKENS
         },
+
         timeout=30
     )
 
     if response.status_code != 200:
+
         raise RuntimeError(
-            f"Sonar HTTP {response.status_code}"
+            f"Sonar HTTP "
+            f"{response.status_code}"
         )
 
     data = response.json()
@@ -1706,6 +2183,7 @@ def ask_sonar(text):
     )
 
     if not answer:
+
         raise RuntimeError(
             "Sonar returned empty response."
         )
@@ -1782,6 +2260,7 @@ def get_voice(message):
         if attachment.get(
             "type"
         ) != "audio_message":
+
             continue
 
         audio = attachment.get(
@@ -1794,9 +2273,13 @@ def get_voice(message):
         )
 
         if transcript:
+
             return {
-                "text": transcript.strip(),
-                "url": None
+                "text":
+                    transcript.strip(),
+
+                "url":
+                    None
             }
 
         url = audio.get(
@@ -1804,9 +2287,13 @@ def get_voice(message):
         )
 
         if url:
+
             return {
-                "text": None,
-                "url": url
+                "text":
+                    None,
+
+                "url":
+                    url
             }
 
     return None
@@ -1830,6 +2317,7 @@ def transcribe_voice(url):
             path,
             "wb"
         ) as file:
+
             file.write(data)
 
         with open(
@@ -1848,7 +2336,9 @@ def transcribe_voice(url):
                 )
             )
 
-        return str(result).strip()
+        return str(
+            result
+        ).strip()
 
     finally:
 
@@ -1875,6 +2365,7 @@ def get_image(message):
         if attachment.get(
             "type"
         ) != "photo":
+
             continue
 
         photo = attachment.get(
@@ -1887,7 +2378,9 @@ def get_image(message):
             []
         ):
 
-            url = size.get("url")
+            url = size.get(
+                "url"
+            )
 
             if not url:
                 continue
@@ -1929,27 +2422,78 @@ def analyze_image_then_groq(
         prompt_text
     )
 
-    messages[-1] = {
-        "role": "user",
+    # Находим последнее сообщение пользователя
+    # вместо слепой замены messages[-1].
+    target_index = None
+
+    for index in range(
+        len(messages) - 1,
+        -1,
+        -1
+    ):
+
+        if messages[index].get(
+            "role"
+        ) == "user":
+
+            target_index = index
+            break
+
+    image_message = {
+
+        "role":
+            "user",
+
         "content": [
+
             {
-                "type": "text",
-                "text": prompt_text
+                "type":
+                    "text",
+
+                "text":
+                    prompt_text
             },
+
             {
-                "type": "image_url",
+                "type":
+                    "image_url",
+
                 "image_url": {
-                    "url": image_url
+                    "url":
+                        image_url
                 }
             }
         ]
     }
 
-    completion = groq.chat.completions.create(
-        model=VISION_MODEL,
-        messages=messages,
-        max_tokens=GROQ_MAX_TOKENS
+    if target_index is not None:
+
+        messages[
+            target_index
+        ] = image_message
+
+    else:
+
+        messages.append(
+            image_message
+        )
+
+    completion = (
+        groq
+        .chat
+        .completions
+        .create(
+            model=VISION_MODEL,
+            messages=messages,
+            max_tokens=GROQ_MAX_TOKENS
+        )
     )
+
+    if not completion.choices:
+
+        raise RuntimeError(
+            "Vision returned no choices."
+        )
 
     reply = (
         completion
@@ -1959,6 +2503,7 @@ def analyze_image_then_groq(
     )
 
     if not reply:
+
         raise RuntimeError(
             "Vision returned empty response."
         )
@@ -1967,7 +2512,18 @@ def analyze_image_then_groq(
         r"<think>.*?</think>",
         "",
         reply,
-        flags=re.DOTALL | re.IGNORECASE
+        flags=
+            re.DOTALL
+            | re.IGNORECASE
+    ).strip()
+
+    reply = re.sub(
+        r"<think>.*$",
+        "",
+        reply,
+        flags=
+            re.DOTALL
+            | re.IGNORECASE
     ).strip()
 
     return reply
@@ -1986,14 +2542,27 @@ def send_message(
         return
 
     response = requests.post(
+
         f"{VK_API}/messages.send",
+
         data={
-            "access_token": VK_TOKEN,
-            "v": VK_VERSION,
-            "peer_id": peer_id,
-            "message": text[:4096],
-            "random_id": 0
+
+            "access_token":
+                VK_TOKEN,
+
+            "v":
+                VK_VERSION,
+
+            "peer_id":
+                peer_id,
+
+            "message":
+                text[:4096],
+
+            "random_id":
+                0
         },
+
         timeout=15
     )
 
@@ -2019,6 +2588,7 @@ def register_active_chat(
 ):
 
     with activity_lock:
+
         active_chats[
             str(peer_id)
         ] = time.time()
@@ -2037,34 +2607,43 @@ def activity_loop():
             now = time.time()
 
             with activity_lock:
+
                 chats = dict(
                     active_chats
                 )
 
             for chat_id, last_message in chats.items():
 
-                # Минимум 20 минут тишины
                 if (
                     now - last_message
                     < 20 * 60
                 ):
                     continue
 
-                # Не вмешиваться постоянно
                 with activity_lock:
+
                     active_chats[
                         chat_id
                     ] = now
 
-                # Вероятность самостоятельного
-                # вмешательства небольшая.
                 if random.random() > 0.25:
                     continue
 
                 prompts = [
-                    "В чате давно тихо. Если действительно есть что сказать, придумай одну короткую естественную реплику. Не упоминай игру без причины.",
-                    "Народ давно молчит. Придумай короткую живую фразу, которая могла бы естественно появиться от обычного участника.",
-                    "В чате тишина. Если можешь органично оживить разговор одной короткой репликой — сделай это."
+
+                    "В чате давно тихо. "
+                    "Если действительно есть что сказать, "
+                    "придумай одну короткую естественную реплику. "
+                    "Не упоминай игру без причины.",
+
+                    "Народ давно молчит. "
+                    "Придумай короткую живую фразу, "
+                    "которая могла бы естественно появиться "
+                    "от обычного участника.",
+
+                    "В чате тишина. "
+                    "Если можешь органично оживить разговор "
+                    "одной короткой репликой — сделай это."
                 ]
 
                 prompt = random.choice(
@@ -2094,6 +2673,12 @@ def activity_loop():
                         "Бот",
                         "assistant",
                         reply
+                    )
+
+                    print(
+                        "BOT ACTIVITY:",
+                        reply[:200],
+                        flush=True
                     )
 
                 except Exception as e:
@@ -2133,38 +2718,45 @@ def callback():
             force=True
         )
 
-        # -------------------------------------------------
+        # =================================================
         # SECRET
-        # -------------------------------------------------
+        # =================================================
 
         if (
             VK_GROUP_SECRET
             and data.get("secret")
             != VK_GROUP_SECRET
         ):
-            return "invalid secret", 403
+
+            return (
+                "invalid secret",
+                403
+            )
 
         event_type = data.get(
             "type"
         )
 
-        # -------------------------------------------------
+        # =================================================
         # CONFIRMATION
-        # -------------------------------------------------
+        # =================================================
 
         if event_type == "confirmation":
+
             return VK_CONFIRMATION_CODE
 
         if event_type != "message_new":
+
             return "ok"
 
-        # -------------------------------------------------
+        # =================================================
         # DUPLICATE EVENT
-        # -------------------------------------------------
+        # =================================================
 
         if already_processed(
             data.get("event_id")
         ):
+
             return "ok"
 
         message = data[
@@ -2182,9 +2774,9 @@ def callback():
             or message.get("user_id")
         )
 
-        # -------------------------------------------------
+        # =================================================
         # PRIVATE MESSAGES
-        # -------------------------------------------------
+        # =================================================
 
         if (
             sender_id
@@ -2230,7 +2822,10 @@ def callback():
         if voice:
 
             if voice["text"]:
-                recognized = voice["text"]
+
+                recognized = (
+                    voice["text"]
+                )
 
             else:
 
@@ -2255,7 +2850,6 @@ def callback():
             if not recognized:
                 return "ok"
 
-            # ВСЕГДА сохраняем
             save_chat_message(
                 chat_id,
                 sender_id,
@@ -2268,11 +2862,11 @@ def callback():
                 chat_id
             )
 
-            # Но отвечаем не всегда
             if not should_answer(
                 message,
                 recognized
             ):
+
                 return "ok"
 
             try:
@@ -2292,6 +2886,9 @@ def callback():
                     flush=True
                 )
 
+                return "ok"
+
+            if not reply:
                 return "ok"
 
             save_chat_message(
@@ -2331,12 +2928,14 @@ def callback():
                 chat_id
             )
 
-            # Скриншот сам по себе считается
-            # обращением к боту только если есть текст.
-            if text and not should_answer(
-                message,
+            if (
                 text
+                and not should_answer(
+                    message,
+                    text
+                )
             ):
+
                 return "ok"
 
             try:
@@ -2359,6 +2958,9 @@ def callback():
                     flush=True
                 )
 
+                return "ok"
+
+            if not reply:
                 return "ok"
 
             save_chat_message(
@@ -2485,6 +3087,31 @@ def callback():
 # =========================================================
 
 if __name__ == "__main__":
+
+    print(
+        "========================================",
+        flush=True
+    )
+
+    print(
+        f"🤖 BOT VERSION: {BOT_VERSION}",
+        flush=True
+    )
+
+    print(
+        f"🧠 BUILD: {BOT_BUILD}",
+        flush=True
+    )
+
+    print(
+        "📚 Self-learning: ENABLED",
+        flush=True
+    )
+
+    print(
+        "========================================",
+        flush=True
+    )
 
     activity_thread = threading.Thread(
         target=activity_loop,
