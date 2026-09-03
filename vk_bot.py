@@ -18,24 +18,45 @@ from supabase import create_client
 # =========================================================
 
 BOT_VERSION = "V1.3"
-BOT_BUILD = "Начальное самообучение + Telegram"
+BOT_BUILD = "Начальное самообучение + Telegram + OpenRouter"
 
-VK_TOKEN = os.environ.get("VK_TOKEN", "")
-VK_CONFIRMATION_CODE = os.environ.get("VK_CONFIRMATION_CODE", "")
-VK_GROUP_SECRET = os.environ.get("VK_GROUP_SECRET", "")
+VK_TOKEN = os.environ.get("VK_TOKEN", "").strip()
+VK_CONFIRMATION_CODE = os.environ.get(
+    "VK_CONFIRMATION_CODE", ""
+).strip()
+VK_GROUP_SECRET = os.environ.get(
+    "VK_GROUP_SECRET", ""
+).strip()
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_BOT_TOKEN = os.environ.get(
+    "TELEGRAM_BOT_TOKEN", ""
+).strip()
 
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
-PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "")
-PERPLEXITY_MODEL = os.environ.get("PERPLEXITY_MODEL", "")
+GROQ_API_KEY = os.environ.get(
+    "GROQ_API_KEY", ""
+).strip()
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
-SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY", "").strip()
+OPENROUTER_API_KEY = os.environ.get(
+    "OPENROUTER_API_KEY", ""
+).strip()
 
-if SUPABASE_URL and not SUPABASE_URL.startswith(("http://", "https://")):
+SUPABASE_URL = os.environ.get(
+    "SUPABASE_URL", ""
+).strip()
+
+SUPABASE_SECRET_KEY = os.environ.get(
+    "SUPABASE_SECRET_KEY", ""
+).strip()
+
+if SUPABASE_URL and not SUPABASE_URL.startswith(
+    ("http://", "https://")
+):
     SUPABASE_URL = "https://" + SUPABASE_URL
 
+
+# =========================================================
+# SUPABASE
+# =========================================================
 
 supabase = create_client(
     SUPABASE_URL,
@@ -56,6 +77,10 @@ TELEGRAM_API = (
     else ""
 )
 
+OPENROUTER_API = (
+    "https://openrouter.ai/api/v1/chat/completions"
+)
+
 
 # =========================================================
 # MODELS
@@ -63,6 +88,10 @@ TELEGRAM_API = (
 
 MAIN_MODEL = "openai/gpt-oss-120b"
 BACKUP_MODEL = "openai/gpt-oss-20b"
+
+# Бесплатный резервный роутер OpenRouter.
+OPENROUTER_MODEL = "openrouter/free"
+
 VISION_MODEL = "qwen/qwen3.6-27b"
 WHISPER_MODEL = "whisper-large-v3-turbo"
 
@@ -72,22 +101,31 @@ WHISPER_MODEL = "whisper-large-v3-turbo"
 # =========================================================
 
 GROQ_MAX_TOKENS = 320
-LEARNING_MAX_TOKENS = 400
-SONAR_MAX_TOKENS = 150
+OPENROUTER_MAX_TOKENS = 320
 
-CHAT_MEMORY_LIMIT = 50
-LEARNING_HISTORY_LIMIT = 80
+LEARNING_MAX_TOKENS = 300
 
+# Контекст специально уменьшен для экономии токенов.
+CHAT_MEMORY_LIMIT = 18
+LEARNING_HISTORY_LIMIT = 60
+
+# Обучение каждые 40 сообщений.
 LEARNING_EVERY_MESSAGES = 40
 
-KNOWLEDGE_LIMIT = 20
-USER_MEMORY_LIMIT = 12
+# Количество долговременных знаний в контексте.
+KNOWLEDGE_LIMIT = 8
 
-SONAR_CACHE_TIME = 30 * 60
+# Количество пользовательских фактов.
+USER_MEMORY_LIMIT = 10
+
 NAME_CACHE_TIME = 24 * 60 * 60
 
 EVENT_CACHE_TIME = 30 * 60
 EVENT_CACHE_LIMIT = 2000
+
+# Если модель недоступна для обучения,
+# не долбим её на каждом новом сообщении.
+LEARNING_RETRY_TIME = 10 * 60
 
 
 # =========================================================
@@ -97,18 +135,24 @@ EVENT_CACHE_LIMIT = 2000
 user_names = {}
 tg_user_names = {}
 
-sonar_cache = {}
 processed_events = {}
-
-main_blocked_until = 0
-backup_blocked_until = 0
 
 active_chats = {}
 
 activity_lock = threading.Lock()
 
+# Сюда попадают чаты, где обучение уже выполняется.
 learning_running = set()
+
 learning_lock = threading.Lock()
+
+# Время, до которого обучение этого чата
+# не нужно повторно запускать после ошибки.
+learning_retry_until = {}
+
+# Блокировки Groq.
+main_blocked_until = 0
+backup_blocked_until = 0
 
 TELEGRAM_BOT_ID = None
 TELEGRAM_BOT_USERNAME = ""
@@ -120,7 +164,9 @@ TELEGRAM_BOT_USERNAME = ""
 
 app = Flask(__name__)
 
-groq = Groq(api_key=GROQ_API_KEY)
+groq = Groq(
+    api_key=GROQ_API_KEY
+)
 
 
 # =========================================================
@@ -134,18 +180,20 @@ DEVELOPMENT_STAGES = {
     ),
 
     2: (
-        "Ты уже немного освоился и начинаешь понимать людей, "
-        "шутки и контекст."
+        "Ты уже немного освоился и начинаешь понимать "
+        "людей, шутки и контекст."
     ),
 
     3: (
         "Ты уже свой участник этого чата. "
-        "Хорошо чувствуешь атмосферу и можешь иногда подколоть."
+        "Хорошо чувствуешь атмосферу и можешь иногда "
+        "подколоть."
     ),
 
     4: (
-        "Ты давно в чате. Хорошо понимаешь людей, локальные приколы, "
-        "историю разговоров и атмосферу."
+        "Ты давно в чате. Хорошо понимаешь людей, "
+        "локальные приколы, историю разговоров "
+        "и атмосферу."
     )
 }
 
@@ -158,11 +206,11 @@ SYSTEM_PROMPT = """
 Ты — живой AI-участник общего чата сообщества.
 
 Ты не модератор, не администратор и не сотрудник поддержки.
-Ты обычный участник разговора, который постепенно узнаёт людей
-и атмосферу именно этого чата.
+Ты обычный участник разговора, который постепенно узнаёт
+людей и атмосферу именно этого чата.
 
-Ты учишься через реальные сообщения чата: понимаешь стиль людей,
-темы, шутки, события и игровой контекст.
+Ты учишься через реальные сообщения чата: понимаешь стиль
+людей, темы, шутки, события и игровой контекст.
 
 Долговременная память не является абсолютной истиной.
 Не выдумывай факты.
@@ -175,7 +223,8 @@ SYSTEM_PROMPT = """
 
 Не задавай бессмысленный вопрос.
 
-Если люди уже нормально общаются между собой — не мешай.
+Если люди уже нормально общаются между собой —
+не мешай.
 
 Говори естественно.
 Не пиши как справочная система.
@@ -187,12 +236,12 @@ SYSTEM_PROMPT = """
 
 Tanks Blitz — одна из тем сообщества, но не единственная.
 
-Не придумывай характеристики, карты, события, бонус-коды
-или другие игровые данные.
+Не придумывай характеристики, карты, события,
+бонус-коды или другие игровые данные.
 
 Не смешивай Tanks Blitz с World of Tanks PC.
 
-Если есть актуальные данные из поиска — используй их.
+Если актуальные данные неизвестны — не выдумывай их.
 
 Не раскрывай внутреннюю память.
 
@@ -229,15 +278,15 @@ def utc_now():
 
 def db_chat_id(chat_id):
     """
-    Supabase chat_id = BIGINT.
-
-    VK:
-        2000000001
+    Supabase chat_id имеет тип BIGINT.
 
     Telegram:
         -1002322057644
 
-    В базе всегда храним число.
+    VK:
+        2000000001
+
+    В Supabase всегда передаём число.
     """
     return int(chat_id)
 
@@ -247,6 +296,14 @@ def db_user_id(user_id):
     Supabase user_id / speaker_id = BIGINT.
     """
     return int(user_id)
+
+
+def normalize_text(text):
+    return re.sub(
+        r"\s+",
+        " ",
+        (text or "").strip()
+    )
 
 
 # =========================================================
@@ -260,8 +317,14 @@ def already_processed(event_id):
     now = time.time()
 
     for key in list(processed_events):
-        if now - processed_events[key] > EVENT_CACHE_TIME:
-            processed_events.pop(key, None)
+        if (
+            now - processed_events[key]
+            > EVENT_CACHE_TIME
+        ):
+            processed_events.pop(
+                key,
+                None
+            )
 
     if event_id in processed_events:
         return True
@@ -273,7 +336,11 @@ def already_processed(event_id):
             processed_events,
             key=processed_events.get
         )
-        processed_events.pop(oldest, None)
+
+        processed_events.pop(
+            oldest,
+            None
+        )
 
     return False
 
@@ -293,14 +360,18 @@ def is_rate_limit_error(error):
             "rate_limit_exceeded",
             "tokens per day",
             "tpd",
-            "too many requests"
+            "too many requests",
+            "quota"
         )
     )
 
 
 def get_retry_seconds(error, default):
     match = re.search(
-        r"try again in\s+(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?",
+        r"try again in\s+"
+        r"(?:(\d+)h)?"
+        r"(?:(\d+)m)?"
+        r"(?:(\d+(?:\.\d+)?)s)?",
         str(error),
         re.I
     )
@@ -314,7 +385,10 @@ def get_retry_seconds(error, default):
         + float(match.group(3) or 0)
     )
 
-    return int(total) + 10 if total > 0 else default
+    if total <= 0:
+        return default
+
+    return int(total) + 10
 
 
 # =========================================================
@@ -325,9 +399,15 @@ def get_vk_user_name(user_id):
     if not user_id:
         return None
 
-    cached = user_names.get(str(user_id))
+    cached = user_names.get(
+        str(user_id)
+    )
 
-    if cached and time.time() - cached[0] < NAME_CACHE_TIME:
+    if (
+        cached
+        and time.time() - cached[0]
+        < NAME_CACHE_TIME
+    ):
         return cached[1]
 
     try:
@@ -341,16 +421,19 @@ def get_vk_user_name(user_id):
             timeout=10
         ).json()
 
-        users = data.get("response", [])
+        users = data.get(
+            "response",
+            []
+        )
 
         if not users:
             return None
 
-        u = users[0]
+        user = users[0]
 
         name = (
-            f"{u.get('first_name', '').strip()} "
-            f"{u.get('last_name', '').strip()}"
+            f"{user.get('first_name', '').strip()} "
+            f"{user.get('last_name', '').strip()}"
         ).strip()
 
         if name:
@@ -362,7 +445,12 @@ def get_vk_user_name(user_id):
         return name or None
 
     except Exception as e:
-        print("VK name error:", e, flush=True)
+        print(
+            "VK name error:",
+            e,
+            flush=True
+        )
+
         return None
 
 
@@ -374,11 +462,17 @@ def get_telegram_user_name(user):
     if not user:
         return None
 
-    uid = str(user.get("id", ""))
+    uid = str(
+        user.get("id", "")
+    )
 
     cached = tg_user_names.get(uid)
 
-    if cached and time.time() - cached[0] < NAME_CACHE_TIME:
+    if (
+        cached
+        and time.time() - cached[0]
+        < NAME_CACHE_TIME
+    ):
         return cached[1]
 
     name = (
@@ -387,7 +481,12 @@ def get_telegram_user_name(user):
     ).strip()
 
     if not name:
-        name = user.get("username", "").strip()
+        name = (
+            user.get(
+                "username",
+                ""
+            ).strip()
+        )
 
     if name:
         tg_user_names[uid] = (
@@ -413,14 +512,21 @@ def save_chat_message(
         return
 
     try:
-        database_chat_id = db_chat_id(chat_id)
+        database_chat_id = db_chat_id(
+            chat_id
+        )
 
         database_speaker_id = None
 
         if speaker_id is not None:
             try:
-                database_speaker_id = db_user_id(speaker_id)
-            except (ValueError, TypeError):
+                database_speaker_id = db_user_id(
+                    speaker_id
+                )
+            except (
+                ValueError,
+                TypeError
+            ):
                 database_speaker_id = None
 
         supabase.table(
@@ -430,7 +536,7 @@ def save_chat_message(
             "speaker_id": database_speaker_id,
             "speaker_name": speaker_name or "",
             "role": role,
-            "content": content[:4000]
+            "content": str(content)[:4000]
         }).execute()
 
     except Exception as e:
@@ -446,21 +552,30 @@ def get_chat_memory(
     limit=CHAT_MEMORY_LIMIT
 ):
     try:
-        database_chat_id = db_chat_id(chat_id)
+        database_chat_id = db_chat_id(
+            chat_id
+        )
 
-        r = (
+        result = (
             supabase
             .table("bot_chat_memory")
             .select(
-                "speaker_id, speaker_name, role, content"
+                "speaker_id, speaker_name, "
+                "role, content"
             )
-            .eq("chat_id", database_chat_id)
-            .order("created_at", desc=True)
+            .eq(
+                "chat_id",
+                database_chat_id
+            )
+            .order(
+                "created_at",
+                desc=True
+            )
             .limit(limit)
             .execute()
         )
 
-        rows = r.data or []
+        rows = result.data or []
 
         rows.reverse()
 
@@ -478,9 +593,11 @@ def get_chat_memory(
 
 def get_chat_message_count(chat_id):
     try:
-        database_chat_id = db_chat_id(chat_id)
+        database_chat_id = db_chat_id(
+            chat_id
+        )
 
-        r = (
+        result = (
             supabase
             .table("bot_chat_memory")
             .select(
@@ -488,11 +605,16 @@ def get_chat_message_count(chat_id):
                 count="exact",
                 head=True
             )
-            .eq("chat_id", database_chat_id)
+            .eq(
+                "chat_id",
+                database_chat_id
+            )
             .execute()
         )
 
-        return int(r.count or 0)
+        return int(
+            result.count or 0
+        )
 
     except Exception as e:
         print(
@@ -502,18 +624,6 @@ def get_chat_message_count(chat_id):
         )
 
         return 0
-
-
-# =========================================================
-# TEXT
-# =========================================================
-
-def normalize_text(text):
-    return re.sub(
-        r"\s+",
-        " ",
-        (text or "").strip()
-    )
 
 
 # =========================================================
@@ -527,7 +637,9 @@ def knowledge_fingerprint(
     raw = (
         str(chat_id).strip()
         + "|"
-        + normalize_text(knowledge).lower()
+        + normalize_text(
+            knowledge
+        ).lower()
     )
 
     return hashlib.sha256(
@@ -540,25 +652,35 @@ def save_knowledge(
     knowledge,
     importance=1
 ):
-    knowledge = normalize_text(knowledge)
+    knowledge = normalize_text(
+        knowledge
+    )
 
     if len(knowledge) < 5:
         return
 
-    database_chat_id = db_chat_id(chat_id)
-
-    fingerprint = knowledge_fingerprint(
-        database_chat_id,
-        knowledge
-    )
-
     try:
+        database_chat_id = db_chat_id(
+            chat_id
+        )
+
+        fingerprint = knowledge_fingerprint(
+            database_chat_id,
+            knowledge
+        )
+
         existing = (
             supabase
             .table("bot_knowledge")
             .select("id")
-            .eq("chat_id", database_chat_id)
-            .eq("fingerprint", fingerprint)
+            .eq(
+                "chat_id",
+                database_chat_id
+            )
+            .eq(
+                "fingerprint",
+                fingerprint
+            )
             .limit(1)
             .execute()
         )
@@ -573,7 +695,10 @@ def save_knowledge(
             "knowledge": knowledge[:2000],
             "importance": max(
                 1,
-                min(int(importance), 5)
+                min(
+                    int(importance),
+                    5
+                )
             ),
             "fingerprint": fingerprint
         }).execute()
@@ -594,22 +719,35 @@ def save_knowledge(
 
 def get_knowledge(chat_id):
     try:
-        database_chat_id = db_chat_id(chat_id)
+        database_chat_id = db_chat_id(
+            chat_id
+        )
 
-        r = (
+        result = (
             supabase
             .table("bot_knowledge")
             .select(
                 "knowledge, importance"
             )
-            .eq("chat_id", database_chat_id)
-            .order("importance", desc=True)
-            .order("created_at", desc=True)
-            .limit(KNOWLEDGE_LIMIT)
+            .eq(
+                "chat_id",
+                database_chat_id
+            )
+            .order(
+                "importance",
+                desc=True
+            )
+            .order(
+                "created_at",
+                desc=True
+            )
+            .limit(
+                KNOWLEDGE_LIMIT
+            )
             .execute()
         )
 
-        return r.data or []
+        return result.data or []
 
     except Exception as e:
         print(
@@ -638,19 +776,28 @@ def merge_memory(
             if line.strip()
         )
 
-    new_fact = new_fact.strip("-• \t")
+    new_fact = new_fact.strip(
+        "-• \t"
+    )
 
     if new_fact:
-        facts.append(new_fact)
+        facts.append(
+            new_fact
+        )
 
     result = []
     seen = set()
 
     for fact in facts:
-        n = normalize_text(fact).lower()
+        normalized = normalize_text(
+            fact
+        ).lower()
 
-        if n and n not in seen:
-            seen.add(n)
+        if (
+            normalized
+            and normalized not in seen
+        ):
+            seen.add(normalized)
             result.append(fact)
 
     return "\n".join(
@@ -671,27 +818,45 @@ def save_user_memory(
     ):
         return
 
-    memory = normalize_text(memory)
+    memory = normalize_text(
+        memory
+    )
 
     if len(memory) < 5:
         return
 
     try:
-        database_chat_id = db_chat_id(chat_id)
-        database_user_id = db_user_id(user_id)
+        database_chat_id = db_chat_id(
+            chat_id
+        )
+
+        database_user_id = db_user_id(
+            user_id
+        )
 
         existing = (
             supabase
             .table("bot_users")
-            .select("id, memory")
-            .eq("chat_id", database_chat_id)
-            .eq("user_id", database_user_id)
+            .select(
+                "id, memory"
+            )
+            .eq(
+                "chat_id",
+                database_chat_id
+            )
+            .eq(
+                "user_id",
+                database_user_id
+            )
             .limit(1)
             .execute()
         )
 
-        old = (
-            existing.data[0].get("memory", "")
+        old_memory = (
+            existing.data[0].get(
+                "memory",
+                ""
+            )
             if existing.data
             else ""
         )
@@ -701,13 +866,14 @@ def save_user_memory(
             "user_id": database_user_id,
             "name": name or "",
             "memory": merge_memory(
-                old,
+                old_memory,
                 memory
             )[:3000],
             "updated_at": utc_now()
         }
 
         if existing.data:
+
             (
                 supabase
                 .table("bot_users")
@@ -718,7 +884,9 @@ def save_user_memory(
                 )
                 .execute()
             )
+
         else:
+
             (
                 supabase
                 .table("bot_users")
@@ -727,7 +895,8 @@ def save_user_memory(
             )
 
         print(
-            f"USER MEMORY [{name or user_id}]: "
+            f"USER MEMORY "
+            f"[{name or user_id}]: "
             f"{memory[:150]}",
             flush=True
         )
@@ -748,22 +917,35 @@ def get_user_memory(
         return None
 
     try:
-        database_chat_id = db_chat_id(chat_id)
-        database_user_id = db_user_id(user_id)
+        database_chat_id = db_chat_id(
+            chat_id
+        )
 
-        r = (
+        database_user_id = db_user_id(
+            user_id
+        )
+
+        result = (
             supabase
             .table("bot_users")
-            .select("name, memory")
-            .eq("chat_id", database_chat_id)
-            .eq("user_id", database_user_id)
+            .select(
+                "name, memory"
+            )
+            .eq(
+                "chat_id",
+                database_chat_id
+            )
+            .eq(
+                "user_id",
+                database_user_id
+            )
             .limit(1)
             .execute()
         )
 
         return (
-            r.data[0]
-            if r.data
+            result.data[0]
+            if result.data
             else None
         )
 
@@ -783,19 +965,24 @@ def get_user_memory(
 
 def get_learning_state(chat_id):
     try:
-        database_chat_id = db_chat_id(chat_id)
+        database_chat_id = db_chat_id(
+            chat_id
+        )
 
-        r = (
+        result = (
             supabase
             .table("bot_learning_state")
             .select("*")
-            .eq("chat_id", database_chat_id)
+            .eq(
+                "chat_id",
+                database_chat_id
+            )
             .limit(1)
             .execute()
         )
 
-        if r.data:
-            return r.data[0]
+        if result.data:
+            return result.data[0]
 
         supabase.table(
             "bot_learning_state"
@@ -811,7 +998,8 @@ def get_learning_state(chat_id):
             "chat_id": database_chat_id,
             "messages_since_learning": 0,
             "development_stage": 1,
-            "personality": ""
+            "personality": "",
+            "last_learning_at": utc_now()
         }
 
     except Exception as e:
@@ -830,18 +1018,28 @@ def get_learning_state(chat_id):
 
 
 def increase_learning_counter(chat_id):
-    state = get_learning_state(chat_id)
+    state = get_learning_state(
+        chat_id
+    )
 
-    count = (
-        int(state.get(
+    previous = int(
+        state.get(
             "messages_since_learning",
             0
-        ))
-        + 1
+        )
+    )
+
+    # ВАЖНО:
+    # больше 40 счётчик не растёт.
+    count = min(
+        previous + 1,
+        LEARNING_EVERY_MESSAGES
     )
 
     try:
-        database_chat_id = db_chat_id(chat_id)
+        database_chat_id = db_chat_id(
+            chat_id
+        )
 
         (
             supabase
@@ -866,8 +1064,60 @@ def increase_learning_counter(chat_id):
     return count
 
 
+def reset_learning_counter(chat_id):
+    try:
+        database_chat_id = db_chat_id(
+            chat_id
+        )
+
+        (
+            supabase
+            .table("bot_learning_state")
+            .update({
+                "messages_since_learning": 0
+            })
+            .eq(
+                "chat_id",
+                database_chat_id
+            )
+            .execute()
+        )
+
+    except Exception as e:
+        print(
+            "Learning counter reset error:",
+            e,
+            flush=True
+        )
+
+
 # =========================================================
-# MODEL
+# TEXT CLEANER
+# =========================================================
+
+def clean_model_text(text):
+    if not text:
+        return ""
+
+    text = re.sub(
+        r"<think>.*?</think>",
+        "",
+        str(text),
+        flags=re.DOTALL | re.IGNORECASE
+    )
+
+    text = re.sub(
+        r"<think>.*$",
+        "",
+        text,
+        flags=re.DOTALL | re.IGNORECASE
+    )
+
+    return text.strip()
+
+
+# =========================================================
+# GROQ MODEL
 # =========================================================
 
 def ask_model(
@@ -876,6 +1126,7 @@ def ask_model(
     max_tokens=GROQ_MAX_TOKENS
 ):
     try:
+
         completion = (
             groq.chat.completions.create(
                 model=model,
@@ -887,6 +1138,7 @@ def ask_model(
         )
 
     except Exception:
+
         completion = (
             groq.chat.completions.create(
                 model=model,
@@ -903,6 +1155,7 @@ def ask_model(
     )
 
     if usage:
+
         print(
             "Groq:",
             "prompt=",
@@ -931,11 +1184,13 @@ def ask_model(
             "Groq returned no choices."
         )
 
-    msg = completion.choices[0].message
+    message = (
+        completion.choices[0].message
+    )
 
     reply = clean_model_text(
         getattr(
-            msg,
+            message,
             "content",
             None
         ) or ""
@@ -944,18 +1199,142 @@ def ask_model(
     if reply:
         return reply
 
-    if getattr(
-        msg,
-        "reasoning",
-        None
-    ):
-        print(
-            "Groq DEBUG: empty content, reasoning returned.",
-            flush=True
-        )
-
     raise RuntimeError(
         "Groq returned empty final response."
+    )
+
+
+# =========================================================
+# OPENROUTER
+# =========================================================
+
+def ask_openrouter_messages(
+    messages,
+    max_tokens=OPENROUTER_MAX_TOKENS,
+    label="OpenRouter"
+):
+    """
+    Универсальный вызов OpenRouter.
+
+    Используется только когда Groq не может ответить.
+    """
+
+    if not OPENROUTER_API_KEY:
+        raise RuntimeError(
+            "OPENROUTER_API_KEY не установлен."
+        )
+
+    response = requests.post(
+        OPENROUTER_API,
+        headers={
+            "Authorization":
+                f"Bearer {OPENROUTER_API_KEY}",
+
+            "Content-Type":
+                "application/json",
+
+            "HTTP-Referer":
+                "https://vk-bot-1-khev.onrender.com",
+
+            "X-Title":
+                "Tanks Blitz AI"
+        },
+        json={
+            "model":
+                OPENROUTER_MODEL,
+
+            "messages":
+                messages,
+
+            "max_tokens":
+                max_tokens,
+
+            "stream":
+                False
+        },
+        timeout=60
+    )
+
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"{label} HTTP "
+            f"{response.status_code}: "
+            f"{response.text[:500]}"
+        )
+
+    try:
+        data = response.json()
+    except Exception as e:
+        raise RuntimeError(
+            f"{label} invalid JSON: {e}"
+        )
+
+    choices = data.get(
+        "choices"
+    ) or []
+
+    if not choices:
+        raise RuntimeError(
+            f"{label} returned no choices."
+        )
+
+    message = (
+        choices[0].get(
+            "message"
+        )
+        or {}
+    )
+
+    reply = clean_model_text(
+        message.get(
+            "content",
+            ""
+        ) or ""
+    )
+
+    if not reply:
+        raise RuntimeError(
+            f"{label} returned empty response."
+        )
+
+    usage = (
+        data.get("usage")
+        or {}
+    )
+
+    print(
+        f"{label}:",
+        "model=",
+        data.get("model"),
+        "prompt=",
+        usage.get("prompt_tokens"),
+        "completion=",
+        usage.get("completion_tokens"),
+        "total=",
+        usage.get("total_tokens"),
+        flush=True
+    )
+
+    return reply
+
+
+def ask_openrouter(
+    chat_id,
+    text,
+    user_id,
+    user_name
+):
+    messages = build_chat_context(
+        chat_id,
+        user_id,
+        user_name,
+        text
+    )
+
+    return ask_openrouter_messages(
+        messages,
+        OPENROUTER_MAX_TOKENS,
+        "OpenRouter"
     )
 
 
@@ -967,10 +1346,16 @@ def ask_learning_model(messages):
     global main_blocked_until
     global backup_blocked_until
 
+    # -----------------------------------------
+    # Сначала Groq 20B
+    # -----------------------------------------
+
     now = time.time()
 
     if now >= backup_blocked_until:
+
         try:
+
             print(
                 "Learning Groq -> 20B",
                 flush=True
@@ -983,10 +1368,15 @@ def ask_learning_model(messages):
             )
 
         except Exception as e:
+
             if is_rate_limit_error(e):
+
                 backup_blocked_until = (
                     time.time()
-                    + get_retry_seconds(e, 600)
+                    + get_retry_seconds(
+                        e,
+                        600
+                    )
                 )
 
             print(
@@ -995,8 +1385,14 @@ def ask_learning_model(messages):
                 flush=True
             )
 
+    # -----------------------------------------
+    # Затем Groq 120B
+    # -----------------------------------------
+
     if time.time() >= main_blocked_until:
+
         try:
+
             print(
                 "Learning Groq -> 120B",
                 flush=True
@@ -1009,10 +1405,15 @@ def ask_learning_model(messages):
             )
 
         except Exception as e:
+
             if is_rate_limit_error(e):
+
                 main_blocked_until = (
                     time.time()
-                    + get_retry_seconds(e, 3600)
+                    + get_retry_seconds(
+                        e,
+                        3600
+                    )
                 )
 
             print(
@@ -1021,8 +1422,35 @@ def ask_learning_model(messages):
                 flush=True
             )
 
+    # -----------------------------------------
+    # Последний резерв — OpenRouter Free
+    # -----------------------------------------
+
+    if OPENROUTER_API_KEY:
+
+        try:
+
+            print(
+                "Learning -> OpenRouter FREE",
+                flush=True
+            )
+
+            return ask_openrouter_messages(
+                messages,
+                LEARNING_MAX_TOKENS,
+                "OpenRouter Learning"
+            )
+
+        except Exception as e:
+
+            print(
+                "OpenRouter learning error:",
+                e,
+                flush=True
+            )
+
     raise RuntimeError(
-        "Модели Groq недоступны для обучения."
+        "Все модели временно недоступны для обучения."
     )
 
 
@@ -1031,18 +1459,18 @@ def ask_learning_model(messages):
 # =========================================================
 
 def perform_learning(chat_id):
-    with learning_lock:
-        if chat_id in learning_running:
-            print(
-                f"LEARNING SKIP | already running | chat={chat_id}",
-                flush=True
-            )
-            return
+    """
+    Здесь НЕ захватываем learning_lock для запуска.
 
-        learning_running.add(chat_id)
+    maybe_learn() уже гарантирует, что второй поток
+    для этого чата не стартует.
+    """
 
     try:
-        state = get_learning_state(chat_id)
+
+        state = get_learning_state(
+            chat_id
+        )
 
         history = get_chat_memory(
             chat_id,
@@ -1050,23 +1478,37 @@ def perform_learning(chat_id):
         )
 
         if len(history) < 10:
+
             print(
-                f"LEARNING WAIT | history={len(history)}",
+                f"LEARNING WAIT | "
+                f"history={len(history)}",
                 flush=True
             )
+
+            # Если истории мало, не оставляем
+            # вечный блок.
+            reset_learning_counter(
+                chat_id
+            )
+
             return
 
         text_parts = []
         known_names = {}
 
         for item in history:
+
             name = (
-                item.get("speaker_name")
+                item.get(
+                    "speaker_name"
+                )
                 or "Участник"
             )
 
             uid = str(
-                item.get("speaker_id")
+                item.get(
+                    "speaker_id"
+                )
                 or ""
             )
 
@@ -1077,35 +1519,49 @@ def perform_learning(chat_id):
                 known_names[uid] = name
 
             content = (
-                item.get("content")
+                item.get(
+                    "content"
+                )
                 or ""
             )
 
             if content:
+
                 text_parts.append(
                     f"[ID:{uid}] "
                     f"{name}: "
                     f"{content}"
                 )
 
-        prompt = f"""
-Ты — модуль долговременного обучения AI-участника
-конкретного чата.
+        if not text_parts:
+            return
 
-Найди только информацию, полезную для будущего
-понимания этого чата.
+        prompt = f"""
+Ты — модуль долговременного обучения
+AI-участника конкретного чата.
+
+Проанализируй реальные сообщения ниже.
+
+Найди только информацию, которая действительно
+может быть полезна AI в будущем.
 
 Ищи:
+
 - явные факты об участниках;
-- интересы;
+- устойчивые интересы;
 - устойчивые привычки общения;
 - локальные шутки;
 - важные события;
-- полезный контекст по Tanks Blitz.
+- полезный контекст по Tanks Blitz;
+- правила или особенности этого конкретного чата,
+  если они явно присутствуют в сообщениях.
 
 НЕ придумывай.
 
+Не превращай предположение в факт.
+
 Не сохраняй:
+
 - случайную болтовню;
 - одноразовые эмоции;
 - пароли;
@@ -1122,9 +1578,9 @@ USER|ID|Факт
 
 CHAT|Факт|важность
 
-Важность 1-5.
+Важность от 1 до 5.
 
-Если полезного нет:
+Если полезной информации нет:
 
 NONE
 
@@ -1140,7 +1596,9 @@ NONE
                     "content": (
                         "Ты аккуратный модуль "
                         "долговременного обучения. "
-                        "Не придумывай факты."
+                        "Работай только с фактами "
+                        "из предоставленных сообщений. "
+                        "Не придумывай."
                     )
                 },
                 {
@@ -1159,14 +1617,19 @@ NONE
 
                 line = raw.strip()
 
+                if not line:
+                    continue
+
                 if line.upper() == "NONE":
                     continue
 
-                # -----------------------------------------
+                # =========================================
                 # USER MEMORY
-                # -----------------------------------------
+                # =========================================
 
-                if line.startswith("USER|"):
+                if line.startswith(
+                    "USER|"
+                ):
 
                     parts = line.split(
                         "|",
@@ -1182,33 +1645,34 @@ NONE
                     fact = fact.strip()
 
                     try:
-                        int(uid)
+                        numeric_uid = int(uid)
                     except (
                         ValueError,
                         TypeError
                     ):
                         continue
 
-                    # ВАЖНО:
-                    # Здесь больше НЕ вызываем VK API
-                    # для Telegram пользователей.
-                    #
-                    # Имя берём только из истории чата.
+                    if not fact:
+                        continue
 
-                    name = known_names.get(uid)
+                    name = known_names.get(
+                        str(numeric_uid)
+                    )
 
                     save_user_memory(
                         chat_id,
-                        uid,
+                        numeric_uid,
                         name,
                         fact
                     )
 
-                # -----------------------------------------
+                # =========================================
                 # CHAT KNOWLEDGE
-                # -----------------------------------------
+                # =========================================
 
-                elif line.startswith("CHAT|"):
+                elif line.startswith(
+                    "CHAT|"
+                ):
 
                     parts = line.split(
                         "|",
@@ -1220,6 +1684,11 @@ NONE
 
                     _, fact, importance = parts
 
+                    fact = fact.strip()
+
+                    if not fact:
+                        continue
+
                     try:
                         importance = int(
                             importance.strip()
@@ -1229,13 +1698,13 @@ NONE
 
                     save_knowledge(
                         chat_id,
-                        fact.strip(),
+                        fact,
                         importance
                     )
 
-        # -----------------------------------------
+        # =========================================
         # DEVELOPMENT STAGE
-        # -----------------------------------------
+        # =========================================
 
         stage = int(
             state.get(
@@ -1276,6 +1745,13 @@ NONE
             .execute()
         )
 
+        # После успешного обучения
+        # разрешаем следующие 40 сообщений.
+        learning_retry_until.pop(
+            chat_id,
+            None
+        )
+
         print(
             f"🧠 LEARNING COMPLETE | "
             f"version={BOT_VERSION} | "
@@ -1286,6 +1762,17 @@ NONE
         )
 
     except Exception as e:
+
+        # Если модели были недоступны,
+        # оставляем 40/40.
+        #
+        # Через 10 минут будет разрешена
+        # следующая попытка.
+
+        learning_retry_until[
+            chat_id
+        ] = time.time() + LEARNING_RETRY_TIME
+
         print(
             "Learning error:",
             e,
@@ -1293,8 +1780,11 @@ NONE
         )
 
     finally:
+
         with learning_lock:
-            learning_running.discard(chat_id)
+            learning_running.discard(
+                chat_id
+            )
 
 
 def maybe_learn(chat_id):
@@ -1312,9 +1802,26 @@ def maybe_learn(chat_id):
     if count < LEARNING_EVERY_MESSAGES:
         return
 
+    # Если недавно уже была неудачная попытка,
+    # просто ждём.
+    retry_until = learning_retry_until.get(
+        chat_id,
+        0
+    )
+
+    if time.time() < retry_until:
+        return
+
+    # ВАЖНО:
+    # блокируем чат ДО запуска потока.
     with learning_lock:
+
         if chat_id in learning_running:
             return
+
+        learning_running.add(
+            chat_id
+        )
 
     threading.Thread(
         target=perform_learning,
@@ -1340,6 +1847,10 @@ def build_chat_context(
         }
     ]
 
+    # =========================================
+    # DEVELOPMENT STAGE
+    # =========================================
+
     state = get_learning_state(
         chat_id
     )
@@ -1362,34 +1873,56 @@ def build_chat_context(
         )
     })
 
+    # =========================================
+    # CHAT KNOWLEDGE
+    # =========================================
+
     knowledge = get_knowledge(
         chat_id
     )
 
     if knowledge:
 
-        k = "\n".join(
-            f"- {x.get('knowledge', '')}"
-            for x in knowledge
-            if x.get("knowledge")
-        )
+        lines = []
 
-        if k:
+        for item in knowledge:
+
+            value = (
+                item.get(
+                    "knowledge"
+                )
+                or ""
+            ).strip()
+
+            if value:
+                lines.append(
+                    f"- {value}"
+                )
+
+        if lines:
+
             messages.append({
                 "role": "system",
                 "content": (
-                    "Полезная долговременная память "
-                    "этого конкретного чата:\n"
-                    + k
+                    "Полезная долговременная "
+                    "память этого конкретного чата:\n"
+                    + "\n".join(lines)
                 )
             })
+
+    # =========================================
+    # USER MEMORY
+    # =========================================
 
     personal = get_user_memory(
         chat_id,
         user_id
     )
 
-    if personal and personal.get("memory"):
+    if (
+        personal
+        and personal.get("memory")
+    ):
 
         messages.append({
             "role": "system",
@@ -1400,6 +1933,10 @@ def build_chat_context(
             )
         })
 
+    # =========================================
+    # RECENT CHAT
+    # =========================================
+
     history = get_chat_memory(
         chat_id,
         CHAT_MEMORY_LIMIT
@@ -1409,10 +1946,14 @@ def build_chat_context(
 
     for item in history:
 
-        role = item.get("role")
+        role = item.get(
+            "role"
+        )
 
         content = (
-            item.get("content")
+            item.get(
+                "content"
+            )
             or ""
         )
 
@@ -1420,12 +1961,16 @@ def build_chat_context(
             continue
 
         name = (
-            item.get("speaker_name")
+            item.get(
+                "speaker_name"
+            )
             or "Участник"
         )
 
         sid = str(
-            item.get("speaker_id")
+            item.get(
+                "speaker_id"
+            )
             or ""
         )
 
@@ -1451,6 +1996,10 @@ def build_chat_context(
                 "role": "assistant",
                 "content": content
             })
+
+    # =========================================
+    # CURRENT MESSAGE
+    # =========================================
 
     if not current_saved:
 
@@ -1494,9 +2043,9 @@ def looks_like_question(text):
         "?" in low
         or any(
             low.startswith(
-                w + " "
+                word + " "
             )
-            for w in QUESTION_WORDS
+            for word in QUESTION_WORDS
         )
     )
 
@@ -1530,8 +2079,8 @@ def is_directed_to_bot_vk(
         return True
 
     return any(
-        w in low
-        for w in (
+        word in low
+        for word in (
             "бот",
             "бонус-коды",
             "бонус коды",
@@ -1571,14 +2120,16 @@ def is_directed_to_bot_telegram(
 
     if (
         TELEGRAM_BOT_USERNAME
-        and f"@{TELEGRAM_BOT_USERNAME.lower()}"
-        in low
+        and (
+            f"@{TELEGRAM_BOT_USERNAME.lower()}"
+            in low
+        )
     ):
         return True
 
     return any(
-        w in low
-        for w in (
+        word in low
+        for word in (
             "бот",
             "эй бот",
             "бонус-коды",
@@ -1642,32 +2193,71 @@ def should_answer(
 
 
 # =========================================================
-# CLEAN AI TEXT
+# AI ROUTER
 # =========================================================
 
-def clean_model_text(text):
-    if not text:
-        return ""
+def ask_ai(
+    chat_id,
+    text,
+    user_id,
+    user_name
+):
+    """
+    Основной маршрут:
 
-    text = re.sub(
-        r"<think>.*?</think>",
-        "",
-        str(text),
-        flags=re.DOTALL | re.IGNORECASE
-    )
+        Groq 120B
+            ↓
+        Groq 20B
+            ↓
+        OpenRouter Free
 
-    text = re.sub(
-        r"<think>.*$",
-        "",
-        text,
-        flags=re.DOTALL | re.IGNORECASE
-    )
+    OpenRouter не вызывается,
+    пока Groq работает.
+    """
 
-    return text.strip()
+    try:
+
+        return ask_groq(
+            chat_id,
+            text,
+            user_id,
+            user_name
+        )
+
+    except Exception as groq_error:
+
+        print(
+            "Groq final error, "
+            "trying OpenRouter FREE:",
+            groq_error,
+            flush=True
+        )
+
+        try:
+
+            return ask_openrouter(
+                chat_id,
+                text,
+                user_id,
+                user_name
+            )
+
+        except Exception as openrouter_error:
+
+            print(
+                "OpenRouter final error:",
+                openrouter_error,
+                flush=True
+            )
+
+            raise RuntimeError(
+                "Все текстовые AI "
+                "временно недоступны."
+            )
 
 
 # =========================================================
-# GROQ
+# GROQ CHAT
 # =========================================================
 
 def ask_groq(
@@ -1688,9 +2278,14 @@ def ask_groq(
 
     now = time.time()
 
+    # =========================================
+    # 120B
+    # =========================================
+
     if now >= main_blocked_until:
 
         try:
+
             print(
                 "Groq -> 120B",
                 flush=True
@@ -1698,12 +2293,14 @@ def ask_groq(
 
             return ask_model(
                 MAIN_MODEL,
-                messages
+                messages,
+                GROQ_MAX_TOKENS
             )
 
         except Exception as e:
 
             if is_rate_limit_error(e):
+
                 main_blocked_until = (
                     time.time()
                     + get_retry_seconds(
@@ -1721,14 +2318,20 @@ def ask_groq(
     else:
 
         print(
-            f"120B blocked | retry in "
-            f"~{int(main_blocked_until-time.time())} sec",
+            f"120B blocked | "
+            f"retry in ~"
+            f"{max(0, int(main_blocked_until-time.time()))} sec",
             flush=True
         )
+
+    # =========================================
+    # 20B
+    # =========================================
 
     if time.time() >= backup_blocked_until:
 
         try:
+
             print(
                 "Groq -> 20B",
                 flush=True
@@ -1736,12 +2339,14 @@ def ask_groq(
 
             return ask_model(
                 BACKUP_MODEL,
-                messages
+                messages,
+                GROQ_MAX_TOKENS
             )
 
         except Exception as e:
 
             if is_rate_limit_error(e):
+
                 backup_blocked_until = (
                     time.time()
                     + get_retry_seconds(
@@ -1759,8 +2364,9 @@ def ask_groq(
     else:
 
         print(
-            f"20B blocked | retry in "
-            f"~{int(backup_blocked_until-time.time())} sec",
+            f"20B blocked | "
+            f"retry in ~"
+            f"{max(0, int(backup_blocked_until-time.time()))} sec",
             flush=True
         )
 
@@ -1770,257 +2376,46 @@ def ask_groq(
 
 
 # =========================================================
-# SONAR
-# =========================================================
-
-WEB_WORDS = (
-    "характеристик",
-    "урон",
-    "брон",
-    "скорост",
-    "точност",
-    "перезаряд",
-    "хп",
-    "пробит",
-    "калибр",
-    "оруд",
-    "танк",
-    "танка",
-    "танке",
-    "танков",
-    "ветк",
-    "прокач",
-    "обновлен",
-    "обновление",
-    "патч",
-    "ивент",
-    "событи",
-    "новый танк",
-    "новые танки",
-    "актуальн",
-    "сейчас",
-    "сегодня",
-    "последн",
-    "добавили",
-    "убрали",
-    "изменили",
-    "нерф",
-    "бафф",
-    "промокод",
-    "бонус код",
-    "бонус-код",
-    "код"
-)
-
-
-def needs_sonar(text):
-    return any(
-        w in text.lower()
-        for w in WEB_WORDS
-    )
-
-
-def cache_key(text):
-    return hashlib.sha256(
-        text.lower()
-        .strip()
-        .encode("utf-8")
-    ).hexdigest()
-
-
-def ask_sonar(text):
-
-    if (
-        not PERPLEXITY_API_KEY
-        or not PERPLEXITY_MODEL
-    ):
-        raise RuntimeError(
-            "Perplexity не настроен."
-        )
-
-    key = cache_key(text)
-
-    cached = sonar_cache.get(key)
-
-    if (
-        cached
-        and time.time() - cached[0]
-        < SONAR_CACHE_TIME
-    ):
-        return cached[1]
-
-    r = requests.post(
-        "https://api.perplexity.ai/chat/completions",
-
-        headers={
-            "Authorization":
-                f"Bearer {PERPLEXITY_API_KEY}",
-            "Content-Type":
-                "application/json"
-        },
-
-        json={
-            "model": PERPLEXITY_MODEL,
-
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "Найди актуальную информацию "
-                        "по вопросу. Если вопрос про "
-                        "Tanks Blitz, не смешивай с "
-                        "World of Tanks PC. "
-                        "Не выдумывай данные."
-                    )
-                },
-
-                {
-                    "role": "user",
-                    "content": text
-                }
-            ],
-
-            "max_tokens":
-                SONAR_MAX_TOKENS
-        },
-
-        timeout=30
-    )
-
-    if r.status_code != 200:
-        raise RuntimeError(
-            f"Sonar HTTP {r.status_code}"
-        )
-
-    answer = (
-        r.json()
-        .get("choices", [{}])[0]
-        .get("message", {})
-        .get("content")
-        or ""
-    ).strip()
-
-    if not answer:
-        raise RuntimeError(
-            "Sonar returned empty response."
-        )
-
-    answer = answer[:4000]
-
-    sonar_cache[key] = (
-        time.time(),
-        answer
-    )
-
-    return answer
-
-
-# =========================================================
-# AI ROUTER
-# =========================================================
-
-def ask_ai(
-    chat_id,
-    text,
-    user_id,
-    user_name
-):
-    if needs_sonar(text):
-
-        try:
-
-            found = ask_sonar(text)
-
-            prompt = f"""
-Сообщение пользователя:
-{text}
-
-Актуальная информация:
-{found}
-
-Ответь естественно, как участник чата.
-
-Не упоминай API, Sonar или Perplexity.
-"""
-
-            try:
-
-                return ask_groq(
-                    chat_id,
-                    prompt,
-                    user_id,
-                    user_name
-                )
-
-            except Exception as e:
-
-                print(
-                    "Groq after Sonar error:",
-                    e,
-                    flush=True
-                )
-
-                return found
-
-        except Exception as e:
-
-            print(
-                "Sonar error:",
-                e,
-                flush=True
-            )
-
-    try:
-
-        return ask_groq(
-            chat_id,
-            text,
-            user_id,
-            user_name
-        )
-
-    except Exception as groq_error:
-
-        print(
-            "Groq final error, "
-            "trying Sonar:",
-            groq_error,
-            flush=True
-        )
-
-        return ask_sonar(text)
-
-
-# =========================================================
 # VK VOICE
 # =========================================================
 
 def get_voice_vk(message):
 
-    for a in message.get(
+    for attachment in message.get(
         "attachments",
         []
     ):
 
-        if a.get("type") != "audio_message":
+        if attachment.get(
+            "type"
+        ) != "audio_message":
             continue
 
-        audio = a.get(
+        audio = attachment.get(
             "audio_message",
             {}
         )
 
-        if audio.get("transcript"):
+        if audio.get(
+            "transcript"
+        ):
+
             return {
                 "text":
                     audio["transcript"].strip(),
+
                 "url":
                     None
             }
 
-        if audio.get("link_ogg"):
+        if audio.get(
+            "link_ogg"
+        ):
+
             return {
-                "text": None,
+                "text":
+                    None,
+
                 "url":
                     audio["link_ogg"]
             }
@@ -2030,14 +2425,18 @@ def get_voice_vk(message):
 
 def transcribe_voice(url):
 
-    data = requests.get(
+    response = requests.get(
         url,
         timeout=30
-    ).content
+    )
+
+    response.raise_for_status()
+
+    data = response.content
 
     path = (
         f"/tmp/voice_"
-        f"{int(time.time()*1000)}.ogg"
+        f"{int(time.time() * 1000)}.ogg"
     )
 
     try:
@@ -2045,17 +2444,17 @@ def transcribe_voice(url):
         with open(
             path,
             "wb"
-        ) as f:
-            f.write(data)
+        ) as file:
+            file.write(data)
 
         with open(
             path,
             "rb"
-        ) as f:
+        ) as file:
 
             result = (
                 groq.audio.transcriptions.create(
-                    file=f,
+                    file=file,
                     model=WHISPER_MODEL,
                     response_format="text"
                 )
@@ -2080,32 +2479,40 @@ def get_image_vk(message):
     best = None
     area = 0
 
-    for a in message.get(
+    for attachment in message.get(
         "attachments",
         []
     ):
 
-        if a.get("type") != "photo":
+        if attachment.get(
+            "type"
+        ) != "photo":
             continue
 
-        for s in a.get(
-            "photo",
-            {}
-        ).get(
-            "sizes",
-            []
-        ):
+        sizes = (
+            attachment
+            .get("photo", {})
+            .get("sizes", [])
+        )
 
-            url = s.get("url")
+        for size in sizes:
 
-            ar = (
-                s.get("width", 0)
-                * s.get("height", 0)
+            url = size.get(
+                "url"
             )
 
-            if url and ar > area:
+            current_area = (
+                size.get("width", 0)
+                * size.get("height", 0)
+            )
+
+            if (
+                url
+                and current_area > area
+            ):
+
                 best = url
-                area = ar
+                area = current_area
 
     return best
 
@@ -2134,14 +2541,17 @@ def analyze_image_then_groq(
 
     target = None
 
-    for i in range(
+    for index in range(
         len(messages) - 1,
         -1,
         -1
     ):
 
-        if messages[i].get("role") == "user":
-            target = i
+        if messages[index].get(
+            "role"
+        ) == "user":
+
+            target = index
             break
 
     image_message = {
@@ -2169,29 +2579,33 @@ def analyze_image_then_groq(
 
     try:
 
-        c = groq.chat.completions.create(
-            model=VISION_MODEL,
-            messages=messages,
-            max_completion_tokens=GROQ_MAX_TOKENS,
-            reasoning_effort="none"
+        completion = (
+            groq.chat.completions.create(
+                model=VISION_MODEL,
+                messages=messages,
+                max_completion_tokens=GROQ_MAX_TOKENS,
+                reasoning_effort="none"
+            )
         )
 
     except Exception:
 
-        c = groq.chat.completions.create(
-            model=VISION_MODEL,
-            messages=messages,
-            max_tokens=GROQ_MAX_TOKENS
+        completion = (
+            groq.chat.completions.create(
+                model=VISION_MODEL,
+                messages=messages,
+                max_tokens=GROQ_MAX_TOKENS
+            )
         )
 
-    if not c.choices:
+    if not completion.choices:
         raise RuntimeError(
             "Vision returned no choices."
         )
 
     reply = clean_model_text(
         getattr(
-            c.choices[0].message,
+            completion.choices[0].message,
             "content",
             None
         ) or ""
@@ -2216,28 +2630,22 @@ def send_message(
     if not text:
         return
 
-    r = requests.post(
+    response = requests.post(
         f"{VK_API}/messages.send",
-
         data={
-            "access_token":
-                VK_TOKEN,
-            "v":
-                VK_VERSION,
-            "peer_id":
-                int(peer_id),
-            "message":
-                text[:4096],
-            "random_id":
-                0
+            "access_token": VK_TOKEN,
+            "v": VK_VERSION,
+            "peer_id": int(peer_id),
+            "message": text[:4096],
+            "random_id": 0
         },
-
         timeout=15
     )
 
-    result = r.json()
+    result = response.json()
 
     if "error" in result:
+
         print(
             "VK send error:",
             result["error"],
@@ -2260,20 +2668,23 @@ def telegram_call(
             "TELEGRAM_BOT_TOKEN не установлен"
         )
 
-    r = requests.post(
+    response = requests.post(
         f"{TELEGRAM_API}/{method}",
         json=kwargs,
         timeout=30
     )
 
-    data = r.json()
+    data = response.json()
 
     if not data.get("ok"):
+
         raise RuntimeError(
             f"Telegram {method}: {data}"
         )
 
-    return data.get("result")
+    return data.get(
+        "result"
+    )
 
 
 def send_telegram_message(
@@ -2291,6 +2702,7 @@ def send_telegram_message(
     }
 
     if reply_to_message_id:
+
         payload["reply_parameters"] = {
             "message_id":
                 int(reply_to_message_id)
@@ -2310,14 +2722,16 @@ def register_active_chat(
     platform,
     peer_id
 ):
-    # Это внутренний ключ.
+    # Только внутренний ключ.
     #
-    # Он МОЖЕТ быть:
+    # Например:
     # telegram:-1002322057644
     #
-    # В Supabase такой ключ НЕ используется.
+    # В Supabase он никогда не используется.
 
-    key = f"{platform}:{peer_id}"
+    key = (
+        f"{platform}:{peer_id}"
+    )
 
     with activity_lock:
 
@@ -2339,6 +2753,7 @@ def send_platform_message(
     text
 ):
     if platform == "vk":
+
         return send_message(
             int(peer_id),
             text
@@ -2378,7 +2793,16 @@ def activity_loop():
                 with activity_lock:
 
                     if key in active_chats:
-                        active_chats[key]["last"] = now
+
+                        active_chats[key][
+                            "last"
+                        ] = now
+
+                # Активность специально
+                # остаётся только на Groq.
+                #
+                # Не тратим резерв OpenRouter
+                # на искусственные сообщения.
 
                 if random.random() > 0.25:
                     continue
@@ -2406,18 +2830,6 @@ def activity_loop():
                 ])
 
                 try:
-
-                    # =================================================
-                    # ВАЖНОЕ ИСПРАВЛЕНИЕ
-                    #
-                    # Для Supabase используем только числовой ID.
-                    #
-                    # НЕ:
-                    # tg:-1002322057644
-                    #
-                    # А:
-                    # -1002322057644
-                    # =================================================
 
                     activity_chat_id = int(
                         item["peer_id"]
@@ -2501,25 +2913,28 @@ def download_telegram_file(
         file_id=file_id
     )
 
-    path = info.get(
+    file_path = info.get(
         "file_path"
     )
 
-    if not path:
+    if not file_path:
         raise RuntimeError(
             "Telegram file_path missing"
         )
 
-    r = requests.get(
+    response = requests.get(
         f"https://api.telegram.org/"
         f"file/bot{TELEGRAM_BOT_TOKEN}/"
-        f"{path}",
+        f"{file_path}",
         timeout=60
     )
 
-    r.raise_for_status()
+    response.raise_for_status()
 
-    return r.content, path
+    return (
+        response.content,
+        file_path
+    )
 
 
 def transcribe_telegram_voice(
@@ -2531,7 +2946,7 @@ def transcribe_telegram_voice(
         )
     )
 
-    ext = (
+    extension = (
         os.path.splitext(
             file_path
         )[1]
@@ -2540,8 +2955,8 @@ def transcribe_telegram_voice(
 
     path = (
         f"/tmp/tg_voice_"
-        f"{int(time.time()*1000)}"
-        f"{ext}"
+        f"{int(time.time() * 1000)}"
+        f"{extension}"
     )
 
     try:
@@ -2549,17 +2964,17 @@ def transcribe_telegram_voice(
         with open(
             path,
             "wb"
-        ) as f:
-            f.write(data)
+        ) as file:
+            file.write(data)
 
         with open(
             path,
             "rb"
-        ) as f:
+        ) as file:
 
             result = (
                 groq.audio.transcriptions.create(
-                    file=f,
+                    file=file,
                     model=WHISPER_MODEL,
                     response_format="text"
                 )
@@ -2590,9 +3005,6 @@ def telegram_photo_data_url(
     if not photos:
         return None
 
-    # Берём самый большой доступный
-    # вариант Telegram.
-
     photo = photos[-1]
 
     data, _ = (
@@ -2602,6 +3014,7 @@ def telegram_photo_data_url(
     )
 
     if len(data) > 8 * 1024 * 1024:
+
         raise RuntimeError(
             "Telegram image is too large"
         )
@@ -2638,14 +3051,17 @@ def analyze_telegram_image_then_groq(
 
     target = None
 
-    for i in range(
+    for index in range(
         len(messages) - 1,
         -1,
         -1
     ):
 
-        if messages[i].get("role") == "user":
-            target = i
+        if messages[index].get(
+            "role"
+        ) == "user":
+
+            target = index
             break
 
     image_message = {
@@ -2673,35 +3089,41 @@ def analyze_telegram_image_then_groq(
 
     try:
 
-        c = groq.chat.completions.create(
-            model=VISION_MODEL,
-            messages=messages,
-            max_completion_tokens=GROQ_MAX_TOKENS,
-            reasoning_effort="none"
+        completion = (
+            groq.chat.completions.create(
+                model=VISION_MODEL,
+                messages=messages,
+                max_completion_tokens=GROQ_MAX_TOKENS,
+                reasoning_effort="none"
+            )
         )
 
     except Exception:
 
-        c = groq.chat.completions.create(
-            model=VISION_MODEL,
-            messages=messages,
-            max_tokens=GROQ_MAX_TOKENS
+        completion = (
+            groq.chat.completions.create(
+                model=VISION_MODEL,
+                messages=messages,
+                max_tokens=GROQ_MAX_TOKENS
+            )
         )
 
-    if not c.choices:
+    if not completion.choices:
+
         raise RuntimeError(
             "Telegram vision returned no choices"
         )
 
     reply = clean_model_text(
         getattr(
-            c.choices[0].message,
+            completion.choices[0].message,
             "content",
             None
         ) or ""
     )
 
     if not reply:
+
         raise RuntimeError(
             "Telegram vision returned empty response"
         )
@@ -2713,13 +3135,21 @@ def analyze_telegram_image_then_groq(
 # RENDER HEALTH CHECK
 # =========================================================
 
-@app.route("/", methods=["GET"])
+@app.route(
+    "/",
+    methods=["GET"]
+)
 def home():
+
     return {
         "status": "ok",
         "bot": "Tanks Blitz AI",
         "version": BOT_VERSION,
-        "build": BOT_BUILD
+        "build": BOT_BUILD,
+        "self_learning": True,
+        "openrouter": bool(
+            OPENROUTER_API_KEY
+        )
     }, 200
 
 
@@ -2756,14 +3186,13 @@ def callback():
         if event_type != "message_new":
             return "ok"
 
+        event_id = data.get(
+            "event_id",
+            ""
+        )
+
         if already_processed(
-            "vk:"
-            + str(
-                data.get(
-                    "event_id",
-                    ""
-                )
-            )
+            "vk:" + str(event_id)
         ):
             return "ok"
 
@@ -2771,7 +3200,9 @@ def callback():
             data["object"]["message"]
         )
 
-        peer_id = message["peer_id"]
+        peer_id = message[
+            "peer_id"
+        ]
 
         sender_id = (
             message.get("from_id")
@@ -2788,11 +3219,9 @@ def callback():
         if not sender_id:
             return "ok"
 
-        # =================================================
-        # VK CHAT ID — ЧИСЛО
-        # =================================================
-
-        chat_id = int(peer_id)
+        chat_id = int(
+            peer_id
+        )
 
         register_active_chat(
             "vk",
@@ -2808,9 +3237,9 @@ def callback():
             sender_id
         )
 
-        # =================================================
+        # =========================================
         # VOICE
-        # =================================================
+        # =========================================
 
         voice = get_voice_vk(
             message
@@ -2872,9 +3301,9 @@ def callback():
 
             return "ok"
 
-        # =================================================
+        # =========================================
         # IMAGE
-        # =================================================
+        # =========================================
 
         image_url = get_image_vk(
             message
@@ -2931,16 +3360,16 @@ def callback():
 
             return "ok"
 
-        # =================================================
+        # =========================================
         # EMPTY
-        # =================================================
+        # =========================================
 
         if not text:
             return "ok"
 
-        # =================================================
+        # =========================================
         # NORMAL MESSAGE
-        # =================================================
+        # =========================================
 
         save_chat_message(
             chat_id,
@@ -3037,8 +3466,7 @@ def telegram_webhook(secret):
         )
 
         if already_processed(
-            "tg:"
-            + str(update_id)
+            "tg:" + str(update_id)
         ):
             return "ok"
 
@@ -3054,7 +3482,9 @@ def telegram_webhook(secret):
             or {}
         )
 
-        if sender.get("is_bot"):
+        if sender.get(
+            "is_bot"
+        ):
             return "ok"
 
         chat = (
@@ -3076,27 +3506,10 @@ def telegram_webhook(secret):
         ):
             return "ok"
 
-        # =================================================
-        # ГЛАВНОЕ ИСПРАВЛЕНИЕ
-        #
-        # РАНЬШЕ:
-        # chat_id = f"tg:{raw_chat_id}"
-        #
-        # БЫЛО:
-        # tg:-1002322057644
-        #
-        # ТЕПЕРЬ:
-        # -1002322057644
-        #
-        # Supabase BIGINT принимает число.
-        # =================================================
-
+        # Числовой ID для Supabase.
         chat_id = int(
             raw_chat_id
         )
-
-        # Платформенный ключ остаётся
-        # только в active_chats.
 
         register_active_chat(
             "telegram",
@@ -3115,9 +3528,9 @@ def telegram_webhook(secret):
             or ""
         ).strip()
 
-        # =================================================
+        # =========================================
         # VOICE
-        # =================================================
+        # =========================================
 
         voice_id = get_telegram_voice(
             message
@@ -3180,9 +3593,9 @@ def telegram_webhook(secret):
 
             return "ok"
 
-        # =================================================
+        # =========================================
         # IMAGE
-        # =================================================
+        # =========================================
 
         if message.get("photo"):
 
@@ -3244,16 +3657,16 @@ def telegram_webhook(secret):
 
             return "ok"
 
-        # =================================================
+        # =========================================
         # EMPTY
-        # =================================================
+        # =========================================
 
         if not text:
             return "ok"
 
-        # =================================================
+        # =========================================
         # NORMAL TELEGRAM MESSAGE
-        # =================================================
+        # =========================================
 
         save_chat_message(
             chat_id,
@@ -3342,7 +3755,10 @@ def setup_telegram():
         )
 
         TELEGRAM_BOT_USERNAME = (
-            me.get("username", "")
+            me.get(
+                "username",
+                ""
+            )
         )
 
         external = (
@@ -3376,9 +3792,8 @@ def setup_telegram():
 
             print(
                 "Telegram: "
-                "RENDER_EXTERNAL_URL/"
-                "RENDER_EXTERNAL_HOSTNAME "
-                "не найден — webhook не установлен.",
+                "Render URL не найден — "
+                "webhook не установлен.",
                 flush=True
             )
 
@@ -3388,7 +3803,7 @@ def setup_telegram():
             TELEGRAM_BOT_TOKEN.encode()
         ).hexdigest()[:32]
 
-        url = (
+        webhook_url = (
             f"{external}"
             f"/telegram/webhook/"
             f"{secret}"
@@ -3396,8 +3811,10 @@ def setup_telegram():
 
         telegram_call(
             "setWebhook",
-            url=url,
-            allowed_updates=["message"],
+            url=webhook_url,
+            allowed_updates=[
+                "message"
+            ],
             drop_pending_updates=False
         )
 
@@ -3454,6 +3871,18 @@ if __name__ == "__main__":
     )
 
     print(
+        f"🆓 OPENROUTER MODEL: "
+        f"{OPENROUTER_MODEL}",
+        flush=True
+    )
+
+    print(
+        "🌐 OpenRouter token: "
+        f"{'YES' if OPENROUTER_API_KEY else 'NO'}",
+        flush=True
+    )
+
+    print(
         f"👁 VISION MODEL: {VISION_MODEL}",
         flush=True
     )
@@ -3466,6 +3895,24 @@ if __name__ == "__main__":
     print(
         "📱 Telegram token: "
         f"{'YES' if TELEGRAM_BOT_TOKEN else 'NO'}",
+        flush=True
+    )
+
+    print(
+        f"🧠 Learning every: "
+        f"{LEARNING_EVERY_MESSAGES} messages",
+        flush=True
+    )
+
+    print(
+        f"💬 Chat context: "
+        f"{CHAT_MEMORY_LIMIT} messages",
+        flush=True
+    )
+
+    print(
+        f"📚 Knowledge context: "
+        f"{KNOWLEDGE_LIMIT} records",
         flush=True
     )
 
