@@ -39,11 +39,11 @@ VK_VERSION = "5.199"
 
 MAIN_MODEL = "openai/gpt-oss-120b"
 BACKUP_MODEL = "openai/gpt-oss-20b"
+VISION_MODEL = "qwen/qwen3.6-27b"
 
 # Уменьшенный расход токенов
 GROQ_MAX_TOKENS = 150
 SONAR_MAX_TOKENS = 150
-IMAGE_MAX_TOKENS = 150
 
 # Память: user -> assistant -> user -> assistant
 MEMORY_LIMIT = 30
@@ -524,7 +524,9 @@ def ask_model(model, messages):
     if not reply:
         raise RuntimeError("Groq returned empty response.")
 
-    return reply.strip()
+    reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
+
+    return reply
 
 
 # =========================================================
@@ -762,7 +764,7 @@ def transcribe_voice(url):
 
 
 # =========================================================
-# IMAGE
+# IMAGE (через Groq Vision)
 # =========================================================
 
 def get_image(message):
@@ -790,76 +792,47 @@ def get_image(message):
     return best
 
 
-def analyze_image(image_url, text):
-    if not PERPLEXITY_API_KEY:
-        raise RuntimeError("PERPLEXITY_API_KEY не установлен.")
-
-    if not PERPLEXITY_MODEL:
-        raise RuntimeError("PERPLEXITY_MODEL не установлен.")
-
-    content = [
-        {
-            "type": "text",
-            "text": (
-                "Проанализируй скриншот Tanks Blitz "
-                "и ответь только на вопрос пользователя.\n"
-                "Не описывай весь скриншот.\n"
-                "Не придумывай то, чего не видно.\n"
-                f"Вопрос: {text}"
-            )
-        },
-        {"type": "image_url", "image_url": {"url": image_url}}
-    ]
-
-    response = requests.post(
-        "https://api.perplexity.ai/chat/completions",
-        headers={
-            "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
-            "Content-Type": "application/json"
-        },
-        json={
-            "model": PERPLEXITY_MODEL,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "Анализируй только изображение "
-                        "Tanks Blitz. Не выдумывай."
-                    )
-                },
-                {"role": "user", "content": content}
-            ],
-            "max_tokens": IMAGE_MAX_TOKENS
-        },
-        timeout=45
-    )
-
-    if response.status_code != 200:
-        raise RuntimeError(f"Image HTTP {response.status_code}")
-
-    data = response.json()
-    result = data["choices"][0]["message"]["content"].strip()
-
-    if not result:
-        raise RuntimeError("Пустой анализ изображения.")
-
-    return result[:3000]
-
-
 def analyze_image_then_groq(image_url, text, user_id=None, user_name=None):
-    analysis = analyze_image(image_url, text)
+    prompt_text = text.strip() if text.strip() else "Прокомментируй этот скриншот из Tanks Blitz в своём стиле."
 
-    prompt = (
-        "Ответь пользователю по анализу скриншота.\n"
-        f"Вопрос: {text}\n"
-        f"Анализ: {analysis}\n\n"
-        "Один короткий ответ. "
-        "Не упоминай внутреннюю систему, "
-        "Perplexity, Sonar, Groq или API. "
-        "Не придумывай отсутствующие данные."
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+    if user_name:
+        messages.append({
+            "role": "system",
+            "content": (
+                f"Имя пользователя: {user_name}. "
+                "Используй имя редко и естественно."
+            )
+        })
+
+    history = get_memory(user_id)
+
+    if history:
+        messages.extend(history)
+
+    messages.append({
+        "role": "user",
+        "content": [
+            {"type": "text", "text": prompt_text},
+            {"type": "image_url", "image_url": {"url": image_url}},
+        ],
+    })
+
+    completion = groq.chat.completions.create(
+        model=VISION_MODEL,
+        messages=messages,
+        max_tokens=GROQ_MAX_TOKENS,
     )
 
-    return ask_groq(prompt, user_id, user_name)
+    reply = completion.choices[0].message.content
+
+    if not reply:
+        raise RuntimeError("Groq vision returned empty response.")
+
+    reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
+
+    return reply
 
 
 # =========================================================
@@ -959,24 +932,22 @@ def callback():
             return "ok"
 
         # ---------------------------------------------
-        # IMAGE
+        # IMAGE (всегда отвечаем, даже без подписи)
         # ---------------------------------------------
 
         image_url = get_image(message)
 
         if image_url:
-            if not text:
-                print("Image without question ignored.", flush=True)
-                return "ok"
-
-            if not should_use_ai(text, user_id):
-                print("Image text ignored.", flush=True)
-                return "ok"
-
             user_name = get_vk_user_name(sender_id)
-            reply = analyze_image_then_groq(image_url, text, user_id, user_name)
 
-            add_memory(user_id, "user", text)
+            try:
+                reply = analyze_image_then_groq(image_url, text, user_id, user_name)
+            except Exception as e:
+                print("Image analysis error:", e, flush=True)
+                send_message(peer_id, "Не смог рассмотреть скриншот 😅 Попробуй ещё раз.")
+                return "ok"
+
+            add_memory(user_id, "user", text if text else "[скриншот]")
             add_memory(user_id, "assistant", reply)
             cleanup_memory()
 
