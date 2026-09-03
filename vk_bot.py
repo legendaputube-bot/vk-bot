@@ -43,6 +43,7 @@ VISION_MODEL = "qwen/qwen3.6-27b"
 
 # Уменьшенный расход токенов
 GROQ_MAX_TOKENS = 150
+IMAGE_MAX_TOKENS = 250
 SONAR_MAX_TOKENS = 150
 
 # Память: user -> assistant -> user -> assistant
@@ -307,7 +308,6 @@ def is_noise(text):
     if len(text) <= 2:
         return True
 
-    # Например: аааааааа / )))))))))
     if len(text) >= 7 and len(set(text)) <= 2:
         return True
 
@@ -351,15 +351,12 @@ def should_use_ai(text, user_id=None):
     if is_noise(text):
         return False
 
-    # Вопросы работают даже без знака ?
     if looks_like_question(text):
         return True
 
-    # Любое нормальное сообщение по Tanks Blitz
     if is_tanks_message(text):
         return True
 
-    # Короткое продолжение уже начатого диалога
     if user_id and user_memory.get(user_id):
         if len(text) <= 80:
             return True
@@ -540,10 +537,6 @@ def ask_groq(text, user_id=None, user_name=None):
     messages = build_messages(text, user_id, user_name)
     now = time.time()
 
-    # -----------------------------------------------------
-    # 120B
-    # -----------------------------------------------------
-
     if now >= main_blocked_until:
         try:
             print("Groq -> 120B", flush=True)
@@ -558,10 +551,6 @@ def ask_groq(text, user_id=None, user_name=None):
                 print("120B error:", e, flush=True)
     else:
         print("120B temporarily blocked", flush=True)
-
-    # -----------------------------------------------------
-    # 20B
-    # -----------------------------------------------------
 
     if time.time() >= backup_blocked_until:
         try:
@@ -822,7 +811,7 @@ def analyze_image_then_groq(image_url, text, user_id=None, user_name=None):
     completion = groq.chat.completions.create(
         model=VISION_MODEL,
         messages=messages,
-        max_tokens=GROQ_MAX_TOKENS,
+        max_tokens=IMAGE_MAX_TOKENS,
     )
 
     reply = completion.choices[0].message.content
@@ -831,6 +820,14 @@ def analyze_image_then_groq(image_url, text, user_id=None, user_name=None):
         raise RuntimeError("Groq vision returned empty response.")
 
     reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
+
+    # Если тег think не закрылся (обрезан лимитом) —
+    # обрезаем всё после <think>
+    if "<think>" in reply:
+        reply = reply.split("<think>")[0].strip()
+
+    if not reply:
+        reply = "Опаньки, засмотрелся на скриншот и не успел сформулировать ответ 😅 Спроси ещё раз."
 
     return reply
 
