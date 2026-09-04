@@ -17,7 +17,36 @@ from supabase import create_client
 # =========================================================
 
 BOT_VERSION = "V1.3"
-BOT_BUILD = "Начальное самообучение + VK + Telegram + OpenRouter"
+
+BOT_BUILD = (
+    "Самообучение + защита участников + "
+    "официальная память Tanks Blitz + "
+    "VK + Telegram + OpenRouter"
+)
+
+# ---------------------------------------------------------
+# ADMIN / TESTER
+# ---------------------------------------------------------
+
+# Главный администратор.
+# Права определяются ТОЛЬКО по реальному VK ID.
+ADMIN_ID = 948950706
+
+# Тестер.
+# Пока тестером является только главный администратор.
+# Позже сюда можно добавить другие реальные VK ID.
+TESTER_IDS = {
+    ADMIN_ID
+}
+
+ADMIN_NICK = "Blitz"
+
+# Защита от слишком частых вмешательств бота
+INTERVENTION_COOLDOWN = 90
+
+# Защита от повторяющихся уведомлений об одной ошибке
+ADMIN_ERROR_COOLDOWN = 300
+
 
 # ---------------------------------------------------------
 # VK
@@ -38,14 +67,6 @@ VK_GROUP_SECRET = os.environ.get(
     ""
 ).strip()
 
-# Если указать конкретный peer_id,
-# бот будет работать ТОЛЬКО в этом VK-чате.
-#
-# Пример:
-# ALLOWED_VK_PEER_ID=2000000001
-#
-# Если оставить 0 — разрешаются все групповые чаты,
-# которые приходят через Callback API.
 ALLOWED_VK_PEER_ID = int(
     os.environ.get(
         "ALLOWED_VK_PEER_ID",
@@ -150,6 +171,9 @@ OPENROUTER_MAX_TOKENS = 320
 
 LEARNING_MAX_TOKENS = 300
 
+# Для защиты участников используем короткий ответ
+INTERVENTION_MAX_TOKENS = 140
+
 CHAT_MEMORY_LIMIT = 18
 
 LEARNING_HISTORY_LIMIT = 60
@@ -159,6 +183,9 @@ LEARNING_EVERY_MESSAGES = 40
 KNOWLEDGE_LIMIT = 8
 
 USER_MEMORY_LIMIT = 10
+
+# Официальной памяти показываем больше
+OFFICIAL_KNOWLEDGE_LIMIT = 20
 
 NAME_CACHE_TIME = 24 * 60 * 60
 
@@ -196,6 +223,22 @@ backup_blocked_until = 0
 TELEGRAM_BOT_ID = None
 
 TELEGRAM_BOT_USERNAME = ""
+
+# ---------------------------------------------------------
+# Intervention cache
+# ---------------------------------------------------------
+
+intervention_until = {}
+
+intervention_lock = threading.Lock()
+
+# ---------------------------------------------------------
+# Admin error notification cache
+# ---------------------------------------------------------
+
+admin_error_cache = {}
+
+admin_error_lock = threading.Lock()
 
 
 # =========================================================
@@ -257,7 +300,25 @@ SYSTEM_PROMPT = """
 Долговременная память не является абсолютной истиной.
 Не выдумывай факты.
 
-ПАМЯТЬ ОБ УЧАСТНИКАХ:
+=== ОФИЦИАЛЬНЫЕ ДАННЫЕ TANKS BLITZ ===
+
+Если тебе предоставлена официальная память Tanks Blitz,
+она внесена главным администратором.
+
+Эти данные имеют более высокий приоритет, чем обычная
+память чата.
+
+Не заменяй официальные данные слухами участников.
+
+Не придумывай отсутствующие данные.
+
+Не смешивай официальные данные Tanks Blitz
+с World of Tanks PC.
+
+Официальную память нельзя изменять обычным сообщением
+пользователя.
+
+=== ПАМЯТЬ ОБ УЧАСТНИКАХ ===
 
 У текущего пользователя может быть отдельная личная память.
 
@@ -289,6 +350,8 @@ SYSTEM_PROMPT = """
 «запомни это»,
 «запомни, что...»
 — воспринимай это как просьбу сохранить информацию.
+
+=== ОБЩЕНИЕ ===
 
 Ты НЕ обязан отвечать на каждое сообщение.
 
@@ -335,6 +398,27 @@ Tanks Blitz — одна из тем сообщества, но не единс�
 
 Не угрожай баном, мутом или удалением сообщений.
 
+=== ЗАЩИТА УЧАСТНИКОВ ===
+
+Если кто-то действительно унижает другого участника,
+можно вмешаться и ответить коротко, дерзко и с юмором.
+
+Не превращай обычный спор или критику в конфликт.
+
+Не атакуй человека по признакам внешности, здоровья,
+семьи, национальности, религии или другим чувствительным
+признакам.
+
+Не угрожай.
+
+Не трави человека.
+
+Твоя задача — остановить именно унижение,
+а не устроить новую травлю.
+
+Если нужно защитить участника, можно жёстко подколоть
+агрессора, но без реальной жестокости.
+
 Будь живым участником.
 
 Сначала пойми контекст,
@@ -375,6 +459,188 @@ def normalize_text(text):
 
 
 # =========================================================
+# ADMIN / TESTER
+# =========================================================
+
+def is_admin(user_id):
+
+    try:
+
+        return int(user_id) == ADMIN_ID
+
+    except (
+        ValueError,
+        TypeError
+    ):
+
+        return False
+
+
+def is_tester(user_id):
+
+    try:
+
+        return int(user_id) in TESTER_IDS
+
+    except (
+        ValueError,
+        TypeError
+    ):
+
+        return False
+
+
+# =========================================================
+# ADMIN ERROR NOTIFICATION
+# =========================================================
+
+def send_vk_private_message(
+    user_id,
+    text
+):
+
+    """
+    Отдельная отправка в ЛС.
+
+    Обычный send_message() специально запрещает
+    личные сообщения.
+
+    Эта функция разрешает ЛС только главному админу.
+    """
+
+    if not is_admin(user_id):
+
+        return None
+
+    if not text:
+
+        return None
+
+    try:
+
+        response = requests.post(
+            f"{VK_API}/messages.send",
+            data={
+                "access_token":
+                    VK_TOKEN,
+
+                "v":
+                    VK_VERSION,
+
+                "peer_id":
+                    int(user_id),
+
+                "message":
+                    text[:4096],
+
+                "random_id":
+                    random.randint(
+                        1,
+                        2147483647
+                    )
+            },
+            timeout=15
+        )
+
+        result = response.json()
+
+        if "error" in result:
+
+            print(
+                "ADMIN PRIVATE MESSAGE ERROR:",
+                result["error"],
+                flush=True
+            )
+
+        return result
+
+    except Exception as e:
+
+        print(
+            "Admin private message exception:",
+            e,
+            flush=True
+        )
+
+        return None
+
+
+def notify_admin_error(
+    error_type,
+    error,
+    context=""
+):
+
+    """
+    Отправляет важные ошибки админу.
+
+    Одинаковые ошибки не отправляются постоянно.
+    """
+
+    try:
+
+        error_text = normalize_text(
+            str(error)
+        )
+
+        context_text = normalize_text(
+            context
+        )
+
+        cache_key = (
+            f"{error_type}|"
+            f"{error_text[:300]}|"
+            f"{context_text[:150]}"
+        )
+
+        now = time.time()
+
+        with admin_error_lock:
+
+            previous = admin_error_cache.get(
+                cache_key,
+                0
+            )
+
+            if (
+                now - previous
+                < ADMIN_ERROR_COOLDOWN
+            ):
+
+                return
+
+            admin_error_cache[
+                cache_key
+            ] = now
+
+        message = (
+            "⚠️ ОШИБКА БОТА\n\n"
+            f"Тип: {error_type}\n"
+            f"Ошибка: {error_text[:1200]}"
+        )
+
+        if context_text:
+
+            message += (
+                f"\nКонтекст: "
+                f"{context_text[:500]}"
+            )
+
+        send_vk_private_message(
+            ADMIN_ID,
+            message
+        )
+
+    except Exception as e:
+
+        print(
+            "Admin error notify failed:",
+            e,
+            flush=True
+        )
+
+
+# =========================================================
 # VK CHAT VALIDATION
 # =========================================================
 
@@ -382,21 +648,6 @@ def is_vk_group_chat(
     peer_id,
     sender_id=None
 ):
-    """
-    VK peer_id:
-
-    user:
-        123456
-
-    group conversation:
-        2000000000 + chat_id
-
-    community:
-        отрицательный ID
-
-    Поэтому бот принимает только реальные
-    групповые беседы.
-    """
 
     try:
 
@@ -409,21 +660,15 @@ def is_vk_group_chat(
 
         return False
 
-    # -----------------------------------------------------
-    # Личные сообщения
-    # -----------------------------------------------------
-
     if peer_id < 2000000000:
-        return False
 
-    # -----------------------------------------------------
-    # Конкретный разрешённый чат
-    # -----------------------------------------------------
+        return False
 
     if (
         ALLOWED_VK_PEER_ID
         and peer_id != ALLOWED_VK_PEER_ID
     ):
+
         return False
 
     return True
@@ -454,6 +699,7 @@ def is_allowed_vk_chat(peer_id):
 def already_processed(event_id):
 
     if not event_id:
+
         return False
 
     now = time.time()
@@ -474,9 +720,12 @@ def already_processed(event_id):
             )
 
     if event_id in processed_events:
+
         return True
 
-    processed_events[event_id] = now
+    processed_events[
+        event_id
+    ] = now
 
     if (
         len(processed_events)
@@ -533,6 +782,7 @@ def get_retry_seconds(
     )
 
     if not match:
+
         return default
 
     total = (
@@ -546,6 +796,7 @@ def get_retry_seconds(
     )
 
     if total <= 0:
+
         return default
 
     return int(total) + 10
@@ -558,6 +809,7 @@ def get_retry_seconds(
 def get_vk_user_name(user_id):
 
     if not user_id:
+
         return None
 
     cached = user_names.get(
@@ -596,6 +848,7 @@ def get_vk_user_name(user_id):
         )
 
         if not users:
+
             return None
 
         user = users[0]
@@ -636,6 +889,7 @@ def get_telegram_user_name(
 ):
 
     if not user:
+
         return None
 
     uid = str(
@@ -885,6 +1139,7 @@ def save_knowledge(
     )
 
     if len(knowledge) < 5:
+
         return
 
     try:
@@ -919,6 +1174,7 @@ def save_knowledge(
         )
 
         if existing.data:
+
             return
 
         (
@@ -1013,6 +1269,617 @@ def get_knowledge(
 
 
 # =========================================================
+# OFFICIAL TANKS BLITZ KNOWLEDGE
+# =========================================================
+
+def official_fingerprint(
+    chat_id,
+    title,
+    content
+):
+
+    raw = (
+        f"{chat_id}|"
+        f"{normalize_text(title).lower()}|"
+        f"{normalize_text(content).lower()}"
+    )
+
+    return hashlib.sha256(
+        raw.encode("utf-8")
+    ).hexdigest()
+
+
+def get_official_knowledge(
+    chat_id,
+    limit=OFFICIAL_KNOWLEDGE_LIMIT
+):
+
+    try:
+
+        result = (
+            supabase
+            .table(
+                "bot_official_knowledge"
+            )
+            .select(
+                "id, title, content, "
+                "created_at, updated_at"
+            )
+            .eq(
+                "chat_id",
+                db_chat_id(chat_id)
+            )
+            .order(
+                "updated_at",
+                desc=True
+            )
+            .limit(
+                limit
+            )
+            .execute()
+        )
+
+        return result.data or []
+
+    except Exception as e:
+
+        print(
+            "Official knowledge load error:",
+            e,
+            flush=True
+        )
+
+        notify_admin_error(
+            "Supabase official knowledge load",
+            e,
+            f"chat={chat_id}"
+        )
+
+        return []
+
+
+def save_official_knowledge(
+    chat_id,
+    title,
+    content
+):
+
+    title = normalize_text(
+        title
+    )
+
+    content = normalize_text(
+        content
+    )
+
+    if (
+        len(title) < 1
+        or len(content) < 1
+    ):
+
+        return False, (
+            "❌ Нужно указать название "
+            "и содержимое."
+        )
+
+    if len(title) > 100:
+
+        return False, (
+            "❌ Название слишком длинное."
+        )
+
+    if len(content) > 6000:
+
+        return False, (
+            "❌ Содержимое слишком длинное."
+        )
+
+    try:
+
+        chat_id = db_chat_id(
+            chat_id
+        )
+
+        existing = (
+            supabase
+            .table(
+                "bot_official_knowledge"
+            )
+            .select(
+                "id"
+            )
+            .eq(
+                "chat_id",
+                chat_id
+            )
+            .eq(
+                "title",
+                title
+            )
+            .limit(1)
+            .execute()
+        )
+
+        if existing.data:
+
+            return False, (
+                "❌ Такая запись уже существует.\n"
+                "Используй !tbupdate"
+            )
+
+        fingerprint = official_fingerprint(
+            chat_id,
+            title,
+            content
+        )
+
+        (
+            supabase
+            .table(
+                "bot_official_knowledge"
+            )
+            .insert({
+                "chat_id":
+                    chat_id,
+
+                "title":
+                    title,
+
+                "content":
+                    content,
+
+                "fingerprint":
+                    fingerprint
+            })
+            .execute()
+        )
+
+        print(
+            f"OFFICIAL KNOWLEDGE ADDED | "
+            f"{title}",
+            flush=True
+        )
+
+        return True, (
+            f"✅ Добавлено в официальную память:\n"
+            f"📚 {title}"
+        )
+
+    except Exception as e:
+
+        print(
+            "Official knowledge save error:",
+            e,
+            flush=True
+        )
+
+        notify_admin_error(
+            "Supabase official knowledge save",
+            e,
+            f"chat={chat_id} title={title}"
+        )
+
+        return False, (
+            "❌ Не удалось сохранить запись."
+        )
+
+
+def update_official_knowledge(
+    chat_id,
+    title,
+    content
+):
+
+    title = normalize_text(
+        title
+    )
+
+    content = normalize_text(
+        content
+    )
+
+    if not title or not content:
+
+        return False, (
+            "❌ Укажи название и новый текст."
+        )
+
+    if len(content) > 6000:
+
+        return False, (
+            "❌ Новый текст слишком длинный."
+        )
+
+    try:
+
+        chat_id = db_chat_id(
+            chat_id
+        )
+
+        existing = (
+            supabase
+            .table(
+                "bot_official_knowledge"
+            )
+            .select(
+                "id"
+            )
+            .eq(
+                "chat_id",
+                chat_id
+            )
+            .eq(
+                "title",
+                title
+            )
+            .limit(1)
+            .execute()
+        )
+
+        if not existing.data:
+
+            return False, (
+                "❌ Такой записи нет."
+            )
+
+        fingerprint = official_fingerprint(
+            chat_id,
+            title,
+            content
+        )
+
+        (
+            supabase
+            .table(
+                "bot_official_knowledge"
+            )
+            .update({
+                "content":
+                    content,
+
+                "fingerprint":
+                    fingerprint,
+
+                "updated_at":
+                    utc_now()
+            })
+            .eq(
+                "id",
+                existing.data[0]["id"]
+            )
+            .execute()
+        )
+
+        print(
+            f"OFFICIAL KNOWLEDGE UPDATED | "
+            f"{title}",
+            flush=True
+        )
+
+        return True, (
+            f"✅ Официальная память обновлена:\n"
+            f"📚 {title}"
+        )
+
+    except Exception as e:
+
+        print(
+            "Official knowledge update error:",
+            e,
+            flush=True
+        )
+
+        notify_admin_error(
+            "Supabase official knowledge update",
+            e,
+            f"chat={chat_id} title={title}"
+        )
+
+        return False, (
+            "❌ Не удалось обновить запись."
+        )
+
+
+def delete_official_knowledge(
+    chat_id,
+    title
+):
+
+    title = normalize_text(
+        title
+    )
+
+    if not title:
+
+        return False, (
+            "❌ Укажи название записи."
+        )
+
+    try:
+
+        chat_id = db_chat_id(
+            chat_id
+        )
+
+        existing = (
+            supabase
+            .table(
+                "bot_official_knowledge"
+            )
+            .select(
+                "id"
+            )
+            .eq(
+                "chat_id",
+                chat_id
+            )
+            .eq(
+                "title",
+                title
+            )
+            .limit(1)
+            .execute()
+        )
+
+        if not existing.data:
+
+            return False, (
+                "❌ Такой записи нет."
+            )
+
+        (
+            supabase
+            .table(
+                "bot_official_knowledge"
+            )
+            .delete()
+            .eq(
+                "id",
+                existing.data[0]["id"]
+            )
+            .execute()
+        )
+
+        print(
+            f"OFFICIAL KNOWLEDGE DELETED | "
+            f"{title}",
+            flush=True
+        )
+
+        return True, (
+            f"🗑 Удалено из официальной памяти:\n"
+            f"📚 {title}"
+        )
+
+    except Exception as e:
+
+        print(
+            "Official knowledge delete error:",
+            e,
+            flush=True
+        )
+
+        notify_admin_error(
+            "Supabase official knowledge delete",
+            e,
+            f"chat={chat_id} title={title}"
+        )
+
+        return False, (
+            "❌ Не удалось удалить запись."
+        )
+
+
+def official_memory_text(
+    chat_id
+):
+
+    records = get_official_knowledge(
+        chat_id,
+        OFFICIAL_KNOWLEDGE_LIMIT
+    )
+
+    if not records:
+
+        return (
+            "📚 Официальная память Tanks Blitz "
+            "пока пустая."
+        )
+
+    lines = [
+        "📚 ОФИЦИАЛЬНАЯ ПАМЯТЬ TANKS BLITZ:",
+        ""
+    ]
+
+    for index, item in enumerate(
+        records,
+        start=1
+    ):
+
+        title = (
+            item.get("title")
+            or "Без названия"
+        )
+
+        content = normalize_text(
+            item.get("content")
+            or ""
+        )
+
+        if len(content) > 180:
+
+            content = (
+                content[:180]
+                + "..."
+            )
+
+        lines.append(
+            f"{index}. {title}"
+        )
+
+        lines.append(
+            f"   {content}"
+        )
+
+    return "\n".join(
+        lines
+    )
+
+
+# =========================================================
+# ADMIN TANKS BLITZ COMMANDS
+# =========================================================
+
+def handle_admin_tb_command(
+    chat_id,
+    sender_id,
+    text
+):
+
+    if not is_admin(
+        sender_id
+    ):
+
+        return False, None
+
+    raw = (
+        text or ""
+    ).strip()
+
+    if not raw.lower().startswith(
+        "!tb"
+    ):
+
+        return False, None
+
+    lower = raw.lower()
+
+    # -----------------------------------------------------
+    # HELP
+    # -----------------------------------------------------
+
+    if lower == "!tbhelp":
+
+        return True, (
+            "🛠 КОМАНДЫ ОФИЦИАЛЬНОЙ ПАМЯТИ\n\n"
+            "!tbadd название | текст\n"
+            "Добавить новую запись.\n\n"
+            "!tbupdate название | новый текст\n"
+            "Обновить запись.\n\n"
+            "!tbdelete название\n"
+            "Удалить запись.\n\n"
+            "!tbmemory\n"
+            "Показать официальную память.\n\n"
+            "!tbhelp\n"
+            "Показать эту справку.\n\n"
+            "🔐 Доступ только у главного администратора."
+        )
+
+    # -----------------------------------------------------
+    # MEMORY
+    # -----------------------------------------------------
+
+    if lower == "!tbmemory":
+
+        return True, official_memory_text(
+            chat_id
+        )
+
+    # -----------------------------------------------------
+    # ADD
+    # -----------------------------------------------------
+
+    if lower.startswith(
+        "!tbadd "
+    ):
+
+        payload = raw[7:].strip()
+
+        if "|" not in payload:
+
+            return True, (
+                "❌ Формат:\n"
+                "!tbadd название | текст"
+            )
+
+        title, content = payload.split(
+            "|",
+            1
+        )
+
+        _, reply = save_official_knowledge(
+            chat_id,
+            title,
+            content
+        )
+
+        return True, reply
+
+    # -----------------------------------------------------
+    # UPDATE
+    # -----------------------------------------------------
+
+    if lower.startswith(
+        "!tbupdate "
+    ):
+
+        payload = raw[10:].strip()
+
+        if "|" not in payload:
+
+            return True, (
+                "❌ Формат:\n"
+                "!tbupdate название | новый текст"
+            )
+
+        title, content = payload.split(
+            "|",
+            1
+        )
+
+        _, reply = update_official_knowledge(
+            chat_id,
+            title,
+            content
+        )
+
+        return True, reply
+
+    # -----------------------------------------------------
+    # DELETE
+    # -----------------------------------------------------
+
+    if lower.startswith(
+        "!tbdelete "
+    ):
+
+        title = raw[10:].strip()
+
+        if not title:
+
+            return True, (
+                "❌ Формат:\n"
+                "!tbdelete название"
+            )
+
+        _, reply = delete_official_knowledge(
+            chat_id,
+            title
+        )
+
+        return True, reply
+
+    # -----------------------------------------------------
+    # Unknown !tb command
+    # -----------------------------------------------------
+
+    return True, (
+        "❓ Неизвестная команда.\n"
+        "Напиши !tbhelp"
+    )
+
+
+# =========================================================
 # USER MEMORY
 # =========================================================
 
@@ -1039,6 +1906,7 @@ def merge_memory(
     )
 
     if new_fact:
+
         facts.append(
             new_fact
         )
@@ -1091,6 +1959,7 @@ def save_user_memory(
     )
 
     if len(memory) < 5:
+
         return
 
     try:
@@ -1233,13 +2102,10 @@ def save_explicit_user_memory(
     original = text.strip()
 
     if not original:
+
         return False
 
     fact = None
-
-    # -----------------------------------------------------
-    # Запомни: ...
-    # -----------------------------------------------------
 
     match = re.search(
         r"(?:запомни|запомни\s+это|"
@@ -1292,10 +2158,6 @@ def save_explicit_user_memory(
 
                 fact = statement
 
-    # -----------------------------------------------------
-    # Обычная фраза
-    # -----------------------------------------------------
-
     if fact is None:
 
         tank_match = re.search(
@@ -1324,11 +2186,8 @@ def save_explicit_user_memory(
                 )
 
     if not fact:
-        return False
 
-    # -----------------------------------------------------
-    # Защита от чувствительных данных
-    # -----------------------------------------------------
+        return False
 
     sensitive_words = (
         "пароль",
@@ -1375,6 +2234,7 @@ def get_user_memory(
 ):
 
     if user_id is None:
+
         return None
 
     try:
@@ -1409,26 +2269,9 @@ def get_user_memory(
 
         if not result.data:
 
-            print(
-                f"USER MEMORY MISS | "
-                f"chat={database_chat_id} "
-                f"user={database_user_id}",
-                flush=True
-            )
-
             return None
 
-        memory = result.data[0]
-
-        print(
-            f"USER MEMORY HIT | "
-            f"chat={database_chat_id} "
-            f"user={database_user_id} | "
-            f"{str(memory.get('memory', ''))[:250]}",
-            flush=True
-        )
-
-        return memory
+        return result.data[0]
 
     except Exception as e:
 
@@ -1470,6 +2313,7 @@ def get_learning_state(
         )
 
         if result.data:
+
             return result.data[0]
 
         (
@@ -1633,6 +2477,7 @@ def clean_model_text(
 ):
 
     if not text:
+
         return ""
 
     text = re.sub(
@@ -1735,6 +2580,7 @@ def ask_model(
     )
 
     if reply:
+
         return reply
 
     raise RuntimeError(
@@ -1858,6 +2704,7 @@ def ask_openrouter_messages(
                 part,
                 dict
             ):
+
                 continue
 
             if part.get(
@@ -1870,6 +2717,7 @@ def ask_openrouter_messages(
                 )
 
                 if value:
+
                     parts.append(
                         value
                     )
@@ -1953,10 +2801,6 @@ def ask_learning_model(
 
     now = time.time()
 
-    # -----------------------------------------------------
-    # Groq 20B
-    # -----------------------------------------------------
-
     if now >= backup_blocked_until:
 
         try:
@@ -1991,10 +2835,6 @@ def ask_learning_model(
                 flush=True
             )
 
-    # -----------------------------------------------------
-    # Groq 120B
-    # -----------------------------------------------------
-
     if time.time() >= main_blocked_until:
 
         try:
@@ -2028,10 +2868,6 @@ def ask_learning_model(
                 e,
                 flush=True
             )
-
-    # -----------------------------------------------------
-    # OpenRouter
-    # -----------------------------------------------------
 
     if OPENROUTER_API_KEY:
 
@@ -2072,20 +2908,9 @@ def perform_learning(
 
     try:
 
-        # -------------------------------------------------
-        # Дополнительная защита:
-        # обучение разрешено только для VK-группы
-        # -------------------------------------------------
-
         if not is_allowed_vk_chat(
             chat_id
         ):
-
-            print(
-                f"LEARNING BLOCKED | "
-                f"not allowed VK chat: {chat_id}",
-                flush=True
-            )
 
             return
 
@@ -2099,12 +2924,6 @@ def perform_learning(
         )
 
         if len(history) < 10:
-
-            print(
-                f"LEARNING WAIT | "
-                f"history={len(history)}",
-                flush=True
-            )
 
             reset_learning_counter(
                 chat_id
@@ -2157,6 +2976,7 @@ def perform_learning(
                 )
 
         if not text_parts:
+
             return
 
         prompt = f"""
@@ -2181,8 +3001,6 @@ AI-участника конкретного VK-чата.
 - правила или особенности этого конкретного чата,
   если они явно присутствуют в сообщениях.
 
-ОСОБО ВАЖНО:
-
 Если участник прямо сообщает о себе факт,
 который может пригодиться в будущем,
 постарайся сохранить его как USER-факт.
@@ -2195,9 +3013,24 @@ AI-участника конкретного VK-чата.
 
 USER|ID|Любимый танк — какой-либо танк
 
-НЕ придумывай.
+ВАЖНО:
 
-Не превращай предположение в факт.
+Оскорбления, ругань, насмешки и негативные оценки
+участников НЕ являются фактами.
+
+Не сохраняй:
+
+«Иван тупой»
+
+«Петя дебил»
+
+«Он ничего не умеет»
+
+и подобные фразы как USER или CHAT knowledge.
+
+Не превращай оскорбление в характеристику человека.
+
+Также НЕ придумывай факты.
 
 Не сохраняй:
 
@@ -2254,6 +3087,7 @@ NONE
         ).strip()
 
         if not learned:
+
             return
 
         if learned.upper() != "NONE":
@@ -2267,10 +3101,6 @@ NONE
 
                 if line.upper() == "NONE":
                     continue
-
-                # -----------------------------------------
-                # USER MEMORY
-                # -----------------------------------------
 
                 if line.startswith(
                     "USER|"
@@ -2317,10 +3147,6 @@ NONE
                         fact
                     )
 
-                # -----------------------------------------
-                # CHAT KNOWLEDGE
-                # -----------------------------------------
-
                 elif line.startswith(
                     "CHAT|"
                 ):
@@ -2355,10 +3181,6 @@ NONE
                         fact,
                         importance
                     )
-
-        # -------------------------------------------------
-        # DEVELOPMENT STAGE
-        # -------------------------------------------------
 
         stage = int(
             state.get(
@@ -2448,6 +3270,12 @@ NONE
             flush=True
         )
 
+        notify_admin_error(
+            "Self-learning",
+            e,
+            f"chat={chat_id}"
+        )
+
     finally:
 
         with learning_lock:
@@ -2461,10 +3289,10 @@ def maybe_learn(
     chat_id
 ):
 
-    # VK-защита
     if not is_allowed_vk_chat(
         chat_id
     ):
+
         return
 
     count = increase_learning_counter(
@@ -2479,6 +3307,7 @@ def maybe_learn(
     )
 
     if count < LEARNING_EVERY_MESSAGES:
+
         return
 
     retry_until = (
@@ -2489,11 +3318,13 @@ def maybe_learn(
     )
 
     if time.time() < retry_until:
+
         return
 
     with learning_lock:
 
         if chat_id in learning_running:
+
             return
 
         learning_running.add(
@@ -2559,6 +3390,65 @@ def build_chat_context(
     })
 
     # -----------------------------------------------------
+    # OFFICIAL TANKS BLITZ KNOWLEDGE
+    # -----------------------------------------------------
+
+    official = get_official_knowledge(
+        chat_id,
+        OFFICIAL_KNOWLEDGE_LIMIT
+    )
+
+    if official:
+
+        lines = []
+
+        for item in official:
+
+            title = (
+                item.get(
+                    "title"
+                )
+                or ""
+            ).strip()
+
+            content = (
+                item.get(
+                    "content"
+                )
+                or ""
+            ).strip()
+
+            if title and content:
+
+                lines.append(
+                    f"[{title}] {content}"
+                )
+
+        if lines:
+
+            messages.append({
+                "role":
+                    "system",
+
+                "content":
+                    (
+                        "=== ОФИЦИАЛЬНАЯ ПАМЯТЬ "
+                        "TANKS BLITZ ===\n"
+                        "Эти данные внесены главным "
+                        "администратором.\n"
+                        "Считай их приоритетным "
+                        "источником.\n"
+                        "Не заменяй их слухами "
+                        "из обычной памяти.\n\n"
+                        +
+                        "\n".join(lines)
+                        +
+                        "\n=== КОНЕЦ ОФИЦИАЛЬНОЙ "
+                        "ПАМЯТИ ==="
+                    )
+            })
+
+    # -----------------------------------------------------
     # CHAT KNOWLEDGE
     # -----------------------------------------------------
 
@@ -2580,6 +3470,7 @@ def build_chat_context(
             ).strip()
 
             if value:
+
                 lines.append(
                     f"- {value}"
                 )
@@ -2624,6 +3515,7 @@ def build_chat_context(
         )
 
         if not content:
+
             continue
 
         name = (
@@ -2710,11 +3602,7 @@ def build_chat_context(
                         "Не заменяй сохранённый факт "
                         "своим предположением.\n"
                         "Если точный ответ есть здесь, "
-                        "используй именно его.\n"
-                        "Если несколько фактов "
-                        "противоречат друг другу, "
-                        "последний факт в списке "
-                        "считай более новым.\n\n"
+                        "используй именно его.\n\n"
                         "ЛИЧНАЯ ПАМЯТЬ:\n"
                         +
                         personal_memory
@@ -2798,7 +3686,6 @@ def is_directed_to_bot_vk(
         "reply_message"
     )
 
-    # Ответ на сообщение сообщества/бота
     if reply:
 
         from_id = reply.get(
@@ -2812,8 +3699,8 @@ def is_directed_to_bot_vk(
 
             return True
 
-    # Упоминание сообщества
     if "[club" in low:
+
         return True
 
     return any(
@@ -2892,6 +3779,7 @@ def should_answer(
     text = text.strip()
 
     if not text:
+
         return False
 
     if platform == "telegram":
@@ -2913,11 +3801,13 @@ def should_answer(
             return True
 
     if len(text) <= 1:
+
         return False
 
     if looks_like_question(
         text
     ):
+
         return True
 
     words = len(
@@ -2939,6 +3829,416 @@ def should_answer(
         return roll < 0.45
 
     return roll < 0.60
+
+
+# =========================================================
+# LOCAL PERSONAL ATTACK FILTER
+# =========================================================
+
+# Это только дешёвый предварительный фильтр.
+# Он НЕ принимает окончательное решение.
+
+INSULT_STEMS = (
+    "дебил",
+    "идиот",
+    "туп",
+    "кретин",
+    "мудак",
+    "долбо",
+    "придур",
+    "даун",
+    "лох",
+    "чмош",
+    "клоун",
+    "твар",
+    "убог",
+    "никчем",
+    "дегенерат",
+    "имбецил",
+    "осел",
+    "дятел",
+    "позорник",
+    "позор",
+)
+
+PERSON_TARGET_WORDS = (
+    "ты",
+    "тебя",
+    "тебе",
+    "тобой",
+    "он",
+    "она",
+    "его",
+    "ее",
+    "этот",
+    "эта",
+    "тот",
+    "та",
+    "чел",
+    "человек",
+    "игрок",
+    "игрока",
+    "участник",
+)
+
+
+def looks_like_personal_attack(
+    text
+):
+
+    low = normalize_text(
+        text
+    ).lower()
+
+    if not low:
+
+        return False
+
+    has_insult = any(
+        stem in low
+        for stem in INSULT_STEMS
+    )
+
+    if not has_insult:
+
+        return False
+
+    has_target = any(
+        re.search(
+            rf"\b{re.escape(word)}\b",
+            low
+        )
+        for word in PERSON_TARGET_WORDS
+    )
+
+    return has_target
+
+
+# =========================================================
+# INTERVENTION AI
+# =========================================================
+
+def ask_intervention_model(
+    text,
+    context
+):
+
+    prompt = f"""
+Ты помогаешь AI-участнику чата понять,
+нужно ли вмешаться в конфликт.
+
+Текущее сообщение:
+
+{text}
+
+Контекст последних сообщений:
+
+{context}
+
+Нужно вмешиваться ТОЛЬКО если человек
+реально унижает или оскорбляет другого
+участника.
+
+Обычный спор, несогласие, критика игры,
+мат без направленного оскорбления —
+не повод вмешиваться.
+
+Если вмешательство НЕ нужно, ответь строго:
+
+NONE
+
+Если нужно вмешаться, напиши одну короткую
+живую реплику на русском языке.
+
+Стиль:
+- дерзко;
+- иронично;
+- уверенно;
+- коротко;
+- без угроз;
+- без упоминания модерации;
+- без рассказов про AI;
+- без раскрытия памяти;
+- не атакуй семью;
+- не атакуй внешность;
+- не упоминай здоровье;
+- не используй защищённые признаки;
+- не превращай ответ в травлю.
+
+Можно поставить агрессора на место
+юмором.
+
+Ответ должен быть максимум 2 предложения.
+
+Если сомневаешься — NONE.
+"""
+
+    messages = [
+        {
+            "role":
+                "system",
+
+            "content":
+                (
+                    "Ты классификатор конфликтов "
+                    "и генератор короткой защитной "
+                    "реплики. Будь осторожен."
+                )
+        },
+        {
+            "role":
+                "user",
+
+            "content":
+                prompt
+        }
+    ]
+
+    try:
+
+        return ask_model(
+            BACKUP_MODEL,
+            messages,
+            INTERVENTION_MAX_TOKENS
+        )
+
+    except Exception as e:
+
+        print(
+            "Intervention Groq error:",
+            e,
+            flush=True
+        )
+
+        if OPENROUTER_API_KEY:
+
+            try:
+
+                return ask_openrouter_messages(
+                    messages,
+                    INTERVENTION_MAX_TOKENS,
+                    "OpenRouter Intervention"
+                )
+
+            except Exception as open_error:
+
+                print(
+                    "Intervention OpenRouter error:",
+                    open_error,
+                    flush=True
+                )
+
+        return "NONE"
+
+
+# =========================================================
+# INTERVENTION
+# =========================================================
+
+def maybe_intervene_vk(
+    chat_id,
+    sender_id,
+    user_name,
+    text,
+    message
+):
+
+    # -----------------------------------------------------
+    # Админу вмешательство не требуется
+    # -----------------------------------------------------
+
+    if is_admin(
+        sender_id
+    ):
+
+        return False
+
+    # -----------------------------------------------------
+    # Сначала дешёвый локальный фильтр
+    # -----------------------------------------------------
+
+    if not looks_like_personal_attack(
+        text
+    ):
+
+        return False
+
+    # -----------------------------------------------------
+    # Cooldown
+    # -----------------------------------------------------
+
+    now = time.time()
+
+    with intervention_lock:
+
+        blocked_until = (
+            intervention_until.get(
+                chat_id,
+                0
+            )
+        )
+
+        if now < blocked_until:
+
+            return False
+
+    # -----------------------------------------------------
+    # Контекст
+    # -----------------------------------------------------
+
+    history = get_chat_memory(
+        chat_id,
+        10
+    )
+
+    context_lines = []
+
+    for item in history:
+
+        name = (
+            item.get(
+                "speaker_name"
+            )
+            or "Участник"
+        )
+
+        content = (
+            item.get(
+                "content"
+            )
+            or ""
+        )
+
+        if content:
+
+            context_lines.append(
+                f"{name}: {content}"
+            )
+
+    context = "\n".join(
+        context_lines
+    )
+
+    # -----------------------------------------------------
+    # Reply target
+    # -----------------------------------------------------
+
+    reply = message.get(
+        "reply_message"
+    )
+
+    if reply:
+
+        reply_text = (
+            reply.get(
+                "text"
+            )
+            or ""
+        )
+
+        reply_from = (
+            reply.get(
+                "from_id"
+            )
+        )
+
+        if reply_text:
+
+            context += (
+                "\n\nСообщение, "
+                "на которое отвечают:\n"
+                f"[ID:{reply_from}] "
+                f"{reply_text}"
+            )
+
+    try:
+
+        response = ask_intervention_model(
+            text,
+            context
+        )
+
+    except Exception as e:
+
+        print(
+            "Intervention error:",
+            e,
+            flush=True
+        )
+
+        return False
+
+    response = clean_model_text(
+        response
+    )
+
+    if not response:
+
+        return False
+
+    if response.upper().startswith(
+        "NONE"
+    ):
+
+        return False
+
+    # -----------------------------------------------------
+    # Ставим cooldown
+    # -----------------------------------------------------
+
+    with intervention_lock:
+
+        intervention_until[
+            chat_id
+        ] = (
+            time.time()
+            + INTERVENTION_COOLDOWN
+        )
+
+    # -----------------------------------------------------
+    # Отправка
+    # -----------------------------------------------------
+
+    try:
+
+        save_chat_message(
+            chat_id,
+            None,
+            "Бот",
+            "assistant",
+            response
+        )
+
+        send_message(
+            chat_id,
+            response
+        )
+
+        print(
+            f"🛡 INTERVENTION | "
+            f"chat={chat_id} | "
+            f"user={sender_id} | "
+            f"{response}",
+            flush=True
+        )
+
+        return True
+
+    except Exception as e:
+
+        print(
+            "Intervention send error:",
+            e,
+            flush=True
+        )
+
+        notify_admin_error(
+            "Participant intervention",
+            e,
+            f"chat={chat_id}"
+        )
+
+        return False
 
 
 # =========================================================
@@ -2985,6 +4285,12 @@ def ask_ai(
                 "OpenRouter final error:",
                 openrouter_error,
                 flush=True
+            )
+
+            notify_admin_error(
+                "AI final failure",
+                openrouter_error,
+                f"chat={chat_id} user={user_id}"
             )
 
             raise RuntimeError(
@@ -3125,11 +4431,11 @@ def send_message(
 ):
 
     if not text:
-        return
+
+        return None
 
     # -----------------------------------------------------
-    # ЖЁСТКАЯ ЗАЩИТА VK
-    # Никогда не отправляем ботом в личный диалог.
+    # ЖЁСТКАЯ ЗАЩИТА
     # -----------------------------------------------------
 
     if not is_allowed_vk_chat(
@@ -3144,41 +4450,65 @@ def send_message(
 
         return None
 
-    response = requests.post(
-        f"{VK_API}/messages.send",
-        data={
-            "access_token":
-                VK_TOKEN,
+    try:
 
-            "v":
-                VK_VERSION,
+        response = requests.post(
+            f"{VK_API}/messages.send",
+            data={
+                "access_token":
+                    VK_TOKEN,
 
-            "peer_id":
-                int(peer_id),
+                "v":
+                    VK_VERSION,
 
-            "message":
-                text[:4096],
+                "peer_id":
+                    int(peer_id),
 
-            "random_id":
-                random.randint(
-                    1,
-                    2147483647
-                )
-        },
-        timeout=15
-    )
+                "message":
+                    text[:4096],
 
-    result = response.json()
+                "random_id":
+                    random.randint(
+                        1,
+                        2147483647
+                    )
+            },
+            timeout=15
+        )
 
-    if "error" in result:
+        result = response.json()
+
+        if "error" in result:
+
+            print(
+                "VK send error:",
+                result["error"],
+                flush=True
+            )
+
+            notify_admin_error(
+                "VK messages.send",
+                result["error"],
+                f"peer_id={peer_id}"
+            )
+
+        return result
+
+    except Exception as e:
 
         print(
-            "VK send error:",
-            result["error"],
+            "VK send exception:",
+            e,
             flush=True
         )
 
-    return result
+        notify_admin_error(
+            "VK send exception",
+            e,
+            f"peer_id={peer_id}"
+        )
+
+        return None
 
 
 # =========================================================
@@ -3222,6 +4552,7 @@ def send_telegram_message(
 ):
 
     if not text:
+
         return
 
     payload = {
@@ -3246,10 +4577,22 @@ def send_telegram_message(
                 )
         }
 
-    return telegram_call(
-        "sendMessage",
-        **payload
-    )
+    try:
+
+        return telegram_call(
+            "sendMessage",
+            **payload
+        )
+
+    except Exception as e:
+
+        notify_admin_error(
+            "Telegram sendMessage",
+            e,
+            f"chat={chat_id}"
+        )
+
+        raise
 
 
 # =========================================================
@@ -3261,21 +4604,11 @@ def register_active_chat(
     peer_id
 ):
 
-    # -----------------------------------------------------
-    # VK — только групповые чаты
-    # -----------------------------------------------------
-
     if platform == "vk":
 
         if not is_allowed_vk_chat(
             peer_id
         ):
-
-            print(
-                f"ACTIVE CHAT BLOCKED | "
-                f"VK peer={peer_id}",
-                flush=True
-            )
 
             return
 
@@ -3344,10 +4677,6 @@ def activity_loop():
                     "peer_id"
                 ]
 
-                # -----------------------------------------
-                # VK additional protection
-                # -----------------------------------------
-
                 if platform == "vk":
 
                     if not is_allowed_vk_chat(
@@ -3360,12 +4689,6 @@ def activity_loop():
                                 key,
                                 None
                             )
-
-                        print(
-                            f"ACTIVITY REMOVE | "
-                            f"VK peer={peer_id}",
-                            flush=True
-                        )
 
                         continue
 
@@ -3386,6 +4709,7 @@ def activity_loop():
                         ]["last"] = now
 
                 if random.random() > 0.25:
+
                     continue
 
                 prompt = random.choice([
@@ -3416,12 +4740,12 @@ def activity_loop():
                         peer_id
                     )
 
-                    # VK activity идёт только через разрешённый чат
                     if platform == "vk":
 
                         if not is_allowed_vk_chat(
                             activity_chat_id
                         ):
+
                             continue
 
                     reply = ask_groq(
@@ -3432,6 +4756,7 @@ def activity_loop():
                     )
 
                     if not reply:
+
                         continue
 
                     send_platform_message(
@@ -3462,6 +4787,12 @@ def activity_loop():
                         flush=True
                     )
 
+                    notify_admin_error(
+                        "Activity loop chat error",
+                        e,
+                        f"platform={platform} peer={peer_id}"
+                    )
+
             time.sleep(60)
 
         except Exception as e:
@@ -3470,6 +4801,11 @@ def activity_loop():
                 "Activity loop error:",
                 e,
                 flush=True
+            )
+
+            notify_admin_error(
+                "Activity loop",
+                e
             )
 
             time.sleep(60)
@@ -3499,6 +4835,18 @@ def home():
             BOT_BUILD,
 
         "self_learning":
+            True,
+
+        "official_tanks_blitz_memory":
+            True,
+
+        "participant_defense":
+            True,
+
+        "admin_controls":
+            True,
+
+        "tester_controls":
             True,
 
         "openrouter":
@@ -3544,7 +4892,7 @@ def callback():
             return "ok"
 
         # -------------------------------------------------
-        # Secret
+        # SECRET
         # -------------------------------------------------
 
         if (
@@ -3560,7 +4908,7 @@ def callback():
         )
 
         # -------------------------------------------------
-        # Confirmation
+        # CONFIRMATION
         # -------------------------------------------------
 
         if event_type == "confirmation":
@@ -3570,7 +4918,7 @@ def callback():
             )
 
         # -------------------------------------------------
-        # Только новые сообщения
+        # ONLY NEW MESSAGES
         # -------------------------------------------------
 
         if event_type != "message_new":
@@ -3599,6 +4947,7 @@ def callback():
         )
 
         if not message:
+
             return "ok"
 
         peer_id = message.get(
@@ -3623,12 +4972,7 @@ def callback():
             return "ok"
 
         # -------------------------------------------------
-        # ГЛАВНЫЙ VK-ФИЛЬТР
-        #
-        # До регистрации чата,
-        # до Supabase,
-        # до обучения,
-        # до AI.
+        # GROUP CHAT FILTER
         # -------------------------------------------------
 
         if not is_allowed_vk_chat(
@@ -3645,7 +4989,7 @@ def callback():
             return "ok"
 
         # -------------------------------------------------
-        # Защита от сообщений самого сообщества
+        # COMMUNITY PROTECTION
         # -------------------------------------------------
 
         if (
@@ -3658,10 +5002,6 @@ def callback():
         chat_id = int(
             peer_id
         )
-
-        # -------------------------------------------------
-        # Только теперь регистрируем активный VK-чат
-        # -------------------------------------------------
 
         register_active_chat(
             "vk",
@@ -3682,15 +5022,6 @@ def callback():
         # -------------------------------------------------
         # MEDIA
         # -------------------------------------------------
-        #
-        # Изображения, документы,
-        # голосовые и другие вложения
-        # пока полностью игнорируются.
-        #
-        # Если у вложения есть подпись,
-        # VK может передать её как text.
-        # Сам файл бот не анализирует.
-        # -------------------------------------------------
 
         if not text:
 
@@ -3698,6 +5029,40 @@ def callback():
                 f"VK MEDIA IGNORED | "
                 f"chat={chat_id} | "
                 f"user={sender_id}",
+                flush=True
+            )
+
+            return "ok"
+
+        # -------------------------------------------------
+        # ADMIN COMMANDS
+        #
+        # Обрабатываем ДО обычного AI.
+        # Обычный пользователь не сможет
+        # подделать права администратора.
+        # -------------------------------------------------
+
+        command_handled, command_reply = (
+            handle_admin_tb_command(
+                chat_id,
+                sender_id,
+                text
+            )
+        )
+
+        if command_handled:
+
+            if command_reply:
+
+                send_message(
+                    peer_id,
+                    command_reply
+                )
+
+            print(
+                f"ADMIN COMMAND | "
+                f"user={sender_id} | "
+                f"{text}",
                 flush=True
             )
 
@@ -3733,6 +5098,25 @@ def callback():
         maybe_learn(
             chat_id
         )
+
+        # -------------------------------------------------
+        # PARTICIPANT DEFENSE
+        #
+        # Работает даже если обычный should_answer
+        # решил бы промолчать.
+        # -------------------------------------------------
+
+        intervention = maybe_intervene_vk(
+            chat_id,
+            sender_id,
+            user_name,
+            text,
+            message
+        )
+
+        if intervention:
+
+            return "ok"
 
         # -------------------------------------------------
         # SHOULD ANSWER
@@ -3788,6 +5172,11 @@ def callback():
             flush=True
         )
 
+        notify_admin_error(
+            "VK Callback",
+            e
+        )
+
         return "ok"
 
 
@@ -3839,6 +5228,7 @@ def telegram_webhook(
         )
 
         if not message:
+
             return "ok"
 
         sender = (
@@ -3887,10 +5277,6 @@ def telegram_webhook(
             )
         )
 
-        # -------------------------------------------------
-        # Только текст или caption
-        # -------------------------------------------------
-
         text = (
             message.get("text")
             or message.get("caption")
@@ -3900,10 +5286,6 @@ def telegram_webhook(
         if not text:
 
             return "ok"
-
-        # -------------------------------------------------
-        # SAVE
-        # -------------------------------------------------
 
         save_chat_message(
             chat_id,
@@ -3919,13 +5301,6 @@ def telegram_webhook(
             user_name,
             text
         )
-
-        # -------------------------------------------------
-        # Telegram learning
-        #
-        # В этой версии обучение для Telegram
-        # не запускаем через VK-механизм.
-        # -------------------------------------------------
 
         if not should_answer(
             message,
@@ -3974,6 +5349,11 @@ def telegram_webhook(
             "Telegram webhook error:",
             e,
             flush=True
+        )
+
+        notify_admin_error(
+            "Telegram webhook",
+            e
         )
 
         return "ok"
@@ -4082,6 +5462,11 @@ def setup_telegram():
             flush=True
         )
 
+        notify_admin_error(
+            "Telegram setup",
+            e
+        )
+
 
 # =========================================================
 # START
@@ -4144,6 +5529,26 @@ if __name__ == "__main__":
     print(
         f"🎯 VK allowed peer_id: "
         f"{ALLOWED_VK_PEER_ID or 'ALL GROUP CHATS'}",
+        flush=True
+    )
+
+    print(
+        "🛡 Participant defense: ENABLED",
+        flush=True
+    )
+
+    print(
+        "📚 Official Tanks Blitz memory: ENABLED",
+        flush=True
+    )
+
+    print(
+        f"👑 Admin ID: {ADMIN_ID}",
+        flush=True
+    )
+
+    print(
+        f"🧪 Testers: {len(TESTER_IDS)}",
         flush=True
     )
 
