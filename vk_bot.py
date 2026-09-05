@@ -3,6 +3,7 @@ import re
 import time
 import hashlib
 import json
+import base64
 import random
 import subprocess
 import threading
@@ -6207,46 +6208,1017 @@ def notify_admin_error(
         )
 
 
+
+
 # =========================================================
 # DEVELOPER MODE
 # =========================================================
 
+DEVELOPER_MAX_AI_TOKENS = 12000
+DEVELOPER_FILE_PATH = os.environ.get(
+    "GITHUB_FILE_PATH",
+    "vk_bot (2).py"
+).strip()
+
+developer_patch_lock = threading.Lock()
+developer_pending_patch = {}
+
+
 def developer_status():
+    with developer_patch_lock:
+        instruction = developer_pending_patch.get("instruction")
+        has_patch = bool(developer_pending_patch.get("new_source"))
+        busy = bool(developer_pending_patch.get("busy"))
+        backup = developer_pending_patch.get("backup")
+
     return (
         "[V1.3.5] [DEVELOPER]\n\n"
-        f"Режим: {'🟢 включён' if DEVELOPER_ENABLED else '🔴 выключен'}\n"
-        f"Репозиторий: {DEVELOPER_REPO or 'не задан'}\n"
-        f"Ветка: {DEVELOPER_BRANCH}\n"
-        f"GitHub token: {'🟢 задан' if DEVELOPER_TOKEN else '🔴 не задан'}\n"
+        f"Режим: "
+        f"{'🟢 включён' if DEVELOPER_ENABLED else '🔴 выключен'}\n"
+        f"Репозиторий: "
+        f"{DEVELOPER_REPO or 'не задан'}\n"
+        f"Файл: "
+        f"{DEVELOPER_FILE_PATH}\n"
+        f"Ветка: "
+        f"{DEVELOPER_BRANCH}\n"
+        f"GitHub token: "
+        f"{'🟢 задан' if DEVELOPER_TOKEN else '🔴 не задан'}\n"
+        f"AI-разработка: "
+        f"{'🟢 выполняется' if busy else '⚪ свободен'}\n"
+        f"Изменения: "
+        f"{'🟢 подготовлены' if has_patch else '⚪ нет'}\n"
+        f"Последний backup: "
+        f"{backup or 'нет'}\n"
+        f"Инструкция: "
+        f"{'📝 есть' if instruction else '⚪ нет'}\n\n"
         "Автоприменение без подтверждения: 🔴 запрещено"
+    )
+
+
+def developer_parse_repo():
+    repo = (DEVELOPER_REPO or "").strip()
+
+    if not repo:
+        raise RuntimeError(
+            "GITHUB_REPO не задан."
+        )
+
+    repo = repo.replace(
+        "https://github.com/",
+        ""
+    ).replace(
+        "http://github.com/",
+        ""
+    ).strip("/")
+
+    parts = repo.split("/")
+
+    if len(parts) != 2:
+        raise RuntimeError(
+            "GITHUB_REPO должен иметь формат owner/repository."
+        )
+
+    return parts[0], parts[1]
+
+
+def developer_github_headers():
+    if not DEVELOPER_TOKEN:
+        raise RuntimeError(
+            "GITHUB_TOKEN не задан."
+        )
+
+    return {
+        "Authorization":
+            f"Bearer {DEVELOPER_TOKEN}",
+        "Accept":
+            "application/vnd.github+json",
+        "X-GitHub-Api-Version":
+            "2022-11-28",
+        "User-Agent":
+            "Tanks-Blitz-AI-Developer"
+    }
+
+
+def developer_github_get_file():
+    owner, repo = developer_parse_repo()
+
+    url = (
+        "https://api.github.com/repos/"
+        f"{owner}/{repo}/contents/"
+        f"{DEVELOPER_FILE_PATH}"
+    )
+
+    response = requests.get(
+        url,
+        headers=developer_github_headers(),
+        params={
+            "ref": DEVELOPER_BRANCH
+        },
+        timeout=30
+    )
+
+    if response.status_code != 200:
+        raise RuntimeError(
+            "GitHub GET file "
+            f"{response.status_code}: "
+            f"{response.text[:1500]}"
+        )
+
+    data = response.json()
+
+    if data.get("type") != "file":
+        raise RuntimeError(
+            "GitHub API не вернул файл."
+        )
+
+    encoded = data.get("content", "")
+    sha = data.get("sha")
+
+    if not encoded or not sha:
+        raise RuntimeError(
+            "GitHub не вернул content/sha."
+        )
+
+    try:
+        source = base64.b64decode(
+            encoded.replace("\n", "")
+        ).decode("utf-8")
+    except Exception as e:
+        raise RuntimeError(
+            f"Не удалось декодировать GitHub файл: {e}"
+        )
+
+    return source, sha
+
+
+def developer_build_ai_messages(
+    source,
+    instruction
+):
+    system_prompt = """
+Ты — внутренний AI-разработчик проекта Tanks Blitz AI.
+
+Тебе передан текущий Python-файл бота и инструкция администратора.
+
+Твоя задача — изменить КОД ТОЛЬКО настолько,
+насколько необходимо для выполнения инструкции.
+
+ВАЖНЫЕ ПРАВИЛА:
+
+1. Не переписывай весь файл.
+2. Не удаляй существующие функции без необходимости.
+3. Сохраняй существующую архитектуру.
+4. Не меняй API-ключи, токены и секреты.
+5. Не добавляй реальные секреты в код.
+6. Не меняй ADMIN_ID без прямой инструкции администратора.
+7. Не отключай безопасность разработчика.
+8. Не добавляй вредоносный код.
+9. Не используй subprocess, os.system или shell-команды
+   для выполнения пользовательских инструкций.
+10. Изменения должны оставаться валидным Python-кодом.
+
+ОТВЕТ ДОЛЖЕН БЫТЬ ТОЛЬКО В ФОРМАТЕ:
+
+<CHANGE>
+<OLD>
+точный существующий фрагмент
+</OLD>
+<NEW>
+новый фрагмент
+</NEW>
+</CHANGE>
+
+Если нужно несколько изменений, используй несколько блоков <CHANGE>.
+
+КРИТИЧЕСКИ ВАЖНО:
+<OLD> должен дословно существовать в исходном файле.
+Не сокращай его через "...".
+Не используй номера строк вместо текста.
+
+Если инструкция не требует изменения кода,
+верни:
+
+<NO_CHANGE>
+Причина
+</NO_CHANGE>
+"""
+
+    user_prompt = (
+        "ИНСТРУКЦИЯ АДМИНИСТРАТОРА:\n"
+        f"{instruction}\n\n"
+        "ТЕКУЩИЙ ИСХОДНИК:\n"
+        "```python\n"
+        f"{source}\n"
+        "```\n"
+    )
+
+    return [
+        {
+            "role": "system",
+            "content": system_prompt
+        },
+        {
+            "role": "user",
+            "content": user_prompt
+        }
+    ]
+
+
+def developer_extract_changes(ai_text):
+    text = clean_model_text(
+        ai_text or ""
+    )
+
+    if "<NO_CHANGE>" in text:
+        return []
+
+    pattern = re.compile(
+        r"<CHANGE>\s*"
+        r"<OLD>\s*(.*?)\s*</OLD>\s*"
+        r"<NEW>\s*(.*?)\s*</NEW>\s*"
+        r"</CHANGE>",
+        re.DOTALL |
+        re.IGNORECASE
+    )
+
+    matches = pattern.findall(text)
+
+    if not matches:
+        raise RuntimeError(
+            "AI не вернул изменения в требуемом формате."
+        )
+
+    changes = []
+
+    for old, new in matches:
+        old = old.strip("\n")
+        new = new.strip("\n")
+
+        if not old:
+            raise RuntimeError(
+                "AI вернул пустой OLD-блок."
+            )
+
+        changes.append(
+            {
+                "old": old,
+                "new": new
+            }
+        )
+
+    return changes
+
+
+def developer_apply_changes(
+    source,
+    changes
+):
+    result = source
+
+    for index, change in enumerate(
+        changes,
+        start=1
+    ):
+        old = change["old"]
+        new = change["new"]
+
+        count = result.count(old)
+
+        if count != 1:
+            raise RuntimeError(
+                f"Изменение #{index}: "
+                f"OLD-фрагмент найден {count} раз. "
+                "Безопасное изменение отменено."
+            )
+
+        result = result.replace(
+            old,
+            new,
+            1
+        )
+
+    if result == source:
+        raise RuntimeError(
+            "После применения patch исходник не изменился."
+        )
+
+    return result
+
+
+def developer_check_python(
+    source
+):
+    try:
+        compile(
+            source,
+            DEVELOPER_FILE_PATH,
+            "exec"
+        )
+    except SyntaxError as e:
+        location = (
+            f"строка {e.lineno}"
+            if e.lineno
+            else "неизвестная строка"
+        )
+
+        raise RuntimeError(
+            f"SyntaxError: {location}: "
+            f"{e.msg}"
+        )
+
+    except Exception as e:
+        raise RuntimeError(
+            f"Ошибка проверки Python: {e}"
+        )
+
+
+def developer_make_diff(
+    old_source,
+    new_source
+):
+    old_lines = old_source.splitlines()
+    new_lines = new_source.splitlines()
+
+    import difflib
+
+    diff = difflib.unified_diff(
+        old_lines,
+        new_lines,
+        fromfile=DEVELOPER_FILE_PATH,
+        tofile=DEVELOPER_FILE_PATH,
+        lineterm=""
+    )
+
+    return "\n".join(diff)
+
+
+def developer_run_ai(
+    source,
+    instruction
+):
+    messages = developer_build_ai_messages(
+        source,
+        instruction
+    )
+
+    return ask_model(
+        MAIN_MODEL,
+        messages,
+        DEVELOPER_MAX_AI_TOKENS
+    )
+
+
+def developer_prepare_patch(
+    instruction,
+    admin_id
+):
+    try:
+        if not DEVELOPER_ENABLED:
+            send_vk_private_message(
+                admin_id,
+                "[V1.3.5] [DEVELOPER]\n"
+                "🔴 Режим разработчика выключен."
+            )
+            return
+
+        if not DEVELOPER_REPO:
+            send_vk_private_message(
+                admin_id,
+                "[V1.3.5] [DEVELOPER]\n\n"
+                "❌ Не задан GITHUB_REPO.\n"
+                "Нужно указать:\n"
+                "owner/repository"
+            )
+            return
+
+        if not DEVELOPER_TOKEN:
+            send_vk_private_message(
+                admin_id,
+                "[V1.3.5] [DEVELOPER]\n\n"
+                "❌ Не задан GITHUB_TOKEN."
+            )
+            return
+
+        send_vk_private_message(
+            admin_id,
+            "[V1.3.5] [DEVELOPER]\n\n"
+            "🧠 Начинаю разработку...\n"
+            "1️⃣ Получаю текущий код GitHub\n"
+            "2️⃣ Анализирую инструкцию\n"
+            "3️⃣ Формирую patch\n"
+            "4️⃣ Проверяю Python\n"
+            "5️⃣ Готовлю изменения\n\n"
+            "Пока GitHub не изменяется."
+        )
+
+        source, github_sha = (
+            developer_github_get_file()
+        )
+
+        ai_result = developer_run_ai(
+            source,
+            instruction
+        )
+
+        changes = developer_extract_changes(
+            ai_result
+        )
+
+        if not changes:
+            with developer_patch_lock:
+                developer_pending_patch.clear()
+                developer_pending_patch.update({
+                    "instruction":
+                        instruction,
+                    "busy":
+                        False,
+                    "github_sha":
+                        github_sha,
+                    "new_source":
+                        None,
+                    "patch":
+                        "",
+                    "backup":
+                        None
+                })
+
+            send_vk_private_message(
+                admin_id,
+                "[V1.3.5] [DEVELOPER]\n\n"
+                "ℹ️ AI решил, что для этой "
+                "инструкции изменение кода "
+                "не требуется."
+            )
+            return
+
+        new_source = developer_apply_changes(
+            source,
+            changes
+        )
+
+        developer_check_python(
+            new_source
+        )
+
+        patch = developer_make_diff(
+            source,
+            new_source
+        )
+
+        if not patch.strip():
+            raise RuntimeError(
+                "Patch оказался пустым."
+            )
+
+        with developer_patch_lock:
+            developer_pending_patch.clear()
+            developer_pending_patch.update({
+                "instruction":
+                    instruction,
+                "busy":
+                    False,
+                "github_sha":
+                    github_sha,
+                "source":
+                    source,
+                "new_source":
+                    new_source,
+                "patch":
+                    patch,
+                "backup":
+                    None,
+                "created_at":
+                    datetime.now(
+                        timezone.utc
+                    ).isoformat()
+            })
+
+        send_vk_private_message(
+            admin_id,
+            "[V1.3.5] [DEVELOPER]\n\n"
+            "✅ Изменения подготовлены.\n\n"
+            f"📝 Изменений: {len(changes)}\n"
+            "🐍 Syntax check: ✅\n"
+            "💾 GitHub пока НЕ изменён.\n\n"
+            "Команды:\n"
+            "• бот разработчик покажи изменения\n"
+            "• бот разработчик примени\n"
+            "• бот разработчик отмена"
+        )
+
+    except Exception as e:
+        with developer_patch_lock:
+            developer_pending_patch["busy"] = False
+
+        print(
+            "Developer prepare error:",
+            e,
+            flush=True
+        )
+
+        send_vk_private_message(
+            admin_id,
+            "[V1.3.5] [DEVELOPER]\n\n"
+            "❌ Ошибка разработки:\n"
+            f"{str(e)[:2500]}"
+        )
+
+
+def developer_github_backup(
+    source,
+    timestamp
+):
+    owner, repo = developer_parse_repo()
+
+    backup_path = (
+        "backups/"
+        f"developer_{timestamp}_"
+        f"{os.path.basename(DEVELOPER_FILE_PATH)}"
+    )
+
+    url = (
+        "https://api.github.com/repos/"
+        f"{owner}/{repo}/contents/"
+        f"{backup_path}"
+    )
+
+    encoded = base64.b64encode(
+        source.encode("utf-8")
+    ).decode("ascii")
+
+    payload = {
+        "message":
+            f"[DEVELOPER] backup {timestamp}",
+        "content":
+            encoded,
+        "branch":
+            DEVELOPER_BRANCH
+    }
+
+    response = requests.put(
+        url,
+        headers=developer_github_headers(),
+        json=payload,
+        timeout=30
+    )
+
+    if response.status_code not in (
+        200,
+        201
+    ):
+        raise RuntimeError(
+            "Backup GitHub "
+            f"{response.status_code}: "
+            f"{response.text[:1500]}"
+        )
+
+    return backup_path
+
+
+def developer_github_commit(
+    new_source,
+    github_sha,
+    instruction
+):
+    owner, repo = developer_parse_repo()
+
+    url = (
+        "https://api.github.com/repos/"
+        f"{owner}/{repo}/contents/"
+        f"{DEVELOPER_FILE_PATH}"
+    )
+
+    encoded = base64.b64encode(
+        new_source.encode("utf-8")
+    ).decode("ascii")
+
+    short_instruction = re.sub(
+        r"\s+",
+        " ",
+        instruction
+    ).strip()
+
+    commit_message = (
+        "[DEVELOPER] "
+        f"{short_instruction[:100]}"
+    )
+
+    payload = {
+        "message":
+            commit_message,
+        "content":
+            encoded,
+        "sha":
+            github_sha,
+        "branch":
+            DEVELOPER_BRANCH
+    }
+
+    response = requests.put(
+        url,
+        headers=developer_github_headers(),
+        json=payload,
+        timeout=30
+    )
+
+    if response.status_code not in (
+        200,
+        201
+    ):
+        raise RuntimeError(
+            "GitHub commit "
+            f"{response.status_code}: "
+            f"{response.text[:2000]}"
+        )
+
+    data = response.json()
+
+    return {
+        "commit":
+            data.get(
+                "commit",
+                {}
+            ).get(
+                "sha"
+            ),
+        "url":
+            data.get(
+                "commit",
+                {}
+            ).get(
+                "html_url"
+            ),
+        "file_url":
+            data.get(
+                "content",
+                {}
+            ).get(
+                "html_url"
+            )
+    }
+
+
+def developer_apply_pending(
+    admin_id
+):
+    try:
+        with developer_patch_lock:
+            pending = dict(
+                developer_pending_patch
+            )
+
+        new_source = pending.get(
+            "new_source"
+        )
+
+        old_source = pending.get(
+            "source"
+        )
+
+        instruction = pending.get(
+            "instruction"
+        )
+
+        github_sha = pending.get(
+            "github_sha"
+        )
+
+        if not new_source:
+            return (
+                False,
+                "❌ Нет подготовленных изменений."
+            )
+
+        if not old_source:
+            return (
+                False,
+                "❌ Не найден исходный код для backup."
+            )
+
+        if not github_sha:
+            return (
+                False,
+                "❌ Не найден GitHub SHA."
+            )
+
+        developer_check_python(
+            new_source
+        )
+
+        timestamp = datetime.now(
+            timezone.utc
+        ).strftime(
+            "%Y%m%d_%H%M%S"
+        )
+
+        send_vk_private_message(
+            admin_id,
+            "[V1.3.5] [DEVELOPER]\n\n"
+            "💾 Делаю backup текущего файла..."
+        )
+
+        backup_path = developer_github_backup(
+            old_source,
+            timestamp
+        )
+
+        send_vk_private_message(
+            admin_id,
+            "[V1.3.5] [DEVELOPER]\n\n"
+            "🚀 Backup создан.\n"
+            f"📦 {backup_path}\n\n"
+            "Теперь выполняю commit..."
+        )
+
+        # Перед commit ещё раз получаем текущий файл.
+        # Это защищает от перезаписи чужого изменения,
+        # сделанного после подготовки patch.
+        current_source, current_sha = (
+            developer_github_get_file()
+        )
+
+        if current_sha != github_sha:
+            return (
+                False,
+                "❌ GitHub-файл уже изменился после "
+                "подготовки patch.\n\n"
+                "Изменения НЕ применены.\n"
+                "Сделай новую инструкцию."
+            )
+
+        result = developer_github_commit(
+            new_source,
+            current_sha,
+            instruction or "update"
+        )
+
+        with developer_patch_lock:
+            developer_pending_patch.clear()
+
+        commit_sha = (
+            result.get("commit")
+            or "неизвестно"
+        )
+
+        return (
+            True,
+            "[V1.3.5] [DEVELOPER]\n\n"
+            "✅ ИЗМЕНЕНИЯ ПРИМЕНЕНЫ\n\n"
+            f"📦 Backup: {backup_path}\n"
+            f"🔗 Commit: {commit_sha}\n"
+            f"🌿 Ветка: {DEVELOPER_BRANCH}\n\n"
+            "🚀 GitHub обновлён.\n"
+            "Render может начать автоматический deploy."
+        )
+
+    except Exception as e:
+        print(
+            "Developer apply error:",
+            e,
+            flush=True
+        )
+
+        return (
+            False,
+            "[V1.3.5] [DEVELOPER]\n\n"
+            "❌ Ошибка применения:\n"
+            f"{str(e)[:2500]}"
+        )
+
+
+def developer_show_patch():
+    with developer_patch_lock:
+        patch = developer_pending_patch.get(
+            "patch"
+        )
+
+        instruction = (
+            developer_pending_patch.get(
+                "instruction"
+            )
+        )
+
+        busy = bool(
+            developer_pending_patch.get(
+                "busy"
+            )
+        )
+
+    if busy:
+        return (
+            "[V1.3.5] [DEVELOPER]\n\n"
+            "🧠 Изменения ещё готовятся."
+        )
+
+    if not patch:
+        return (
+            "[V1.3.5] [DEVELOPER]\n\n"
+            "⚪ Подготовленных изменений нет."
+        )
+
+    return (
+        "[V1.3.5] [DEVELOPER]\n\n"
+        "📝 Инструкция:\n"
+        f"{instruction or '—'}\n\n"
+        "🔧 PATCH:\n"
+        "```diff\n"
+        f"{patch[:12000]}\n"
+        "```"
     )
 
 
 def handle_developer_command(text):
     if not DEVELOPER_ENABLED:
-        return True, "[V1.3.5] [DEVELOPER] Режим разработчика выключен."
-    raw = normalize_text(text)
+        return (
+            True,
+            "[V1.3.5] [DEVELOPER]\n"
+            "🔴 Режим разработчика выключен."
+        )
+
+    raw = normalize_text(
+        text or ""
+    ).strip()
+
     low = raw.lower()
-    if low == "бот разработчик статус":
+
+    # ---------------------------------------------------------
+    # STATUS
+    # ---------------------------------------------------------
+
+    if low in (
+        "бот разработчик статус",
+        "бот, разработчик статус",
+        "бот developer статус"
+    ):
         return True, developer_status()
-    if low == "бот разработчик обнови":
-        return True, "[V1.3.5] [DEVELOPER] Запрос принят. Текущий исходник должен быть получен из настроенного GitHub-репозитория; после этого готовится patch, проверка синтаксиса и тесты. Без подтверждения изменения не применяются."
-    if low == "бот разработчик покажи изменения":
-        with developer_patch_lock:
-            patch = developer_pending_patch.get("patch")
-        return True, patch[:4000] if patch else "[V1.3.5] [DEVELOPER] Подготовленных изменений нет."
-    if low == "бот разработчик примени":
-        return True, "[V1.3.5] [DEVELOPER] Применение требует подготовленного patch и подтверждённого backup/commit. Рабочий код без этого не изменён."
-    if low == "бот разработчик отмена":
+
+    # ---------------------------------------------------------
+    # SHOW PATCH
+    # ---------------------------------------------------------
+
+    if low in (
+        "бот разработчик покажи изменения",
+        "бот разработчик покажи patch",
+        "бот разработчик покажи патч",
+        "бот, разработчик покажи изменения"
+    ):
+        return True, developer_show_patch()
+
+    # ---------------------------------------------------------
+    # CANCEL
+    # ---------------------------------------------------------
+
+    if low in (
+        "бот разработчик отмена",
+        "бот разработчик отменить",
+        "бот разработчик очисти",
+        "бот, разработчик отмена"
+    ):
         with developer_patch_lock:
             developer_pending_patch.clear()
-        return True, "[V1.3.5] [DEVELOPER] Подготовленные изменения отменены."
-    if low == "бот разработчик откати":
-        return True, "[V1.3.5] [DEVELOPER] Откат выполняется только к сохранённому backup/commit. Автоматический откат не выполнен."
-    if raw and not low.startswith("бот "):
+
+        return (
+            True,
+            "[V1.3.5] [DEVELOPER]\n\n"
+            "🗑 Подготовленные изменения "
+            "полностью отменены.\n"
+            "GitHub не изменён."
+        )
+
+    # ---------------------------------------------------------
+    # APPLY
+    # ---------------------------------------------------------
+
+    if low in (
+        "бот разработчик примени",
+        "бот разработчик применить",
+        "бот, разработчик примени"
+    ):
         with developer_patch_lock:
-            developer_pending_patch["instruction"] = raw
-        return True, "[V1.3.5] [DEVELOPER] Инструкция сохранена в очередь. Сначала анализ текущего кода → patch → syntax check → tests → backup/commit → ваше подтверждение → deploy."
+            if developer_pending_patch.get(
+                "busy"
+            ):
+                return (
+                    True,
+                    "[V1.3.5] [DEVELOPER]\n\n"
+                    "⏳ Разработка ещё выполняется."
+                )
+
+            if not developer_pending_patch.get(
+                "new_source"
+            ):
+                return (
+                    True,
+                    "[V1.3.5] [DEVELOPER]\n\n"
+                    "❌ Нет подготовленного patch."
+                )
+
+            developer_pending_patch[
+                "busy"
+            ] = True
+
+        def apply_worker():
+            try:
+                ok, reply = developer_apply_pending(
+                    ADMIN_ID
+                )
+
+                send_vk_private_message(
+                    ADMIN_ID,
+                    reply
+                )
+
+            finally:
+                with developer_patch_lock:
+                    developer_pending_patch[
+                        "busy"
+                    ] = False
+
+        threading.Thread(
+            target=apply_worker,
+            daemon=True
+        ).start()
+
+        return (
+            True,
+            "[V1.3.5] [DEVELOPER]\n\n"
+            "🚀 Применение запущено.\n"
+            "Сначала backup → затем проверка SHA → "
+            "commit в GitHub."
+        )
+
+    # ---------------------------------------------------------
+    # ROLLBACK INFORMATION
+    # ---------------------------------------------------------
+
+    if low in (
+        "бот разработчик откати",
+        "бот разработчик rollback",
+        "бот, разработчик откати"
+    ):
+        return (
+            True,
+            "[V1.3.5] [DEVELOPER]\n\n"
+            "↩️ Автоматический rollback "
+            "через эту команду пока не выполняется.\n\n"
+            "Backup создаётся перед каждым commit."
+        )
+
+    # ---------------------------------------------------------
+    # START DEVELOPMENT
+    # ---------------------------------------------------------
+
+    if raw and not low.startswith(
+        "бот разработчик"
+    ):
+        with developer_patch_lock:
+            if developer_pending_patch.get(
+                "busy"
+            ):
+                return (
+                    True,
+                    "[V1.3.5] [DEVELOPER]\n\n"
+                    "⏳ Предыдущая разработка ещё "
+                    "выполняется.\n"
+                    "Дождись её завершения."
+                )
+
+            developer_pending_patch.clear()
+
+            developer_pending_patch.update({
+                "instruction":
+                    raw,
+                "busy":
+                    True,
+                "new_source":
+                    None,
+                "source":
+                    None,
+                "patch":
+                    "",
+                "github_sha":
+                    None,
+                "backup":
+                    None
+            })
+
+        threading.Thread(
+            target=developer_prepare_patch,
+            args=(
+                raw,
+                ADMIN_ID
+            ),
+            daemon=True
+        ).start()
+
+        return (
+            True,
+            "[V1.3.5] [DEVELOPER]\n\n"
+            "🧠 Инструкция принята.\n"
+            "Начинаю анализ текущего кода.\n\n"
+            "GitHub пока НЕ изменяется."
+        )
+
     return False, None
 
 
