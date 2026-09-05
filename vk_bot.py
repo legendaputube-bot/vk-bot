@@ -52,6 +52,8 @@ DEVELOPER_ENABLED = True
 DEVELOPER_REPO = os.environ.get("GITHUB_REPO", "").strip()
 DEVELOPER_BRANCH = os.environ.get("GITHUB_BRANCH", "main").strip()
 DEVELOPER_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
+developer_patch_lock = threading.Lock()
+developer_pending_patch = {}
 
 ADMIN_NICK = "Blitz"
 
