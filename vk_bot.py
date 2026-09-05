@@ -2,7 +2,9 @@ import os
 import re
 import time
 import hashlib
+import json
 import random
+import subprocess
 import threading
 from datetime import datetime, timezone
 
@@ -16,7 +18,7 @@ from supabase import create_client
 # CONFIG
 # =========================================================
 
-BOT_VERSION = "V1.4"
+BOT_VERSION = "V1.3.5"
 
 BOT_BUILD = (
     "Умное самообучение + "
@@ -24,7 +26,7 @@ BOT_BUILD = (
     "полная модерация + "
     "защита участников + "
     "официальная память Tanks Blitz + "
-    "VK + Telegram + OpenRouter"
+    "VK + Telegram + OpenRouter + developer mode"
 )
 
 
@@ -39,8 +41,17 @@ ADMIN_IDS = {
 }
 
 TESTER_IDS = {
-    ADMIN_ID
+    1020077553
 }
+
+SENIOR_MODERATOR_IDS = set()
+JUNIOR_MODERATOR_IDS = set(TESTER_IDS)
+PROTECTED_IDS = set(ADMIN_IDS) | set(SENIOR_MODERATOR_IDS) | set(JUNIOR_MODERATOR_IDS)
+
+DEVELOPER_ENABLED = True
+DEVELOPER_REPO = os.environ.get("GITHUB_REPO", "").strip()
+DEVELOPER_BRANCH = os.environ.get("GITHUB_BRANCH", "main").strip()
+DEVELOPER_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
 
 ADMIN_NICK = "Blitz"
 
@@ -57,16 +68,20 @@ MODERATION_ENABLED_DEFAULT = True
 
 MODERATION_MODEL = BACKUP_MODEL if "BACKUP_MODEL" in globals() else "openai/gpt-oss-20b"
 
-MODERATION_MAX_TOKENS = 220
+MODERATION_MAX_TOKENS = 260
+MODERATION_CONFIDENCE_THRESHOLD = 0.82
 
 WARNING_MUTE_THRESHOLD = 2
 WARNING_LONG_MUTE_THRESHOLD = 3
-WARNING_KICK_THRESHOLD = 4
-WARNING_BAN_THRESHOLD = 5
+WARNING_KICK_THRESHOLD = None
+WARNING_BAN_THRESHOLD = None
 
 MUTE_FIRST_MINUTES = 10
-MUTE_SECOND_MINUTES = 60
+MUTE_SECOND_MINUTES = 30
+MUTE_THIRD_MINUTES = 60
 
+MODERATOR_ALERT_COOLDOWN = 60
+ADMIN_ALERT_COOLDOWN = 30
 MODERATION_ADMIN_NOTIFY_COOLDOWN = 60
 
 # Не модерируем сообщения короче этого значения,
@@ -584,6 +599,91 @@ def normalize_text(text):
         " ",
         (text or "").strip()
     )
+
+
+# =========================================================
+# GLOBAL SETTINGS / ROLES
+# =========================================================
+
+SETTING_DEFAULTS = {
+    "moderation_enabled": True,
+    "moderation_test_mode": False,
+    "warning_enabled": True,
+    "mute_enabled": True,
+    "mute_2_duration": 10,
+    "mute_3_duration": 30,
+    "mute_4_duration": 60,
+    "confidence_threshold": MODERATION_CONFIDENCE_THRESHOLD,
+    "admin_alert_cooldown": ADMIN_ALERT_COOLDOWN,
+    "moderator_alert_cooldown": MODERATOR_ALERT_COOLDOWN,
+    "admin_notifications": True,
+    "moderator_notifications": True,
+    "tester_notifications": True,
+    "learning_enabled": True,
+    "response_enabled": True
+}
+
+
+def _setting_value(raw, default):
+    if raw is None:
+        return default
+    if isinstance(default, bool):
+        return str(raw).lower() in ("1", "true", "yes", "on", "вкл")
+    if isinstance(default, int):
+        try:
+            return int(raw)
+        except Exception:
+            return default
+    if isinstance(default, float):
+        try:
+            return float(raw)
+        except Exception:
+            return default
+    return raw
+
+
+def get_bot_setting(key):
+    default = SETTING_DEFAULTS.get(key)
+    try:
+        result = supabase.table("bot_settings").select("value").eq("key", key).limit(1).execute()
+        if result.data:
+            return _setting_value(result.data[0].get("value"), default)
+    except Exception as e:
+        print("[V1.3.5] [ADMIN] Settings read error:", e, flush=True)
+    return default
+
+
+def set_bot_setting(key, value, updated_by=None):
+    try:
+        payload = {
+            "key": key,
+            "value": str(value).lower() if isinstance(value, bool) else str(value),
+            "updated_at": utc_now(),
+            "updated_by": int(updated_by) if updated_by is not None else ADMIN_ID
+        }
+        existing = supabase.table("bot_settings").select("key").eq("key", key).limit(1).execute()
+        if existing.data:
+            supabase.table("bot_settings").update(payload).eq("key", key).execute()
+        else:
+            supabase.table("bot_settings").insert(payload).execute()
+        return True
+    except Exception as e:
+        print("[V1.3.5] [ADMIN] Settings write error:", e, flush=True)
+        return False
+
+
+def is_senior_moderator(user_id):
+    try:
+        return int(user_id) in SENIOR_MODERATOR_IDS
+    except Exception:
+        return False
+
+
+def is_junior_moderator(user_id):
+    try:
+        return int(user_id) in JUNIOR_MODERATOR_IDS
+    except Exception:
+        return False
 
 
 # =========================================================
@@ -2643,6 +2743,7 @@ def set_moderation_enabled(
                 .execute()
             )
 
+        set_bot_setting("moderation_enabled", bool(enabled), ADMIN_ID)
         return True
 
     except Exception as e:
@@ -2927,7 +3028,12 @@ def send_vk_private_message(
     text
 ):
 
-    if not is_admin(user_id):
+    try:
+        uid = int(user_id)
+    except Exception:
+        return None
+
+    if uid not in PROTECTED_IDS:
         return None
 
     if not text:
@@ -2982,53 +3088,55 @@ def send_vk_private_message(
         return None
 
 
-def notify_admin_moderation(
-    chat_id,
-    user_id,
-    user_name,
-    action,
-    reason,
-    warnings
-):
-
-    key = (
-        f"{chat_id}:{user_id}"
-    )
-
+def _send_role_notification(user_ids, text, cooldown_key, cooldown):
+    if not user_ids or not text:
+        return
     now = time.time()
-
-    with moderation_notify_lock:
-
-        previous = moderation_notify_until.get(
-            key,
-            0
-        )
-
+    with role_notify_lock:
+        previous = role_notify_until.get(cooldown_key, 0)
         if now < previous:
             return
+        role_notify_until[cooldown_key] = now + cooldown
+    for uid in user_ids:
+        send_vk_private_message(uid, text)
 
-        moderation_notify_until[
-            key
-        ] = (
-            now
-            +
-            MODERATION_ADMIN_NOTIFY_COOLDOWN
-        )
 
+def notify_admin_moderation(chat_id, user_id, user_name, action, reason, warnings, message_text="", severity="low", confidence=None, rule_id="", uncertain=False):
+    if not get_bot_setting("admin_notifications"):
+        return
+    confidence_text = "—" if confidence is None else f"{float(confidence):.2f}"
     message = (
-        "🛡 МОДЕРАЦИЯ\n\n"
+        "[V1.3.5] [MODERATION]\n\n"
         f"👤 {user_name or 'Пользователь'}\n"
-        f"🆔 ID: {user_id}\n"
+        f"🆔 VK ID: {user_id}\n"
         f"💬 Чат: {chat_id}\n"
-        f"⚠️ Действие: {action}\n"
-        f"📌 Причина: {reason}\n"
-        f"🔢 Предупреждений: {warnings}"
+        f"📌 Правило: {rule_id or 'не определено'}\n"
+        f"⚠️ Категория: {severity}\n"
+        f"🎯 Уверенность: {confidence_text}\n"
+        f"🔧 Действие: {action}\n"
+        f"🔢 Нарушений: {warnings}\n"
+        f"❓ Неопределённость: {'ДА' if uncertain else 'НЕТ'}\n"
+        f"📝 Причина: {reason[:1000]}\n"
+        f"💬 Сообщение: {message_text[:2500]}"
     )
+    key = f"admin:{chat_id}:{user_id}:{action}:{reason[:120]}"
+    _send_role_notification({ADMIN_ID}, message, key, int(get_bot_setting("admin_alert_cooldown") or ADMIN_ALERT_COOLDOWN))
+    if uncertain and get_bot_setting("moderator_notifications"):
+        _send_role_notification(SENIOR_MODERATOR_IDS, message, "senior:" + key, int(get_bot_setting("moderator_alert_cooldown") or MODERATOR_ALERT_COOLDOWN))
 
-    send_vk_private_message(
-        ADMIN_ID,
-        message
+
+def notify_tester_result(chat_id, user_id, user_name, result, action="none"):
+    if not get_bot_setting("tester_notifications"):
+        return
+    text = (
+        "[V1.3.5] [TEST] Модерация\n\n"
+        f"👤 {user_name or 'Тестер'} (VK ID {user_id})\n"
+        f"💬 Чат: {chat_id}\n"
+        f"🧪 Результат: {json.dumps(result, ensure_ascii=False)}\n"
+        f"🔧 Предложенное действие: {action}\n"
+        "Реальное наказание: НЕ ПРИМЕНЕНО"
     )
+    _send_role_notification({user_id}, text, f"tester:{chat_id}:{user_id}", 5)
 
 
 # =========================================================
@@ -3204,6 +3312,8 @@ critical:
 {{
   "violation": true,
   "severity": "low",
+  "rule_id": "1.1",
+  "confidence": 0.95,
   "reason": "короткая причина"
 }}
 
@@ -3263,292 +3373,117 @@ critical:
 # APPLY AUTOMATIC MODERATION
 # =========================================================
 
-def apply_automatic_moderation(
-    chat_id,
-    sender_id,
-    user_name,
-    text,
-    message
-):
+def log_moderation_event(chat_id, user_id, user_name, rule_id, severity, confidence, message_text, action, warning_number, mute_until=None, review_status="auto"):
+    try:
+        supabase.table("bot_moderation").insert({
+            "chat_id": db_chat_id(chat_id),
+            "user_id": db_user_id(user_id),
+            "user_name": user_name or "",
+            "rule_id": rule_id or "",
+            "severity": severity,
+            "confidence": float(confidence or 0),
+            "message": str(message_text)[:4000],
+            "action": action,
+            "warning_number": int(warning_number or 0),
+            "mute_until": mute_until,
+            "created_at": utc_now(),
+            "review_status": review_status,
+            "reviewed_by": None
+        }).execute()
+    except Exception as e:
+        print("[V1.3.5] [MODERATION] bot_moderation log error:", e, flush=True)
 
+
+def apply_automatic_moderation(chat_id, sender_id, user_name, text, message):
     if is_admin(sender_id):
         return False
-
-    if not get_moderation_enabled(
-        chat_id
-    ):
+    # Старшие модераторы защищены от автомата. Тестер проходит отдельную
+    # тестовую ветку, где реальные наказания запрещены.
+    if is_senior_moderator(sender_id):
         return False
-
-    # Если пользователь уже заблокирован —
-    # сначала удаляем его сообщение.
-    if is_user_banned(
-        chat_id,
-        sender_id
-    ):
-
-        delete_vk_message(
-            chat_id,
-            message
-        )
-
+    if is_tester(sender_id) and not get_bot_setting("moderation_test_mode"):
+        return False
+    if not get_moderation_enabled(chat_id):
+        return False
+    if is_user_banned(chat_id, sender_id):
+        delete_vk_message(chat_id, message)
         return True
-
-    # Если пользователь сейчас в муте —
-    # любое новое сообщение удаляется.
-    if is_user_muted(
-        chat_id,
-        sender_id
-    ):
-
-        delete_vk_message(
-            chat_id,
-            message
-        )
-
+    if is_user_muted(chat_id, sender_id):
+        delete_vk_message(chat_id, message)
         return True
-
-    # Не вызываем AI на каждое обычное сообщение.
-    if not moderation_candidate(
-        text
-    ):
+    if not moderation_candidate(text):
         return False
 
-    history = get_chat_memory(
-        chat_id,
-        8
-    )
-
-    context_lines = []
-
-    for item in history:
-
-        name = (
-            item.get("speaker_name")
-            or "Участник"
-        )
-
-        content = (
-            item.get("content")
-            or ""
-        )
-
-        if content:
-
-            context_lines.append(
-                f"{name}: {content}"
-            )
-
-    context = "\n".join(
-        context_lines
-    )
-
-    result = ask_moderation_model(
-        text,
-        context
-    )
-
-    if not result:
+    history = get_chat_memory(chat_id, 8)
+    context = "\n".join(f"{item.get('speaker_name') or 'Участник'}: {item.get('content') or ''}" for item in history if item.get('content'))
+    result = ask_moderation_model(text, context)
+    if not result or not bool(result.get("violation", False)):
         return False
 
-    violation = bool(
-        result.get(
-            "violation",
-            False
-        )
-    )
-
-    if not violation:
-        return False
-
-    severity = str(
-        result.get(
-            "severity",
-            "low"
-        )
-    ).lower()
-
-    reason = normalize_text(
-        result.get(
-            "reason",
-            "Нарушение правил"
-        )
-    )
-
-    if severity not in (
-        "low",
-        "medium",
-        "high",
-        "critical"
-    ):
+    severity = str(result.get("severity", "low")).lower()
+    if severity not in ("low", "medium", "high", "critical"):
         severity = "low"
+    reason = normalize_text(result.get("reason", "Нарушение правил")) or "Нарушение правил"
+    rule_id = normalize_text(result.get("rule_id", ""))
+    try:
+        confidence = float(result.get("confidence", 0))
+    except Exception:
+        confidence = 0.0
 
-    # -----------------------------------------------------
-    # CRITICAL / HIGH
-    # -----------------------------------------------------
+    uncertain = confidence < float(get_bot_setting("confidence_threshold") or MODERATION_CONFIDENCE_THRESHOLD)
+    current = get_warning_count(chat_id, sender_id)
+    if uncertain:
+        notify_admin_moderation(chat_id, sender_id, user_name, "проверка модератором", reason, current, text, severity, confidence, rule_id, True)
+        log_moderation_event(chat_id, sender_id, user_name, rule_id, severity, confidence, text, "review", current, review_status="pending")
+        if is_tester(sender_id) and get_bot_setting("moderation_test_mode"):
+            notify_tester_result(chat_id, sender_id, user_name, result, "review")
+        return False
 
-    if severity in (
-        "critical",
-        "high"
-    ):
+    if is_tester(sender_id) and get_bot_setting("moderation_test_mode"):
+        next_warning = current + 1
+        if next_warning >= 4:
+            proposed = f"mute {int(get_bot_setting('mute_4_duration'))} min"
+        elif next_warning == 3:
+            proposed = f"mute {int(get_bot_setting('mute_3_duration'))} min"
+        elif next_warning == 2:
+            proposed = f"mute {int(get_bot_setting('mute_2_duration'))} min"
+        else:
+            proposed = "warning"
+        notify_admin_moderation(chat_id, sender_id, user_name, "ТЕСТ: " + proposed, reason, current, text, severity, confidence, rule_id, False)
+        notify_tester_result(chat_id, sender_id, user_name, result, proposed)
+        log_moderation_event(chat_id, sender_id, user_name, rule_id, severity, confidence, text, proposed, current, review_status="test")
+        return False
 
-        warning_count = add_warning(
-            chat_id,
-            sender_id,
-            user_name,
-            reason,
-            text,
-            severity
-        )
+    new_count = current + 1
+    delete_vk_message(chat_id, message)
+    if get_bot_setting("warning_enabled"):
+        add_warning(chat_id, sender_id, user_name, reason, text, severity)
 
-        delete_vk_message(
-            chat_id,
-            message
-        )
+    mute_minutes = None
+    if get_bot_setting("mute_enabled"):
+        if new_count >= 4:
+            mute_minutes = int(get_bot_setting("mute_4_duration"))
+        elif new_count == 3:
+            mute_minutes = int(get_bot_setting("mute_3_duration"))
+        elif new_count == 2:
+            mute_minutes = int(get_bot_setting("mute_2_duration"))
 
-        # Серьёзное нарушение сразу мутим.
-        mute_minutes = 60
+    action = "warning"
+    mute_until = None
+    if mute_minutes:
+        set_user_mute(chat_id, sender_id, mute_minutes)
+        mute_until = get_moderation_state(chat_id, sender_id).get("muted_until")
+        action = f"mute {mute_minutes} min"
 
-        set_user_mute(
-            chat_id,
-            sender_id,
-            mute_minutes
-        )
+    if new_count >= 5 or severity in ("high", "critical"):
+        notify_admin_moderation(chat_id, sender_id, user_name, action if new_count < 5 else "manual review", reason, new_count, text, severity, confidence, rule_id, False)
 
-        notify_admin_moderation(
-            chat_id,
-            sender_id,
-            user_name,
-            f"мут {mute_minutes} мин.",
-            reason,
-            warning_count
-        )
+    if mute_minutes:
+        send_message(chat_id, f"🔇 {user_name or 'Участник'}, сообщение удалено. Выдан мут на {mute_minutes} мин.\nПричина: {reason}")
+    elif get_bot_setting("warning_enabled"):
+        send_message(chat_id, f"⚠️ {user_name or 'Участник'}, предупреждение.\nПричина: {reason}\nНарушений: {new_count}")
 
-        # Критическое нарушение —
-        # после фиксации удаляем пользователя из беседы.
-        if severity == "critical":
-
-            set_user_ban(
-                chat_id,
-                sender_id,
-                True
-            )
-
-            remove_vk_chat_user(
-                chat_id,
-                sender_id
-            )
-
-            notify_admin_moderation(
-                chat_id,
-                sender_id,
-                user_name,
-                "бан / удаление из чата",
-                reason,
-                warning_count
-            )
-
-        return True
-
-    # -----------------------------------------------------
-    # LOW / MEDIUM
-    # -----------------------------------------------------
-
-    warning_count = add_warning(
-        chat_id,
-        sender_id,
-        user_name,
-        reason,
-        text,
-        severity
-    )
-
-    delete_vk_message(
-        chat_id,
-        message
-    )
-
-    # Второе нарушение → 10 минут
-    if warning_count >= WARNING_MUTE_THRESHOLD:
-
-        set_user_mute(
-            chat_id,
-            sender_id,
-            MUTE_FIRST_MINUTES
-        )
-
-    # Третье → час
-    if warning_count >= WARNING_LONG_MUTE_THRESHOLD:
-
-        set_user_mute(
-            chat_id,
-            sender_id,
-            MUTE_SECOND_MINUTES
-        )
-
-    # Четвёртое → удаление из беседы
-    if warning_count >= WARNING_KICK_THRESHOLD:
-
-        remove_vk_chat_user(
-            chat_id,
-            sender_id
-        )
-
-        notify_admin_moderation(
-            chat_id,
-            sender_id,
-            user_name,
-            "удаление из чата",
-            reason,
-            warning_count
-        )
-
-        return True
-
-    # Пятое → постоянный бан
-    if warning_count >= WARNING_BAN_THRESHOLD:
-
-        set_user_ban(
-            chat_id,
-            sender_id,
-            True
-        )
-
-        remove_vk_chat_user(
-            chat_id,
-            sender_id
-        )
-
-        notify_admin_moderation(
-            chat_id,
-            sender_id,
-            user_name,
-            "бан / удаление из чата",
-            reason,
-            warning_count
-        )
-
-        return True
-
-    # Обычное предупреждение
-    send_message(
-        chat_id,
-        (
-            f"⚠️ {user_name or 'Участник'}, "
-            f"предупреждение.\n"
-            f"Причина: {reason}\n"
-            f"Нарушений: {warning_count}"
-        )
-    )
-
-    notify_admin_moderation(
-        chat_id,
-        sender_id,
-        user_name,
-        "предупреждение",
-        reason,
-        warning_count
-    )
-
+    log_moderation_event(chat_id, sender_id, user_name, rule_id, severity, confidence, text, action, new_count, mute_until=mute_until, review_status="auto")
     return True
 
 
@@ -3753,15 +3688,18 @@ def handle_moderation_admin_command(
     message
 ):
 
-    if not is_admin(sender_id):
-
-        return False, None
-
-    raw = normalize_text(
-        text
-    )
-
+    raw = normalize_text(text)
     low = raw.lower()
+
+    if low in ("бот модерация тест", "бот, модерация тест", "бот модерация тест выкл", "бот, модерация тест выкл"):
+        if not (is_admin(sender_id) or is_tester(sender_id)):
+            return False, None
+        enabled = not low.endswith("выкл")
+        set_bot_setting("moderation_test_mode", enabled, sender_id)
+        return True, "🧪 Тестовый режим модерации " + ("включён. Реальные наказания не применяются." if enabled else "выключен.")
+
+    if not is_admin(sender_id):
+        return False, None
 
     # -----------------------------------------------------
     # MODERATION ON
@@ -3839,7 +3777,7 @@ def handle_moderation_admin_command(
             f"Мут: автоматический\n"
             f"Удаление сообщений: автоматическое\n"
             f"Предупреждения: включены\n"
-            f"Бан: включён"
+            f"Бан: только вручную администратором"
         )
 
     # -----------------------------------------------------
@@ -4063,6 +4001,14 @@ def handle_moderation_admin_command(
         return True, (
             "❌ Не удалось снять бан."
         )
+
+    if low in ("бот модераторы", "бот, модераторы"):
+        senior = ", ".join(str(x) for x in sorted(SENIOR_MODERATOR_IDS)) or "не назначены"
+        junior = ", ".join(str(x) for x in sorted(JUNIOR_MODERATOR_IDS)) or "нет"
+        return True, f"🛡 Старшие модераторы: {senior}\n🧪 Младшие/тестеры: {junior}\n👑 Админ: {ADMIN_ID}"
+
+    if low in ("бот тестер", "бот, тестер"):
+        return True, f"🧪 Тестер: {', '.join(str(x) for x in sorted(TESTER_IDS)) or 'не назначен'}"
 
     return False, None
 
@@ -4355,7 +4301,7 @@ def admin_knowledge_text(chat_id):
 def admin_help_text():
 
     return (
-        "👑 АДМИН-ПАНЕЛЬ V1.4\n\n"
+        "👑 АДМИН-ПАНЕЛЬ V1.3.5\n\n"
 
         "🛡 МОДЕРАЦИЯ\n"
         "бот модерация включи\n"
@@ -4366,7 +4312,11 @@ def admin_help_text():
         "бот мут 10 — ответом\n"
         "бот размут — ответом\n"
         "бот бан — ответом\n"
-        "бот разбан — ответом\n\n"
+        "бот разбан — только вручную, ответом\n"
+        "бот модераторы\n"
+        "бот тестер\n"
+        "бот модерация тест\n"
+        "бот модерация тест выкл\n\n"
 
         "🧠 ОБУЧЕНИЕ\n"
         "бот обучение включи\n"
@@ -4394,6 +4344,18 @@ def admin_help_text():
 
         "🧪 ПРОЧЕЕ\n"
         "бот тестеры\n"
+        "бот разработчик статус\n"
+        "бот разработчик обнови\n"
+        "бот разработчик покажи изменения\n"
+        "бот разработчик примени\n"
+        "бот разработчик отмена\n"
+        "бот разработчик откати\n"
+        "бот разработчик статус\n"
+        "бот разработчик обнови\n"
+        "бот разработчик покажи изменения\n"
+        "бот разработчик примени\n"
+        "бот разработчик отмена\n"
+        "бот разработчик откати\n"
         "бот версия\n"
         "бот админ помощь\n\n"
 
@@ -5697,6 +5659,13 @@ def is_directed_to_bot_telegram(
     return False
 
 
+def local_offtopic_reply(text):
+    low = normalize_text(text).lower()
+    if low in ("бот как дела", "бот как ты", "бот, как дела", "эй бот как дела"):
+        return "Нормально 😄 Я тут в основном по Tanks Blitz."
+    return "Я в основном по Tanks Blitz. По игре спрашивай — помогу."
+
+
 def should_answer(
     message,
     text,
@@ -6237,6 +6206,49 @@ def notify_admin_error(
 
 
 # =========================================================
+# DEVELOPER MODE
+# =========================================================
+
+def developer_status():
+    return (
+        "[V1.3.5] [DEVELOPER]\n\n"
+        f"Режим: {'🟢 включён' if DEVELOPER_ENABLED else '🔴 выключен'}\n"
+        f"Репозиторий: {DEVELOPER_REPO or 'не задан'}\n"
+        f"Ветка: {DEVELOPER_BRANCH}\n"
+        f"GitHub token: {'🟢 задан' if DEVELOPER_TOKEN else '🔴 не задан'}\n"
+        "Автоприменение без подтверждения: 🔴 запрещено"
+    )
+
+
+def handle_developer_command(text):
+    if not DEVELOPER_ENABLED:
+        return True, "[V1.3.5] [DEVELOPER] Режим разработчика выключен."
+    raw = normalize_text(text)
+    low = raw.lower()
+    if low == "бот разработчик статус":
+        return True, developer_status()
+    if low == "бот разработчик обнови":
+        return True, "[V1.3.5] [DEVELOPER] Запрос принят. Текущий исходник должен быть получен из настроенного GitHub-репозитория; после этого готовится patch, проверка синтаксиса и тесты. Без подтверждения изменения не применяются."
+    if low == "бот разработчик покажи изменения":
+        with developer_patch_lock:
+            patch = developer_pending_patch.get("patch")
+        return True, patch[:4000] if patch else "[V1.3.5] [DEVELOPER] Подготовленных изменений нет."
+    if low == "бот разработчик примени":
+        return True, "[V1.3.5] [DEVELOPER] Применение требует подготовленного patch и подтверждённого backup/commit. Рабочий код без этого не изменён."
+    if low == "бот разработчик отмена":
+        with developer_patch_lock:
+            developer_pending_patch.clear()
+        return True, "[V1.3.5] [DEVELOPER] Подготовленные изменения отменены."
+    if low == "бот разработчик откати":
+        return True, "[V1.3.5] [DEVELOPER] Откат выполняется только к сохранённому backup/commit. Автоматический откат не выполнен."
+    if raw and not low.startswith("бот "):
+        with developer_patch_lock:
+            developer_pending_patch["instruction"] = raw
+        return True, "[V1.3.5] [DEVELOPER] Инструкция сохранена в очередь. Сначала анализ текущего кода → patch → syntax check → tests → backup/commit → ваше подтверждение → deploy."
+    return False, None
+
+
+# =========================================================
 # VK SEND
 # =========================================================
 
@@ -6695,6 +6707,13 @@ def callback():
         ):
             return "ok"
 
+        if int(peer_id) == int(sender_id) and is_admin(sender_id):
+            dm_text = (message.get("text") or "").strip()
+            handled, reply = handle_developer_command(dm_text) if dm_text else (False, None)
+            if handled and reply:
+                send_vk_private_message(sender_id, reply)
+            return "ok"
+
         if not is_allowed_vk_chat(
             peer_id
         ):
@@ -6880,6 +6899,10 @@ def callback():
             text,
             "vk"
         ):
+            return "ok"
+
+        if not is_game_relevant(text):
+            send_message(peer_id, local_offtopic_reply(text))
             return "ok"
 
         # =====================================================
@@ -7084,6 +7107,10 @@ def telegram_webhook(
             text,
             "telegram"
         ):
+            return "ok"
+
+        if not is_game_relevant(text):
+            send_telegram_message(raw_chat_id, local_offtopic_reply(text), message.get("message_id"))
             return "ok"
 
         reply = ask_ai(
