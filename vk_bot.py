@@ -7128,7 +7128,27 @@ def handle_developer_command(text):
         "бот developer статус"
     ):
         return True, developer_status()
+        
+        if low == "бот разработчик тест":
+            try:
+                result = github_test_connection()
 
+                return True, (
+                    "[V1.3.5] [DEVELOPER]\n\n"
+                    "🧪 GitHub-тест успешен.\n\n"
+                    f"Репозиторий: {DEVELOPER_REPO}\n"
+                    f"Ветка: {DEVELOPER_BRANCH}\n"
+                    f"Файл: {result['file']}\n"
+                    f"Размер: {result['size']} символов\n"
+                    "GitHub: 🟢 доступ есть"
+                )
+
+            except Exception as e:
+                return True, (
+                    "[V1.3.5] [DEVELOPER]\n\n"
+                    "❌ GitHub-тест не пройден.\n\n"
+                    f"Ошибка: {str(e)[:1500]}"
+                )
     # ---------------------------------------------------------
     # SHOW PATCH
     # ---------------------------------------------------------
