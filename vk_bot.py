@@ -6208,7 +6208,84 @@ def notify_admin_error(
         )
 
 
+# =========================================================
+# GITHUB / AI DEVELOPER ENGINE
+# =========================================================
 
+GITHUB_FILE_PATH = os.environ.get(
+    "GITHUB_FILE_PATH",
+    "vk_bot.py"
+).strip()
+
+DEVELOPER_TIMEOUT = 60
+
+developer_engine_lock = threading.Lock()
+
+
+def github_headers():
+    if not DEVELOPER_TOKEN:
+        raise RuntimeError("GITHUB_TOKEN не установлен")
+
+    return {
+        "Authorization": f"Bearer {DEVELOPER_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28"
+    }
+
+
+def github_file_url():
+    if not DEVELOPER_REPO:
+        raise RuntimeError("GITHUB_REPO не установлен")
+
+    return (
+        f"https://api.github.com/repos/"
+        f"{DEVELOPER_REPO}/contents/"
+        f"{GITHUB_FILE_PATH}"
+    )
+
+
+def github_get_file():
+    response = requests.get(
+        github_file_url(),
+        headers=github_headers(),
+        params={
+            "ref": DEVELOPER_BRANCH
+        },
+        timeout=DEVELOPER_TIMEOUT
+    )
+
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"GitHub GET {response.status_code}: "
+            f"{response.text[:1000]}"
+        )
+
+    data = response.json()
+
+    if data.get("encoding") != "base64":
+        raise RuntimeError(
+            "GitHub вернул файл не в base64"
+        )
+
+    import base64
+
+    content = base64.b64decode(
+        data["content"]
+    ).decode("utf-8")
+
+    return content, data["sha"]
+
+
+def github_test_connection():
+    content, sha = github_get_file()
+
+    return {
+        "ok": True,
+        "file": GITHUB_FILE_PATH,
+        "branch": DEVELOPER_BRANCH,
+        "size": len(content),
+        "sha": sha
+    }
 
 # =========================================================
 # DEVELOPER MODE
