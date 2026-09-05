@@ -16,11 +16,12 @@ from supabase import create_client
 # CONFIG
 # =========================================================
 
-BOT_VERSION = "V1.3"
+BOT_VERSION = "V1.4"
 
 BOT_BUILD = (
     "Умное самообучение + "
     "админ-панель + "
+    "полная модерация + "
     "защита участников + "
     "официальная память Tanks Blitz + "
     "VK + Telegram + OpenRouter"
@@ -46,6 +47,31 @@ ADMIN_NICK = "Blitz"
 INTERVENTION_COOLDOWN = 90
 
 ADMIN_ERROR_COOLDOWN = 300
+
+
+# =========================================================
+# MODERATION CONFIG
+# =========================================================
+
+MODERATION_ENABLED_DEFAULT = True
+
+MODERATION_MODEL = BACKUP_MODEL if "BACKUP_MODEL" in globals() else "openai/gpt-oss-20b"
+
+MODERATION_MAX_TOKENS = 220
+
+WARNING_MUTE_THRESHOLD = 2
+WARNING_LONG_MUTE_THRESHOLD = 3
+WARNING_KICK_THRESHOLD = 4
+WARNING_BAN_THRESHOLD = 5
+
+MUTE_FIRST_MINUTES = 10
+MUTE_SECOND_MINUTES = 60
+
+MODERATION_ADMIN_NOTIFY_COOLDOWN = 60
+
+# Не модерируем сообщения короче этого значения,
+# если они не содержат очевидной угрозы/спама.
+MODERATION_MIN_TEXT_LENGTH = 3
 
 
 # =========================================================
@@ -154,6 +180,8 @@ BACKUP_MODEL = "openai/gpt-oss-20b"
 
 OPENROUTER_MODEL = "openrouter/free"
 
+MODERATION_MODEL = BACKUP_MODEL
+
 
 # =========================================================
 # LIMITS
@@ -224,11 +252,13 @@ admin_error_cache = {}
 
 admin_error_lock = threading.Lock()
 
-# Временное отключение обычных ответов.
-# Не влияет на память, официальные знания и обучение.
 response_disabled = set()
 
 response_mode_lock = threading.Lock()
+
+moderation_notify_until = {}
+
+moderation_notify_lock = threading.Lock()
 
 
 # =========================================================
@@ -305,18 +335,6 @@ SYSTEM_PROMPT = """
 
 Не считай любой вопрос в чате вопросом к себе.
 
-Например:
-
-«кто завтра играет?»
-
-сам по себе НЕ означает, что спрашивают тебя.
-
-Но если:
-
-«бот, кто завтра играет?»
-
-тогда отвечай.
-
 === TANKS BLITZ ===
 
 Tanks Blitz — главная игровая тема сообщества.
@@ -366,13 +384,6 @@ Tanks Blitz — главная игровая тема сообщества.
 для другого.
 
 Не раскрывай внутреннюю память.
-
-Не говори:
-«я записал это в базу»
-или
-«я посмотрел свою базу»,
-если пользователь специально не спрашивает
-о технической работе бота.
 
 Если человек говорит:
 «запомни»
@@ -476,7 +487,6 @@ GAME_KEYWORDS = (
     "серебр",
     "опыт",
     "хп",
-    "хпшк",
     "ттх",
     "карта",
     "карты",
@@ -514,12 +524,6 @@ GAME_KEYWORDS = (
 
 
 def is_game_relevant(text):
-    """
-    Быстрый фильтр перед самообучением.
-
-    Если в сообщении нет игровой тематики,
-    AI-модель обучения вообще не вызывается.
-    """
 
     low = normalize_text(text).lower()
 
@@ -533,10 +537,6 @@ def is_game_relevant(text):
 
 
 def filter_learning_history(history):
-    """
-    Оставляем только сообщения,
-    которые похожи на Tanks Blitz-контекст.
-    """
 
     result = []
 
@@ -561,20 +561,24 @@ def filter_learning_history(history):
 # =========================================================
 
 def utc_now():
+
     return datetime.now(
         timezone.utc
     ).isoformat()
 
 
 def db_chat_id(chat_id):
+
     return int(chat_id)
 
 
 def db_user_id(user_id):
+
     return int(user_id)
 
 
 def normalize_text(text):
+
     return re.sub(
         r"\s+",
         " ",
@@ -589,6 +593,7 @@ def normalize_text(text):
 def is_admin(user_id):
 
     try:
+
         return int(user_id) in ADMIN_IDS
 
     except (
@@ -601,6 +606,7 @@ def is_admin(user_id):
 def is_tester(user_id):
 
     try:
+
         return int(user_id) in TESTER_IDS
 
     except (
@@ -608,293 +614,6 @@ def is_tester(user_id):
         TypeError
     ):
         return False
-
-
-# =========================================================
-# ADMIN PRIVATE MESSAGE
-# =========================================================
-
-def send_vk_private_message(
-    user_id,
-    text
-):
-
-    if not is_admin(user_id):
-        return None
-
-    if not text:
-        return None
-
-    try:
-
-        response = requests.post(
-            f"{VK_API}/messages.send",
-            data={
-                "access_token": VK_TOKEN,
-                "v": VK_VERSION,
-                "peer_id": int(user_id),
-                "message": text[:4096],
-                "random_id": random.randint(
-                    1,
-                    2147483647
-                )
-            },
-            timeout=15
-        )
-
-        result = response.json()
-
-        if "error" in result:
-
-            print(
-                "ADMIN PRIVATE MESSAGE ERROR:",
-                result["error"],
-                flush=True
-            )
-
-        return result
-
-    except Exception as e:
-
-        print(
-            "Admin private message exception:",
-            e,
-            flush=True
-        )
-
-        return None
-
-
-def notify_admin_error(
-    error_type,
-    error,
-    context=""
-):
-
-    try:
-
-        error_text = normalize_text(
-            str(error)
-        )
-
-        context_text = normalize_text(
-            context
-        )
-
-        cache_key = (
-            f"{error_type}|"
-            f"{error_text[:300]}|"
-            f"{context_text[:150]}"
-        )
-
-        now = time.time()
-
-        with admin_error_lock:
-
-            previous = admin_error_cache.get(
-                cache_key,
-                0
-            )
-
-            if (
-                now - previous
-                < ADMIN_ERROR_COOLDOWN
-            ):
-                return
-
-            admin_error_cache[
-                cache_key
-            ] = now
-
-        message = (
-            "⚠️ ОШИБКА БОТА\n\n"
-            f"Тип: {error_type}\n"
-            f"Ошибка: {error_text[:1200]}"
-        )
-
-        if context_text:
-            message += (
-                f"\nКонтекст: "
-                f"{context_text[:500]}"
-            )
-
-        send_vk_private_message(
-            ADMIN_ID,
-            message
-        )
-
-    except Exception as e:
-
-        print(
-            "Admin error notify failed:",
-            e,
-            flush=True
-        )
-
-
-# =========================================================
-# RESPONSE MODE
-# =========================================================
-
-def set_response_enabled(
-    chat_id,
-    enabled
-):
-
-    key = str(chat_id)
-
-    with response_mode_lock:
-
-        if enabled:
-            response_disabled.discard(key)
-        else:
-            response_disabled.add(key)
-
-
-def is_response_enabled(chat_id):
-
-    with response_mode_lock:
-
-        return str(chat_id) not in response_disabled
-
-
-# =========================================================
-# VK VALIDATION
-# =========================================================
-
-def is_vk_group_chat(
-    peer_id,
-    sender_id=None
-):
-
-    try:
-        peer_id = int(peer_id)
-
-    except (
-        ValueError,
-        TypeError
-    ):
-        return False
-
-    if peer_id < 2000000000:
-        return False
-
-    if (
-        ALLOWED_VK_PEER_ID
-        and peer_id != ALLOWED_VK_PEER_ID
-    ):
-        return False
-
-    return True
-
-
-def is_allowed_vk_chat(peer_id):
-
-    try:
-        peer_id = int(peer_id)
-
-    except (
-        ValueError,
-        TypeError
-    ):
-        return False
-
-    return is_vk_group_chat(peer_id)
-
-
-# =========================================================
-# EVENT PROTECTION
-# =========================================================
-
-def already_processed(event_id):
-
-    if not event_id:
-        return False
-
-    now = time.time()
-
-    for key in list(processed_events):
-
-        if (
-            now - processed_events[key]
-            > EVENT_CACHE_TIME
-        ):
-            processed_events.pop(
-                key,
-                None
-            )
-
-    if event_id in processed_events:
-        return True
-
-    processed_events[event_id] = now
-
-    if len(processed_events) > EVENT_CACHE_LIMIT:
-
-        oldest = min(
-            processed_events,
-            key=processed_events.get
-        )
-
-        processed_events.pop(
-            oldest,
-            None
-        )
-
-    return False
-
-
-# =========================================================
-# RATE LIMIT
-# =========================================================
-
-def is_rate_limit_error(error):
-
-    text = str(error).lower()
-
-    return any(
-        x in text
-        for x in (
-            "429",
-            "rate limit",
-            "rate_limit_exceeded",
-            "tokens per day",
-            "tpd",
-            "too many requests",
-            "quota"
-        )
-    )
-
-
-def get_retry_seconds(
-    error,
-    default
-):
-
-    match = re.search(
-        r"try again in\s+"
-        r"(?:(\d+)h)?"
-        r"(?:(\d+)m)?"
-        r"(?:(\d+(?:\.\d+)?)s)?",
-        str(error),
-        re.I
-    )
-
-    if not match:
-        return default
-
-    total = (
-        int(match.group(1) or 0) * 3600
-        +
-        int(match.group(2) or 0) * 60
-        +
-        float(match.group(3) or 0)
-    )
-
-    if total <= 0:
-        return default
-
-    return int(total) + 10
 
 
 # =========================================================
@@ -1013,6 +732,172 @@ def get_telegram_user_name(user):
         )
 
     return name or None
+
+
+# =========================================================
+# RESPONSE MODE
+# =========================================================
+
+def set_response_enabled(
+    chat_id,
+    enabled
+):
+
+    key = str(chat_id)
+
+    with response_mode_lock:
+
+        if enabled:
+            response_disabled.discard(key)
+        else:
+            response_disabled.add(key)
+
+
+def is_response_enabled(chat_id):
+
+    with response_mode_lock:
+
+        return str(chat_id) not in response_disabled
+
+
+# =========================================================
+# VK VALIDATION
+# =========================================================
+
+def is_vk_group_chat(
+    peer_id,
+    sender_id=None
+):
+
+    try:
+        peer_id = int(peer_id)
+
+    except (
+        ValueError,
+        TypeError
+    ):
+        return False
+
+    if peer_id < 2000000000:
+        return False
+
+    if (
+        ALLOWED_VK_PEER_ID
+        and peer_id != ALLOWED_VK_PEER_ID
+    ):
+        return False
+
+    return True
+
+
+def is_allowed_vk_chat(peer_id):
+
+    try:
+        peer_id = int(peer_id)
+
+    except (
+        ValueError,
+        TypeError
+    ):
+        return False
+
+    return is_vk_group_chat(peer_id)
+
+
+# =========================================================
+# EVENT PROTECTION
+# =========================================================
+
+def already_processed(event_id):
+
+    if not event_id:
+        return False
+
+    now = time.time()
+
+    for key in list(processed_events):
+
+        if (
+            now - processed_events[key]
+            > EVENT_CACHE_TIME
+        ):
+
+            processed_events.pop(
+                key,
+                None
+            )
+
+    if event_id in processed_events:
+        return True
+
+    processed_events[event_id] = now
+
+    if len(processed_events) > EVENT_CACHE_LIMIT:
+
+        oldest = min(
+            processed_events,
+            key=processed_events.get
+        )
+
+        processed_events.pop(
+            oldest,
+            None
+        )
+
+    return False
+
+
+# =========================================================
+# RATE LIMIT
+# =========================================================
+
+def is_rate_limit_error(error):
+
+    text = str(error).lower()
+
+    return any(
+        x in text
+        for x in (
+            "429",
+            "rate limit",
+            "rate_limit_exceeded",
+            "tokens per day",
+            "tpd",
+            "too many requests",
+            "quota"
+        )
+    )
+
+
+def get_retry_seconds(
+    error,
+    default
+):
+
+    match = re.search(
+        r"try again in\s+"
+        r"(?:(\d+)h)?"
+        r"(?:(\d+)m)?"
+        r"(?:(\d+(?:\.\d+)?)s)?",
+        str(error),
+        re.I
+    )
+
+    if not match:
+        return default
+
+    total = (
+        int(match.group(1) or 0) * 3600
+        +
+        int(match.group(2) or 0) * 60
+        +
+        float(match.group(3) or 0)
+    )
+
+    if total <= 0:
+        return default
+
+    return int(total) + 10
 
 
 # =========================================================
@@ -1382,9 +1267,7 @@ def delete_knowledge_by_id(
         return False
 
 
-def clear_knowledge(
-    chat_id
-):
+def clear_knowledge(chat_id):
 
     try:
 
@@ -2342,6 +2225,1849 @@ def set_learning_enabled(
 
 
 # =========================================================
+# =========================================================
+# MODERATION DATABASE
+# =========================================================
+# =========================================================
+
+def get_moderation_state(
+    chat_id,
+    user_id
+):
+
+    try:
+
+        result = (
+            supabase
+            .table("bot_moderation_users")
+            .select(
+                "id, chat_id, user_id, "
+                "warnings, muted_until, banned, "
+                "updated_at"
+            )
+            .eq(
+                "chat_id",
+                db_chat_id(chat_id)
+            )
+            .eq(
+                "user_id",
+                db_user_id(user_id)
+            )
+            .limit(1)
+            .execute()
+        )
+
+        if result.data:
+            return result.data[0]
+
+    except Exception as e:
+
+        print(
+            "Moderation state load error:",
+            e,
+            flush=True
+        )
+
+    return {
+        "warnings": 0,
+        "muted_until": None,
+        "banned": False
+    }
+
+
+def ensure_moderation_state(
+    chat_id,
+    user_id
+):
+
+    state = get_moderation_state(
+        chat_id,
+        user_id
+    )
+
+    if state.get("id"):
+        return state
+
+    try:
+
+        result = (
+            supabase
+            .table("bot_moderation_users")
+            .insert({
+                "chat_id":
+                    db_chat_id(chat_id),
+
+                "user_id":
+                    db_user_id(user_id),
+
+                "warnings":
+                    0,
+
+                "muted_until":
+                    None,
+
+                "banned":
+                    False,
+
+                "updated_at":
+                    utc_now()
+            })
+            .execute()
+        )
+
+        if result.data:
+            return result.data[0]
+
+    except Exception as e:
+
+        print(
+            "Moderation state create error:",
+            e,
+            flush=True
+        )
+
+    return state
+
+
+def update_moderation_state(
+    chat_id,
+    user_id,
+    **fields
+):
+
+    try:
+
+        fields["updated_at"] = utc_now()
+
+        existing = ensure_moderation_state(
+            chat_id,
+            user_id
+        )
+
+        if existing.get("id"):
+
+            (
+                supabase
+                .table("bot_moderation_users")
+                .update(fields)
+                .eq(
+                    "id",
+                    existing["id"]
+                )
+                .execute()
+            )
+
+        else:
+
+            fields.update({
+                "chat_id":
+                    db_chat_id(chat_id),
+
+                "user_id":
+                    db_user_id(user_id)
+            })
+
+            (
+                supabase
+                .table("bot_moderation_users")
+                .insert(fields)
+                .execute()
+            )
+
+        return True
+
+    except Exception as e:
+
+        notify_admin_error(
+            "Moderation state update",
+            e,
+            f"chat={chat_id} user={user_id}"
+        )
+
+        return False
+
+
+def get_warning_count(
+    chat_id,
+    user_id
+):
+
+    state = get_moderation_state(
+        chat_id,
+        user_id
+    )
+
+    try:
+        return int(
+            state.get(
+                "warnings",
+                0
+            )
+        )
+
+    except Exception:
+        return 0
+
+
+def add_warning(
+    chat_id,
+    user_id,
+    user_name,
+    reason,
+    message_text,
+    severity="medium"
+):
+
+    current = get_warning_count(
+        chat_id,
+        user_id
+    )
+
+    new_count = current + 1
+
+    update_moderation_state(
+        chat_id,
+        user_id,
+        warnings=new_count
+    )
+
+    try:
+
+        (
+            supabase
+            .table("bot_moderation_logs")
+            .insert({
+                "chat_id":
+                    db_chat_id(chat_id),
+
+                "user_id":
+                    db_user_id(user_id),
+
+                "user_name":
+                    user_name or "",
+
+                "action":
+                    "warning",
+
+                "reason":
+                    reason[:1000],
+
+                "severity":
+                    severity,
+
+                "message_text":
+                    message_text[:4000],
+
+                "warnings_after":
+                    new_count,
+
+                "created_at":
+                    utc_now()
+            })
+            .execute()
+        )
+
+    except Exception as e:
+
+        print(
+            "Moderation log warning error:",
+            e,
+            flush=True
+        )
+
+    return new_count
+
+
+def get_user_moderation_logs(
+    chat_id,
+    user_id,
+    limit=10
+):
+
+    try:
+
+        result = (
+            supabase
+            .table("bot_moderation_logs")
+            .select(
+                "action, reason, severity, "
+                "message_text, warnings_after, "
+                "created_at"
+            )
+            .eq(
+                "chat_id",
+                db_chat_id(chat_id)
+            )
+            .eq(
+                "user_id",
+                db_user_id(user_id)
+            )
+            .order(
+                "created_at",
+                desc=True
+            )
+            .limit(limit)
+            .execute()
+        )
+
+        return result.data or []
+
+    except Exception as e:
+
+        print(
+            "Moderation logs error:",
+            e,
+            flush=True
+        )
+
+        return []
+
+
+def clear_user_warnings(
+    chat_id,
+    user_id
+):
+
+    try:
+
+        update_moderation_state(
+            chat_id,
+            user_id,
+            warnings=0
+        )
+
+        return True
+
+    except Exception as e:
+
+        notify_admin_error(
+            "Clear warnings",
+            e,
+            f"chat={chat_id} user={user_id}"
+        )
+
+        return False
+
+
+# =========================================================
+# MODERATION SETTINGS
+# =========================================================
+
+def get_moderation_enabled(chat_id):
+
+    try:
+
+        result = (
+            supabase
+            .table("bot_moderation_settings")
+            .select(
+                "enabled"
+            )
+            .eq(
+                "chat_id",
+                db_chat_id(chat_id)
+            )
+            .limit(1)
+            .execute()
+        )
+
+        if result.data:
+
+            return bool(
+                result.data[0].get(
+                    "enabled",
+                    True
+                )
+            )
+
+    except Exception as e:
+
+        print(
+            "Moderation settings error:",
+            e,
+            flush=True
+        )
+
+    return MODERATION_ENABLED_DEFAULT
+
+
+def set_moderation_enabled(
+    chat_id,
+    enabled
+):
+
+    try:
+
+        existing = (
+            supabase
+            .table("bot_moderation_settings")
+            .select("id")
+            .eq(
+                "chat_id",
+                db_chat_id(chat_id)
+            )
+            .limit(1)
+            .execute()
+        )
+
+        data = {
+            "chat_id":
+                db_chat_id(chat_id),
+
+            "enabled":
+                bool(enabled),
+
+            "updated_at":
+                utc_now()
+        }
+
+        if existing.data:
+
+            (
+                supabase
+                .table("bot_moderation_settings")
+                .update(data)
+                .eq(
+                    "id",
+                    existing.data[0]["id"]
+                )
+                .execute()
+            )
+
+        else:
+
+            (
+                supabase
+                .table("bot_moderation_settings")
+                .insert(data)
+                .execute()
+            )
+
+        return True
+
+    except Exception as e:
+
+        notify_admin_error(
+            "Moderation settings",
+            e,
+            f"chat={chat_id}"
+        )
+
+        return False
+
+
+# =========================================================
+# MUTE / BAN STATE
+# =========================================================
+
+def parse_iso_timestamp(value):
+
+    if not value:
+        return None
+
+    try:
+
+        return datetime.fromisoformat(
+            value.replace(
+                "Z",
+                "+00:00"
+            )
+        ).timestamp()
+
+    except Exception:
+
+        return None
+
+
+def is_user_muted(
+    chat_id,
+    user_id
+):
+
+    state = get_moderation_state(
+        chat_id,
+        user_id
+    )
+
+    muted_until = parse_iso_timestamp(
+        state.get("muted_until")
+    )
+
+    if not muted_until:
+        return False
+
+    if time.time() < muted_until:
+        return True
+
+    update_moderation_state(
+        chat_id,
+        user_id,
+        muted_until=None
+    )
+
+    return False
+
+
+def is_user_banned(
+    chat_id,
+    user_id
+):
+
+    state = get_moderation_state(
+        chat_id,
+        user_id
+    )
+
+    return bool(
+        state.get(
+            "banned",
+            False
+        )
+    )
+
+
+def set_user_mute(
+    chat_id,
+    user_id,
+    minutes
+):
+
+    expires = (
+        time.time()
+        +
+        max(
+            1,
+            int(minutes)
+        ) * 60
+    )
+
+    expires_iso = datetime.fromtimestamp(
+        expires,
+        timezone.utc
+    ).isoformat()
+
+    return update_moderation_state(
+        chat_id,
+        user_id,
+        muted_until=expires_iso
+    )
+
+
+def clear_user_mute(
+    chat_id,
+    user_id
+):
+
+    return update_moderation_state(
+        chat_id,
+        user_id,
+        muted_until=None
+    )
+
+
+def set_user_ban(
+    chat_id,
+    user_id,
+    value
+):
+
+    return update_moderation_state(
+        chat_id,
+        user_id,
+        banned=bool(value)
+    )
+
+
+# =========================================================
+# VK DELETE MESSAGE
+# =========================================================
+
+def delete_vk_message(
+    peer_id,
+    message
+):
+
+    cmid = (
+        message.get(
+            "conversation_message_id"
+        )
+        or message.get(
+            "cmid"
+        )
+    )
+
+    message_id = message.get(
+        "id"
+    )
+
+    try:
+
+        params = {
+            "access_token":
+                VK_TOKEN,
+
+            "v":
+                VK_VERSION,
+
+            "delete_for_all":
+                1
+        }
+
+        if cmid is not None:
+
+            params["peer_id"] = int(
+                peer_id
+            )
+
+            params["cmids"] = int(
+                cmid
+            )
+
+        elif message_id is not None:
+
+            params["message_ids"] = int(
+                message_id
+            )
+
+        else:
+
+            return False
+
+        response = requests.post(
+            f"{VK_API}/messages.delete",
+            data=params,
+            timeout=15
+        )
+
+        result = response.json()
+
+        if "error" in result:
+
+            print(
+                "VK DELETE ERROR:",
+                result["error"],
+                flush=True
+            )
+
+            return False
+
+        return True
+
+    except Exception as e:
+
+        print(
+            "VK delete exception:",
+            e,
+            flush=True
+        )
+
+        return False
+
+
+# =========================================================
+# VK REMOVE USER FROM CHAT
+# =========================================================
+
+def remove_vk_chat_user(
+    peer_id,
+    user_id
+):
+
+    try:
+
+        response = requests.post(
+            f"{VK_API}/messages.removeChatUser",
+            data={
+                "access_token":
+                    VK_TOKEN,
+
+                "v":
+                    VK_VERSION,
+
+                "chat_id":
+                    int(peer_id) - 2000000000,
+
+                "user_id":
+                    int(user_id)
+            },
+            timeout=15
+        )
+
+        result = response.json()
+
+        if "error" in result:
+
+            print(
+                "VK REMOVE USER ERROR:",
+                result["error"],
+                flush=True
+            )
+
+            return False
+
+        return True
+
+    except Exception as e:
+
+        print(
+            "VK remove user exception:",
+            e,
+            flush=True
+        )
+
+        return False
+
+
+# =========================================================
+# ADMIN NOTIFY
+# =========================================================
+
+def send_vk_private_message(
+    user_id,
+    text
+):
+
+    if not is_admin(user_id):
+        return None
+
+    if not text:
+        return None
+
+    try:
+
+        response = requests.post(
+            f"{VK_API}/messages.send",
+            data={
+                "access_token":
+                    VK_TOKEN,
+
+                "v":
+                    VK_VERSION,
+
+                "peer_id":
+                    int(user_id),
+
+                "message":
+                    text[:4096],
+
+                "random_id":
+                    random.randint(
+                        1,
+                        2147483647
+                    )
+            },
+            timeout=15
+        )
+
+        result = response.json()
+
+        if "error" in result:
+
+            print(
+                "ADMIN PRIVATE MESSAGE ERROR:",
+                result["error"],
+                flush=True
+            )
+
+        return result
+
+    except Exception as e:
+
+        print(
+            "Admin private message exception:",
+            e,
+            flush=True
+        )
+
+        return None
+
+
+def notify_admin_moderation(
+    chat_id,
+    user_id,
+    user_name,
+    action,
+    reason,
+    warnings
+):
+
+    key = (
+        f"{chat_id}:{user_id}"
+    )
+
+    now = time.time()
+
+    with moderation_notify_lock:
+
+        previous = moderation_notify_until.get(
+            key,
+            0
+        )
+
+        if now < previous:
+            return
+
+        moderation_notify_until[
+            key
+        ] = (
+            now
+            +
+            MODERATION_ADMIN_NOTIFY_COOLDOWN
+        )
+
+    message = (
+        "🛡 МОДЕРАЦИЯ\n\n"
+        f"👤 {user_name or 'Пользователь'}\n"
+        f"🆔 ID: {user_id}\n"
+        f"💬 Чат: {chat_id}\n"
+        f"⚠️ Действие: {action}\n"
+        f"📌 Причина: {reason}\n"
+        f"🔢 Предупреждений: {warnings}"
+    )
+
+    send_vk_private_message(
+        ADMIN_ID,
+        message
+    )
+
+
+# =========================================================
+# MODERATION FAST FILTER
+# =========================================================
+
+MODERATION_TRIGGER_WORDS = (
+    "идиот",
+    "дебил",
+    "тупой",
+    "тупая",
+    "тупое",
+    "мудак",
+    "долбо",
+    "придур",
+    "кретин",
+    "лох",
+    "чмо",
+    "чмош",
+    "тварь",
+    "ублюд",
+    "дегенерат",
+    "даун",
+    "пошел нах",
+    "пошёл нах",
+    "заткнись",
+    "убью",
+    "убить",
+    "убей",
+    "сдохни",
+    "дохни",
+    "угрож",
+    "мошенн",
+    "скам",
+    "фишинг",
+    "пароль",
+    "карта",
+    "cvv"
+)
+
+
+def moderation_candidate(text):
+
+    low = normalize_text(
+        text
+    ).lower()
+
+    if not low:
+        return False
+
+    if len(low) < MODERATION_MIN_TEXT_LENGTH:
+        return False
+
+    return any(
+        word in low
+        for word in MODERATION_TRIGGER_WORDS
+    )
+
+
+# =========================================================
+# MODERATION AI
+# =========================================================
+
+def parse_moderation_result(text):
+
+    cleaned = clean_model_text(
+        text
+    )
+
+    if not cleaned:
+        return None
+
+    # Ищем JSON даже если модель добавила текст.
+    match = re.search(
+        r"\{.*\}",
+        cleaned,
+        re.DOTALL
+    )
+
+    if match:
+
+        raw = match.group(0)
+
+        try:
+            import json
+
+            data = json.loads(
+                raw
+            )
+
+            return data
+
+        except Exception:
+            pass
+
+    upper = cleaned.upper()
+
+    if "IGNORE" in upper:
+        return {
+            "violation": False
+        }
+
+    return None
+
+
+def ask_moderation_model(
+    text,
+    context
+):
+
+    prompt = f"""
+Ты — строгий классификатор модерации чата.
+
+Сообщение:
+{text}
+
+Контекст:
+{context}
+
+Твоя задача — определить, является ли сообщение
+реальным нарушением правил.
+
+ВАЖНО:
+
+НЕ считать нарушением:
+- обычный мат;
+- игровой спор;
+- критику танка;
+- критику игры;
+- игровые подколы;
+- дружеские шутки;
+- обычное несогласие;
+- эмоциональную реакцию;
+- "слабо сыграл";
+- "ты рачина" в обычном игровом контексте,
+  если это просто игровой подкол;
+- спор о ТТХ.
+
+Считать нарушением:
+- серьёзное личное оскорбление;
+- травлю;
+- целенаправленное унижение;
+- угрозы;
+- угрозы жизни/насилия;
+- публикацию чужих личных данных;
+- попытку обмана/фишинг/скам;
+- массовый рекламный спам;
+- повторяющийся флуд;
+- призывы к травле;
+- серьёзные атаки на семью или личную жизнь.
+
+Если сомневаешься —
+violation=false.
+
+Уровни:
+
+low:
+обычное нарушение без серьёзной угрозы.
+
+medium:
+прямое личное оскорбление/травля.
+
+high:
+угроза, опасное преследование, доксинг,
+фишинг, серьёзная травля.
+
+critical:
+явная угроза физического насилия,
+доксинг или особо опасное нарушение.
+
+Верни ТОЛЬКО JSON:
+
+{{
+  "violation": true,
+  "severity": "low",
+  "reason": "короткая причина"
+}}
+
+или:
+
+{{
+  "violation": false
+}}
+
+Никакого другого текста.
+"""
+
+    messages = [
+        {
+            "role":
+                "system",
+
+            "content":
+                (
+                    "Ты осторожный модератор. "
+                    "Не модерируй обычный игровой срач."
+                )
+        },
+        {
+            "role":
+                "user",
+
+            "content":
+                prompt
+        }
+    ]
+
+    try:
+
+        result = ask_model(
+            MODERATION_MODEL,
+            messages,
+            MODERATION_MAX_TOKENS
+        )
+
+        return parse_moderation_result(
+            result
+        )
+
+    except Exception as e:
+
+        print(
+            "Moderation AI error:",
+            e,
+            flush=True
+        )
+
+        return None
+
+
+# =========================================================
+# APPLY AUTOMATIC MODERATION
+# =========================================================
+
+def apply_automatic_moderation(
+    chat_id,
+    sender_id,
+    user_name,
+    text,
+    message
+):
+
+    if is_admin(sender_id):
+        return False
+
+    if not get_moderation_enabled(
+        chat_id
+    ):
+        return False
+
+    # Если пользователь уже заблокирован —
+    # сначала удаляем его сообщение.
+    if is_user_banned(
+        chat_id,
+        sender_id
+    ):
+
+        delete_vk_message(
+            chat_id,
+            message
+        )
+
+        return True
+
+    # Если пользователь сейчас в муте —
+    # любое новое сообщение удаляется.
+    if is_user_muted(
+        chat_id,
+        sender_id
+    ):
+
+        delete_vk_message(
+            chat_id,
+            message
+        )
+
+        return True
+
+    # Не вызываем AI на каждое обычное сообщение.
+    if not moderation_candidate(
+        text
+    ):
+        return False
+
+    history = get_chat_memory(
+        chat_id,
+        8
+    )
+
+    context_lines = []
+
+    for item in history:
+
+        name = (
+            item.get("speaker_name")
+            or "Участник"
+        )
+
+        content = (
+            item.get("content")
+            or ""
+        )
+
+        if content:
+
+            context_lines.append(
+                f"{name}: {content}"
+            )
+
+    context = "\n".join(
+        context_lines
+    )
+
+    result = ask_moderation_model(
+        text,
+        context
+    )
+
+    if not result:
+        return False
+
+    violation = bool(
+        result.get(
+            "violation",
+            False
+        )
+    )
+
+    if not violation:
+        return False
+
+    severity = str(
+        result.get(
+            "severity",
+            "low"
+        )
+    ).lower()
+
+    reason = normalize_text(
+        result.get(
+            "reason",
+            "Нарушение правил"
+        )
+    )
+
+    if severity not in (
+        "low",
+        "medium",
+        "high",
+        "critical"
+    ):
+        severity = "low"
+
+    # -----------------------------------------------------
+    # CRITICAL / HIGH
+    # -----------------------------------------------------
+
+    if severity in (
+        "critical",
+        "high"
+    ):
+
+        warning_count = add_warning(
+            chat_id,
+            sender_id,
+            user_name,
+            reason,
+            text,
+            severity
+        )
+
+        delete_vk_message(
+            chat_id,
+            message
+        )
+
+        # Серьёзное нарушение сразу мутим.
+        mute_minutes = 60
+
+        set_user_mute(
+            chat_id,
+            sender_id,
+            mute_minutes
+        )
+
+        notify_admin_moderation(
+            chat_id,
+            sender_id,
+            user_name,
+            f"мут {mute_minutes} мин.",
+            reason,
+            warning_count
+        )
+
+        # Критическое нарушение —
+        # после фиксации удаляем пользователя из беседы.
+        if severity == "critical":
+
+            set_user_ban(
+                chat_id,
+                sender_id,
+                True
+            )
+
+            remove_vk_chat_user(
+                chat_id,
+                sender_id
+            )
+
+            notify_admin_moderation(
+                chat_id,
+                sender_id,
+                user_name,
+                "бан / удаление из чата",
+                reason,
+                warning_count
+            )
+
+        return True
+
+    # -----------------------------------------------------
+    # LOW / MEDIUM
+    # -----------------------------------------------------
+
+    warning_count = add_warning(
+        chat_id,
+        sender_id,
+        user_name,
+        reason,
+        text,
+        severity
+    )
+
+    delete_vk_message(
+        chat_id,
+        message
+    )
+
+    # Второе нарушение → 10 минут
+    if warning_count >= WARNING_MUTE_THRESHOLD:
+
+        set_user_mute(
+            chat_id,
+            sender_id,
+            MUTE_FIRST_MINUTES
+        )
+
+    # Третье → час
+    if warning_count >= WARNING_LONG_MUTE_THRESHOLD:
+
+        set_user_mute(
+            chat_id,
+            sender_id,
+            MUTE_SECOND_MINUTES
+        )
+
+    # Четвёртое → удаление из беседы
+    if warning_count >= WARNING_KICK_THRESHOLD:
+
+        remove_vk_chat_user(
+            chat_id,
+            sender_id
+        )
+
+        notify_admin_moderation(
+            chat_id,
+            sender_id,
+            user_name,
+            "удаление из чата",
+            reason,
+            warning_count
+        )
+
+        return True
+
+    # Пятое → постоянный бан
+    if warning_count >= WARNING_BAN_THRESHOLD:
+
+        set_user_ban(
+            chat_id,
+            sender_id,
+            True
+        )
+
+        remove_vk_chat_user(
+            chat_id,
+            sender_id
+        )
+
+        notify_admin_moderation(
+            chat_id,
+            sender_id,
+            user_name,
+            "бан / удаление из чата",
+            reason,
+            warning_count
+        )
+
+        return True
+
+    # Обычное предупреждение
+    send_message(
+        chat_id,
+        (
+            f"⚠️ {user_name or 'Участник'}, "
+            f"предупреждение.\n"
+            f"Причина: {reason}\n"
+            f"Нарушений: {warning_count}"
+        )
+    )
+
+    notify_admin_moderation(
+        chat_id,
+        sender_id,
+        user_name,
+        "предупреждение",
+        reason,
+        warning_count
+    )
+
+    return True
+
+
+# =========================================================
+# ADMIN TARGET PARSER
+# =========================================================
+
+def extract_target_user_id(
+    message,
+    text
+):
+
+    # 1. Ответ на сообщение пользователя
+    reply = message.get(
+        "reply_message"
+    )
+
+    if reply:
+
+        reply_from = reply.get(
+            "from_id"
+        )
+
+        if reply_from is not None:
+
+            try:
+                return int(
+                    reply_from
+                )
+            except Exception:
+                pass
+
+    # 2. [id123|Имя]
+    match = re.search(
+        r"\[id(\d+)\|",
+        text or "",
+        re.IGNORECASE
+    )
+
+    if match:
+
+        try:
+            return int(
+                match.group(1)
+            )
+        except Exception:
+            pass
+
+    # 3. @id123
+    match = re.search(
+        r"@id(\d+)\b",
+        text or "",
+        re.IGNORECASE
+    )
+
+    if match:
+
+        try:
+            return int(
+                match.group(1)
+            )
+        except Exception:
+            pass
+
+    # 4. просто VK ID
+    match = re.search(
+        r"\b(?:id\s*)?(\d{5,12})\b",
+        text or "",
+        re.IGNORECASE
+    )
+
+    if match:
+
+        try:
+            return int(
+                match.group(1)
+            )
+        except Exception:
+            pass
+
+    return None
+
+
+# =========================================================
+# ADMIN MODERATION COMMANDS
+# =========================================================
+
+def moderation_user_info(
+    chat_id,
+    user_id
+):
+
+    name = get_vk_user_name(
+        user_id
+    )
+
+    state = get_moderation_state(
+        chat_id,
+        user_id
+    )
+
+    warnings = int(
+        state.get(
+            "warnings",
+            0
+        )
+    )
+
+    muted_until = state.get(
+        "muted_until"
+    )
+
+    banned = bool(
+        state.get(
+            "banned",
+            False
+        )
+    )
+
+    logs = get_user_moderation_logs(
+        chat_id,
+        user_id,
+        8
+    )
+
+    lines = [
+        "🛡 МОДЕРАЦИЯ ПОЛЬЗОВАТЕЛЯ",
+        "",
+        f"👤 {name or 'Пользователь'}",
+        f"🆔 ID: {user_id}",
+        f"⚠️ Нарушений: {warnings}",
+        f"🚫 Бан: {'ДА' if banned else 'НЕТ'}"
+    ]
+
+    if muted_until:
+
+        timestamp = parse_iso_timestamp(
+            muted_until
+        )
+
+        if timestamp and timestamp > time.time():
+
+            remaining = int(
+                (timestamp - time.time()) / 60
+            )
+
+            lines.append(
+                f"🔇 Мут: ещё примерно "
+                f"{max(1, remaining)} мин."
+            )
+
+        else:
+
+            lines.append(
+                "🔊 Мут: нет"
+            )
+
+    else:
+
+        lines.append(
+            "🔊 Мут: нет"
+        )
+
+    if logs:
+
+        lines.append("")
+        lines.append("📋 Последние нарушения:")
+
+        for index, item in enumerate(
+            logs,
+            1
+        ):
+
+            action = item.get(
+                "action",
+                "?"
+            )
+
+            reason = normalize_text(
+                item.get(
+                    "reason",
+                    ""
+                )
+            )
+
+            if len(reason) > 120:
+                reason = reason[:120] + "..."
+
+            lines.append(
+                f"{index}. {action}: {reason}"
+            )
+
+    return "\n".join(
+        lines
+    )
+
+
+def handle_moderation_admin_command(
+    chat_id,
+    sender_id,
+    text,
+    message
+):
+
+    if not is_admin(sender_id):
+
+        return False, None
+
+    raw = normalize_text(
+        text
+    )
+
+    low = raw.lower()
+
+    # -----------------------------------------------------
+    # MODERATION ON
+    # -----------------------------------------------------
+
+    if low in (
+        "бот модерация включи",
+        "бот, модерация включи",
+        "бот включи модерацию",
+        "бот, включи модерацию",
+        "бот модерацию включи",
+        "бот, модерацию включи"
+    ):
+
+        if set_moderation_enabled(
+            chat_id,
+            True
+        ):
+
+            return True, (
+                "🛡 Модерация включена."
+            )
+
+        return True, (
+            "❌ Не удалось включить модерацию."
+        )
+
+    # -----------------------------------------------------
+    # MODERATION OFF
+    # -----------------------------------------------------
+
+    if low in (
+        "бот модерация выключи",
+        "бот, модерация выключи",
+        "бот выключи модерацию",
+        "бот, выключи модерацию",
+        "бот модерацию выключи",
+        "бот, модерацию выключи"
+    ):
+
+        if set_moderation_enabled(
+            chat_id,
+            False
+        ):
+
+            return True, (
+                "🛑 Модерация выключена.\n"
+                "Память и самообучение продолжают работать."
+            )
+
+        return True, (
+            "❌ Не удалось выключить модерацию."
+        )
+
+    # -----------------------------------------------------
+    # STATUS
+    # -----------------------------------------------------
+
+    if low in (
+        "бот статус модерации",
+        "бот, статус модерации",
+        "бот модерация статус",
+        "бот, модерация статус"
+    ):
+
+        enabled = get_moderation_enabled(
+            chat_id
+        )
+
+        return True, (
+            "🛡 СТАТУС МОДЕРАЦИИ\n\n"
+            f"Состояние: "
+            f"{'🟢 ВКЛ' if enabled else '🛑 ВЫКЛ'}\n"
+            f"Модель: {MODERATION_MODEL}\n"
+            f"Мут: автоматический\n"
+            f"Удаление сообщений: автоматическое\n"
+            f"Предупреждения: включены\n"
+            f"Бан: включён"
+        )
+
+    # -----------------------------------------------------
+    # USER INFO
+    # -----------------------------------------------------
+
+    if low.startswith(
+        "бот нарушения"
+    ):
+
+        target_id = extract_target_user_id(
+            message,
+            raw
+        )
+
+        if not target_id:
+
+            return True, (
+                "❌ Укажи пользователя.\n\n"
+                "Можно ответить на его сообщение:\n"
+                "бот нарушения\n\n"
+                "Или:\n"
+                "бот нарушения 123456"
+            )
+
+        return True, moderation_user_info(
+            chat_id,
+            target_id
+        )
+
+    # -----------------------------------------------------
+    # CLEAR WARNINGS
+    # -----------------------------------------------------
+
+    if low.startswith(
+        "бот сбросить нарушения"
+    ):
+
+        target_id = extract_target_user_id(
+            message,
+            raw
+        )
+
+        if not target_id:
+
+            return True, (
+                "❌ Ответь на сообщение пользователя "
+                "или укажи его ID."
+            )
+
+        if clear_user_warnings(
+            chat_id,
+            target_id
+        ):
+
+            return True, (
+                f"🧹 Нарушения пользователя "
+                f"{target_id} сброшены."
+            )
+
+        return True, (
+            "❌ Не удалось сбросить нарушения."
+        )
+
+    # -----------------------------------------------------
+    # MUTE
+    # -----------------------------------------------------
+
+    mute_match = re.match(
+        r"^бот\s+мут\s+(\d+)",
+        low
+    )
+
+    if mute_match:
+
+        minutes = int(
+            mute_match.group(1)
+        )
+
+        target_id = extract_target_user_id(
+            message,
+            raw
+        )
+
+        if not target_id:
+
+            return True, (
+                "❌ Ответь на сообщение пользователя "
+                "и напиши:\n"
+                "бот мут 10"
+            )
+
+        if set_user_mute(
+            chat_id,
+            target_id,
+            minutes
+        ):
+
+            return True, (
+                f"🔇 Пользователь {target_id} "
+                f"замьючен на {minutes} мин."
+            )
+
+        return True, (
+            "❌ Не удалось выдать мут."
+        )
+
+    # -----------------------------------------------------
+    # UNMUTE
+    # -----------------------------------------------------
+
+    if low in (
+        "бот размут",
+        "бот, размут",
+        "бот снять мут",
+        "бот, снять мут"
+    ):
+
+        target_id = extract_target_user_id(
+            message,
+            raw
+        )
+
+        if not target_id:
+
+            return True, (
+                "❌ Ответь на сообщение пользователя "
+                "и напиши:\n"
+                "бот размут"
+            )
+
+        if clear_user_mute(
+            chat_id,
+            target_id
+        ):
+
+            return True, (
+                f"🔊 Мут с пользователя "
+                f"{target_id} снят."
+            )
+
+        return True, (
+            "❌ Не удалось снять мут."
+        )
+
+    # -----------------------------------------------------
+    # BAN
+    # -----------------------------------------------------
+
+    if low in (
+        "бот бан",
+        "бот, бан",
+        "бот забанить",
+        "бот, забанить"
+    ):
+
+        target_id = extract_target_user_id(
+            message,
+            raw
+        )
+
+        if not target_id:
+
+            return True, (
+                "❌ Ответь на сообщение пользователя "
+                "и напиши:\n"
+                "бот бан"
+            )
+
+        set_user_ban(
+            chat_id,
+            target_id,
+            True
+        )
+
+        remove_vk_chat_user(
+            chat_id,
+            target_id
+        )
+
+        return True, (
+            f"🚫 Пользователь {target_id} "
+            f"заблокирован и удалён из чата."
+        )
+
+    # -----------------------------------------------------
+    # UNBAN
+    # -----------------------------------------------------
+
+    if low in (
+        "бот разбан",
+        "бот, разбан",
+        "бот снять бан",
+        "бот, снять бан"
+    ):
+
+        target_id = extract_target_user_id(
+            message,
+            raw
+        )
+
+        if not target_id:
+
+            return True, (
+                "❌ Ответь на сообщение пользователя "
+                "и напиши:\n"
+                "бот разбан"
+            )
+
+        if set_user_ban(
+            chat_id,
+            target_id,
+            False
+        ):
+
+            return True, (
+                f"🔓 Бан пользователя "
+                f"{target_id} снят."
+            )
+
+        return True, (
+            "❌ Не удалось снять бан."
+        )
+
+    return False, None
+
+
+# =========================================================
 # LEARNING ADMIN COMMANDS
 # =========================================================
 
@@ -2359,23 +4085,19 @@ def handle_learning_control_command(
         text
     ).lower()
 
-    # OFF
-
-    if (
-        low in (
-            "бот обучение выключи",
-            "бот, обучение выключи",
-            "бот выключи обучение",
-            "бот, выключи обучение",
-            "бот самообучение выключи",
-            "бот, самообучение выключи",
-            "бот обучение отключи",
-            "бот, обучение отключи",
-            "бот отключи обучение",
-            "бот, отключи обучение",
-            "бот отключи самообучение",
-            "бот, отключи самообучение"
-        )
+    if low in (
+        "бот обучение выключи",
+        "бот, обучение выключи",
+        "бот выключи обучение",
+        "бот, выключи обучение",
+        "бот самообучение выключи",
+        "бот, самообучение выключи",
+        "бот обучение отключи",
+        "бот, обучение отключи",
+        "бот отключи обучение",
+        "бот, отключи обучение",
+        "бот отключи самообучение",
+        "бот, отключи самообучение"
     ):
 
         if set_learning_enabled(
@@ -2386,32 +4108,25 @@ def handle_learning_control_command(
             return True, (
                 "🛑 Автообучение выключено.\n\n"
                 "Старая память НЕ удалена.\n"
-                "Обычный чат продолжает работать.\n"
-                "Официальная память продолжает работать.\n"
-                "Ручное «Запомни...» продолжает работать.\n\n"
-                "Включить обратно:\n"
-                "бот обучение включи"
+                "Официальная память работает.\n"
+                "Ручное «Запомни...» работает."
             )
 
         return True, (
             "❌ Не удалось выключить обучение."
         )
 
-    # ON
-
-    if (
-        low in (
-            "бот обучение включи",
-            "бот, обучение включи",
-            "бот включи обучение",
-            "бот, включи обучение",
-            "бот обучение включи обратно",
-            "бот, обучение включи обратно",
-            "бот самообучение включи",
-            "бот, самообучение включи",
-            "бот возобнови обучение",
-            "бот, возобнови обучение"
-        )
+    if low in (
+        "бот обучение включи",
+        "бот, обучение включи",
+        "бот включи обучение",
+        "бот, включи обучение",
+        "бот обучение включи обратно",
+        "бот, обучение включи обратно",
+        "бот самообучение включи",
+        "бот, самообучение включи",
+        "бот возобнови обучение",
+        "бот, возобнови обучение"
     ):
 
         if set_learning_enabled(
@@ -2426,8 +4141,6 @@ def handle_learning_control_command(
         return True, (
             "❌ Не удалось включить обучение."
         )
-
-    # STATUS
 
     if low in (
         "бот статус обучения",
@@ -2476,86 +4189,6 @@ def handle_learning_control_command(
 
 
 # =========================================================
-# LEARNING COUNTER
-# =========================================================
-
-def increase_learning_counter(chat_id):
-
-    state = get_learning_state(
-        chat_id
-    )
-
-    previous = int(
-        state.get(
-            "messages_since_learning",
-            0
-        )
-    )
-
-    count = min(
-        previous + 1,
-        LEARNING_EVERY_MESSAGES
-    )
-
-    try:
-
-        (
-            supabase
-            .table("bot_learning_state")
-            .update({
-                "messages_since_learning":
-                    count
-            })
-            .eq(
-                "chat_id",
-                db_chat_id(chat_id)
-            )
-            .execute()
-        )
-
-    except Exception as e:
-
-        print(
-            "Learning counter error:",
-            e,
-            flush=True
-        )
-
-    return count
-
-
-def reset_learning_counter(chat_id):
-
-    try:
-
-        (
-            supabase
-            .table("bot_learning_state")
-            .update({
-                "messages_since_learning":
-                    0
-            })
-            .eq(
-                "chat_id",
-                db_chat_id(chat_id)
-            )
-            .execute()
-        )
-
-        return True
-
-    except Exception as e:
-
-        notify_admin_error(
-            "Learning counter reset",
-            e,
-            f"chat={chat_id}"
-        )
-
-        return False
-
-
-# =========================================================
 # ADMIN STATISTICS
 # =========================================================
 
@@ -2590,14 +4223,9 @@ def admin_memory_stats(chat_id):
     except Exception:
         pass
 
-    try:
-
-        messages = get_chat_message_count(
-            chat_id
-        )
-
-    except Exception:
-        pass
+    messages = get_chat_message_count(
+        chat_id
+    )
 
     try:
 
@@ -2659,6 +4287,8 @@ def admin_memory_stats(chat_id):
         f"📚 Официальных записей: {official}\n"
         f"🧠 Обучение: "
         f"{'🟢 включено' if state.get('learning_enabled', True) else '🛑 выключено'}\n"
+        f"🛡 Модерация: "
+        f"{'🟢 включена' if get_moderation_enabled(chat_id) else '🛑 выключена'}\n"
         f"📈 Счётчик: "
         f"{state.get('messages_since_learning', 0)}/"
         f"{LEARNING_EVERY_MESSAGES}\n"
@@ -2725,7 +4355,18 @@ def admin_knowledge_text(chat_id):
 def admin_help_text():
 
     return (
-        "👑 АДМИН-ПАНЕЛЬ V1.3\n\n"
+        "👑 АДМИН-ПАНЕЛЬ V1.4\n\n"
+
+        "🛡 МОДЕРАЦИЯ\n"
+        "бот модерация включи\n"
+        "бот модерация выключи\n"
+        "бот статус модерации\n"
+        "бот нарушения — ответом на сообщение\n"
+        "бот сбросить нарушения — ответом\n"
+        "бот мут 10 — ответом\n"
+        "бот размут — ответом\n"
+        "бот бан — ответом\n"
+        "бот разбан — ответом\n\n"
 
         "🧠 ОБУЧЕНИЕ\n"
         "бот обучение включи\n"
@@ -2822,8 +4463,7 @@ def handle_admin_command(
         except Exception:
 
             return True, (
-                "❌ Укажи ID знания.\n"
-                "Например: бот знания удалить 15"
+                "❌ Укажи ID знания."
             )
 
         if delete_knowledge_by_id(
@@ -2845,8 +4485,7 @@ def handle_admin_command(
     ):
 
         return True, (
-            "⚠️ Для очистки всех автоматических "
-            "знаний используй:\n"
+            "⚠️ Для очистки всех знаний:\n"
             "бот знания очистить ПОДТВЕРЖДАЮ"
         )
 
@@ -2858,9 +4497,8 @@ def handle_admin_command(
         if clear_knowledge(chat_id):
 
             return True, (
-                "🧹 Все автоматически полученные "
-                "знания этого чата удалены.\n"
-                "Официальная память НЕ затронута."
+                "🧹 Автоматические знания удалены.\n"
+                "Официальная память не затронута."
             )
 
         return True, (
@@ -2874,18 +4512,37 @@ def handle_admin_command(
         "бот, сбросить обучение"
     ):
 
-        if reset_learning_counter(
-            chat_id
-        ):
+        try:
 
-            return True, (
-                "🔄 Счётчик самообучения сброшен.\n"
-                "Сама память сохранена."
+            (
+                supabase
+                .table("bot_learning_state")
+                .update({
+                    "messages_since_learning":
+                        0
+                })
+                .eq(
+                    "chat_id",
+                    db_chat_id(chat_id)
+                )
+                .execute()
             )
 
-        return True, (
-            "❌ Не удалось сбросить счётчик."
-        )
+            return True, (
+                "🔄 Счётчик самообучения сброшен."
+            )
+
+        except Exception as e:
+
+            notify_admin_error(
+                "Learning reset",
+                e,
+                f"chat={chat_id}"
+            )
+
+            return True, (
+                "❌ Не удалось сбросить счётчик."
+            )
 
     if low in (
         "бот ответы выключи",
@@ -2900,9 +4557,8 @@ def handle_admin_command(
         )
 
         return True, (
-            "🔇 Обычные ответы бота выключены "
-            "в этом чате.\n"
-            "Память и обучение продолжают работать."
+            "🔇 Обычные ответы бота выключены.\n"
+            "Память, обучение и модерация продолжают работать."
         )
 
     if low in (
@@ -2918,7 +4574,7 @@ def handle_admin_command(
         )
 
         return True, (
-            "🔊 Обычные ответы бота снова включены."
+            "🔊 Обычные ответы бота включены."
         )
 
     if low in (
@@ -2937,11 +4593,14 @@ def handle_admin_command(
             f"{'🟢 включены' if is_response_enabled(chat_id) else '🔇 выключены'}\n"
             f"Обучение: "
             f"{'🟢 включено' if state.get('learning_enabled', True) else '🛑 выключено'}\n"
+            f"Модерация: "
+            f"{'🟢 включена' if get_moderation_enabled(chat_id) else '🛑 выключена'}\n"
             f"Защита участников: 🛡 включена\n"
             f"Официальная память: 📚 включена\n"
             f"Тестеров: {len(TESTER_IDS)}\n"
             f"Основная модель: {MAIN_MODEL}\n"
             f"Резервная модель: {BACKUP_MODEL}\n"
+            f"Модель модерации: {MODERATION_MODEL}\n"
             f"OpenRouter: "
             f"{'🟢 есть ключ' if OPENROUTER_API_KEY else '🔴 нет ключа'}"
         )
@@ -3279,25 +4938,30 @@ def perform_learning(chat_id):
             LEARNING_HISTORY_LIMIT
         )
 
-        # -------------------------------------------------
-        # НОВЫЙ ФИЛЬТР
-        # Только Tanks Blitz
-        # -------------------------------------------------
-
         history = filter_learning_history(
             history
         )
 
         if len(history) < 5:
 
-            reset_learning_counter(
-                chat_id
-            )
+            try:
 
-            print(
-                "LEARNING: мало игровых данных",
-                flush=True
-            )
+                (
+                    supabase
+                    .table("bot_learning_state")
+                    .update({
+                        "messages_since_learning":
+                            0
+                    })
+                    .eq(
+                        "chat_id",
+                        db_chat_id(chat_id)
+                    )
+                    .execute()
+                )
+
+            except Exception:
+                pass
 
             return
 
@@ -3343,11 +5007,10 @@ def perform_learning(chat_id):
 Ты — модуль долговременного обучения
 AI-бота Tanks Blitz.
 
-Тебе разрешено сохранять ТОЛЬКО информацию,
+Сохраняй ТОЛЬКО информацию,
 связанную с Tanks Blitz.
 
 Ищи:
-
 - игровые факты;
 - ТТХ;
 - танки;
@@ -3362,63 +5025,30 @@ AI-бота Tanks Blitz.
 - любимые танки;
 - игровые привычки;
 - сленг сообщества;
-- факты о конкретном чате,
-  если они явно связаны с Tanks Blitz.
+- игровые факты конкретного чата.
 
-СТРОГО НЕ СОХРАНЯЙ:
-
-- школьные разговоры;
+Не сохраняй:
 - работу;
+- школу;
 - здоровье;
-- медицину;
 - отношения;
 - личную жизнь;
 - адреса;
 - документы;
 - пароли;
 - банковские данные;
-- политические темы;
+- политику;
 - религию;
 - срачи;
 - оскорбления;
-- мемы без игровой пользы;
 - случайный флуд;
+- слухи;
 - эмоции;
-- предположения;
-- слухи без явного подтверждения;
-- выдуманные факты.
+- предположения.
 
-ОСОБЕННО ВАЖНО:
+Мнение не превращай в факт.
 
-Не превращай мнение человека
-в официальный игровой факт.
-
-Например:
-
-«мне кажется этот танк имба»
-
-НЕ означает:
-
-«этот танк объективно самый сильный».
-
-Если человек говорит:
-
-«мой любимый танк — E 100»
-
-можно сохранить:
-
-USER|ID|Любимый танк — E 100
-
-Если человек пишет:
-
-«Иван дебил»
-
-НИКОГДА не сохраняй это как факт.
-
-Если информация выглядит сомнительной,
-лучше не сохраняй её.
-
-ФОРМАТ:
+Формат:
 
 USER|ID|Факт
 
@@ -3426,13 +5056,11 @@ USER|ID|Факт
 
 CHAT|Факт|важность
 
-важность 1–5.
-
 Если полезных данных нет:
 
 NONE
 
-Данные чата:
+Данные:
 
 {chr(10).join(text_parts)}
 """
@@ -3446,11 +5074,7 @@ NONE
                     "content":
                         (
                             "Ты строгий фильтр "
-                            "игровых знаний. "
-                            "Сохраняй только то, "
-                            "что действительно относится "
-                            "к Tanks Blitz. "
-                            "Ничего не выдумывай."
+                            "игровых знаний."
                         )
                 },
                 {
@@ -3506,9 +5130,6 @@ NONE
                     if not fact:
                         continue
 
-                    # Дополнительная защита:
-                    # пользовательский факт тоже
-                    # должен быть игровым.
                     if not is_game_relevant(
                         fact
                     ):
@@ -3614,9 +5235,7 @@ NONE
 
         print(
             f"🧠 LEARNING COMPLETE | "
-            f"version={BOT_VERSION} | "
-            f"chat={chat_id} | "
-            f"stage={stage}",
+            f"chat={chat_id} | stage={stage}",
             flush=True
         )
 
@@ -3649,6 +5268,51 @@ NONE
             learning_running.discard(
                 chat_id
             )
+
+
+def increase_learning_counter(chat_id):
+
+    state = get_learning_state(
+        chat_id
+    )
+
+    previous = int(
+        state.get(
+            "messages_since_learning",
+            0
+        )
+    )
+
+    count = min(
+        previous + 1,
+        LEARNING_EVERY_MESSAGES
+    )
+
+    try:
+
+        (
+            supabase
+            .table("bot_learning_state")
+            .update({
+                "messages_since_learning":
+                    count
+            })
+            .eq(
+                "chat_id",
+                db_chat_id(chat_id)
+            )
+            .execute()
+        )
+
+    except Exception as e:
+
+        print(
+            "Learning counter error:",
+            e,
+            flush=True
+        )
+
+    return count
 
 
 def maybe_learn(chat_id):
@@ -3931,20 +5595,6 @@ def build_chat_context(
 # DIRECT ADDRESS
 # =========================================================
 
-def contains_bot_word(text):
-
-    low = normalize_text(
-        text
-    ).lower()
-
-    return bool(
-        re.search(
-            r"(?<!\w)бот(?!\w)",
-            low
-        )
-    )
-
-
 def is_directed_to_bot_vk(
     message,
     text
@@ -3968,33 +5618,24 @@ def is_directed_to_bot_vk(
 
             try:
 
-                # Если ответ идёт на сообщение бота,
-                # VK обычно содержит ID сообщества.
                 if int(from_id) < 0:
                     return True
 
             except Exception:
                 pass
 
-    # Упоминание сообщества VK
     if re.search(
         r"\[club\d+\|",
         low
     ):
         return True
 
-    # Прямое обращение:
-    # "бот, ..."
-    # "бот ..."
-    # "эй бот ..."
     if re.search(
         r"^(?:эй\s+)?бот\b",
         low
     ):
         return True
 
-    # Обращение в конце:
-    # "ты что думаешь, бот?"
     if re.search(
         r"\bбот[!?.,]*$",
         low
@@ -4056,54 +5697,6 @@ def is_directed_to_bot_telegram(
     return False
 
 
-# =========================================================
-# QUESTION / GAME DETECTION
-# =========================================================
-
-QUESTION_WORDS = (
-    "кто",
-    "что",
-    "где",
-    "когда",
-    "почему",
-    "зачем",
-    "как",
-    "какой",
-    "какая",
-    "какие",
-    "сколько",
-    "можно",
-    "правда",
-    "есть ли"
-)
-
-
-def looks_like_question(text):
-
-    low = normalize_text(
-        text
-    ).lower()
-
-    if "?" in low:
-        return True
-
-    return any(
-        re.search(
-            rf"^{re.escape(word)}\b",
-            low
-        )
-        for word in QUESTION_WORDS
-    )
-
-
-def is_short_game_message(text):
-
-    return (
-        len(text.split()) <= 12
-        and is_game_relevant(text)
-    )
-
-
 def should_answer(
     message,
     text,
@@ -4119,37 +5712,15 @@ def should_answer(
 
     if platform == "telegram":
 
-        directed = is_directed_to_bot_telegram(
+        return is_directed_to_bot_telegram(
             message,
             text
         )
 
-    else:
-
-        directed = is_directed_to_bot_vk(
-            message,
-            text
-        )
-
-    # -----------------------------------------------------
-    # ПРЯМОЕ ОБРАЩЕНИЕ
-    # -----------------------------------------------------
-
-    if directed:
-        return True
-
-    # -----------------------------------------------------
-    # БЕЗ ОБРАЩЕНИЯ:
-    #
-    # Не лезем в обычный разговор.
-    # Можно отвечать только на явно игровой вопрос,
-    # если он выглядит как запрос к боту.
-    #
-    # Но не на обычные "кто завтра играет?",
-    # "а что есть?" и т.п.
-    # -----------------------------------------------------
-
-    return False
+    return is_directed_to_bot_vk(
+        message,
+        text
+    )
 
 
 # =========================================================
@@ -4254,9 +5825,9 @@ def ask_intervention_model(
 - обычный спор;
 - критику игры;
 - обычный мат;
-- шутки между друзьями;
+- шутки;
 - несогласие;
-- игровые подколы без личной атаки.
+- игровые подколы.
 
 Если вмешиваться не надо:
 
@@ -4264,17 +5835,6 @@ NONE
 
 Если надо:
 одна короткая реплика.
-
-Стиль:
-дерзкий, ироничный, короткий.
-
-Без:
-- угроз;
-- семьи;
-- здоровья;
-- внешности;
-- защищённых признаков;
-- травли.
 
 Максимум 2 предложения.
 
@@ -4287,10 +5847,7 @@ NONE
                 "system",
 
             "content":
-                (
-                    "Ты осторожный классификатор "
-                    "личных конфликтов."
-                )
+                "Ты осторожный классификатор личных конфликтов."
         },
         {
             "role":
@@ -4421,7 +5978,8 @@ def maybe_intervene_vk(
             chat_id
         ] = (
             time.time()
-            + INTERVENTION_COOLDOWN
+            +
+            INTERVENTION_COOLDOWN
         )
 
     save_chat_message(
@@ -4602,8 +6160,79 @@ def ask_ai(
                 )
 
         raise RuntimeError(
-            "Все текстовые AI "
-            "временно недоступны."
+            "Все текстовые AI временно недоступны."
+        )
+
+
+# =========================================================
+# ADMIN ERROR
+# =========================================================
+
+def notify_admin_error(
+    error_type,
+    error,
+    context=""
+):
+
+    try:
+
+        error_text = normalize_text(
+            str(error)
+        )
+
+        context_text = normalize_text(
+            context
+        )
+
+        cache_key = (
+            f"{error_type}|"
+            f"{error_text[:300]}|"
+            f"{context_text[:150]}"
+        )
+
+        now = time.time()
+
+        with admin_error_lock:
+
+            previous = admin_error_cache.get(
+                cache_key,
+                0
+            )
+
+            if (
+                now - previous
+                < ADMIN_ERROR_COOLDOWN
+            ):
+                return
+
+            admin_error_cache[
+                cache_key
+            ] = now
+
+        message = (
+            "⚠️ ОШИБКА БОТА\n\n"
+            f"Тип: {error_type}\n"
+            f"Ошибка: {error_text[:1200]}"
+        )
+
+        if context_text:
+
+            message += (
+                f"\nКонтекст: "
+                f"{context_text[:500]}"
+            )
+
+        send_vk_private_message(
+            ADMIN_ID,
+            message
+        )
+
+    except Exception as e:
+
+        print(
+            "Admin error notify failed:",
+            e,
+            flush=True
         )
 
 
@@ -4629,14 +6258,23 @@ def send_message(
         response = requests.post(
             f"{VK_API}/messages.send",
             data={
-                "access_token": VK_TOKEN,
-                "v": VK_VERSION,
-                "peer_id": int(peer_id),
-                "message": text[:4096],
-                "random_id": random.randint(
-                    1,
-                    2147483647
-                )
+                "access_token":
+                    VK_TOKEN,
+
+                "v":
+                    VK_VERSION,
+
+                "peer_id":
+                    int(peer_id),
+
+                "message":
+                    text[:4096],
+
+                "random_id":
+                    random.randint(
+                        1,
+                        2147483647
+                    )
             },
             timeout=15
         )
@@ -4794,11 +6432,6 @@ def activity_loop():
                     ):
                         continue
 
-                # -------------------------------------------------
-                # ВАЖНО:
-                # Спонтанные сообщения теперь сильно ограничены.
-                # -------------------------------------------------
-
                 if (
                     now - item["last"]
                     < 30 * 60
@@ -4813,12 +6446,9 @@ def activity_loop():
                             key
                         ]["last"] = now
 
-                # Вероятность маленькая.
                 if random.random() > 0.08:
                     continue
 
-                # Если обычные ответы отключены,
-                # спонтанное сообщение тоже запрещено.
                 if platform == "vk":
 
                     if not is_response_enabled(
@@ -4834,7 +6464,7 @@ def activity_loop():
                     "участника Tanks Blitz. "
                     "Не придумывай новости, "
                     "ТТХ или факты. "
-                    "Если нечего сказать — ответь NONE."
+                    "Если нечего сказать — NONE."
                 )
 
                 try:
@@ -4900,7 +6530,7 @@ def activity_loop():
 
 
 # =========================================================
-# RENDER
+# HOME
 # =========================================================
 
 @app.route(
@@ -4910,6 +6540,7 @@ def activity_loop():
 def home():
 
     learning_status = None
+    moderation_status = None
 
     try:
 
@@ -4919,9 +6550,14 @@ def home():
                 ALLOWED_VK_PEER_ID
             )
 
+            moderation_status = get_moderation_enabled(
+                ALLOWED_VK_PEER_ID
+            )
+
     except Exception:
 
         learning_status = None
+        moderation_status = None
 
     return {
         "status":
@@ -4944,6 +6580,12 @@ def home():
 
         "learning_enabled":
             learning_status,
+
+        "moderation":
+            True,
+
+        "moderation_enabled":
+            moderation_status,
 
         "official_tanks_blitz_memory":
             True,
@@ -5081,7 +6723,7 @@ def callback():
         )
 
         # =====================================================
-        # ADMIN COMMANDS
+        # ADMIN TB COMMANDS
         # =====================================================
 
         handled, reply = handle_admin_tb_command(
@@ -5093,13 +6735,37 @@ def callback():
         if handled:
 
             if reply:
-
                 send_message(
                     peer_id,
                     reply
                 )
 
             return "ok"
+
+        # =====================================================
+        # MODERATION ADMIN COMMANDS
+        # =====================================================
+
+        handled, reply = handle_moderation_admin_command(
+            chat_id,
+            sender_id,
+            text,
+            message
+        )
+
+        if handled:
+
+            if reply:
+                send_message(
+                    peer_id,
+                    reply
+                )
+
+            return "ok"
+
+        # =====================================================
+        # LEARNING COMMANDS
+        # =====================================================
 
         handled, reply = handle_learning_control_command(
             chat_id,
@@ -5110,13 +6776,16 @@ def callback():
         if handled:
 
             if reply:
-
                 send_message(
                     peer_id,
                     reply
                 )
 
             return "ok"
+
+        # =====================================================
+        # GENERAL ADMIN COMMANDS
+        # =====================================================
 
         handled, reply = handle_admin_command(
             chat_id,
@@ -5127,11 +6796,24 @@ def callback():
         if handled:
 
             if reply:
-
                 send_message(
                     peer_id,
                     reply
                 )
+
+            return "ok"
+
+        # =====================================================
+        # MODERATION CHECK
+        # =====================================================
+
+        if apply_automatic_moderation(
+            chat_id,
+            sender_id,
+            user_name,
+            text,
+            message
+        ):
 
             return "ok"
 
@@ -5177,6 +6859,7 @@ def callback():
             text,
             message
         ):
+
             return "ok"
 
         # =====================================================
@@ -5340,10 +7023,6 @@ def telegram_webhook(
         if not text:
             return "ok"
 
-        # =====================================================
-        # ADMIN
-        # =====================================================
-
         handled, reply = handle_learning_control_command(
             chat_id,
             sender_id,
@@ -5379,10 +7058,6 @@ def telegram_webhook(
                 )
 
             return "ok"
-
-        # =====================================================
-        # SAVE
-        # =====================================================
 
         save_chat_message(
             chat_id,
@@ -5588,12 +7263,22 @@ if __name__ == "__main__":
     )
 
     print(
+        f"🛡 MODERATION MODEL: {MODERATION_MODEL}",
+        flush=True
+    )
+
+    print(
         f"🆓 OPENROUTER: {OPENROUTER_MODEL}",
         flush=True
     )
 
     print(
         "🧠 Self-learning: ADMIN CONTROLLED",
+        flush=True
+    )
+
+    print(
+        "🛡 Moderation: ENABLED",
         flush=True
     )
 
