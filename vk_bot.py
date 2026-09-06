@@ -16,8 +16,8 @@ from supabase import create_client
 # CONFIG
 # =========================================================
 
-BOT_VERSION = "V1.3"
-BOT_BUILD = "Начальное самообучение + Telegram + OpenRouter"
+BOT_VERSION = "V1.3.2"
+BOT_BUILD = "Исправления памяти + оптимизация контекста"
 
 VK_TOKEN = os.environ.get("VK_TOKEN", "").strip()
 VK_CONFIRMATION_CODE = os.environ.get(
@@ -99,13 +99,13 @@ GROQ_MAX_TOKENS = 320
 OPENROUTER_MAX_TOKENS = 320
 LEARNING_MAX_TOKENS = 300
 
-CHAT_MEMORY_LIMIT = 18
-LEARNING_HISTORY_LIMIT = 60
+CHAT_MEMORY_LIMIT = 15
+LEARNING_HISTORY_LIMIT = 25
 
 LEARNING_EVERY_MESSAGES = 40
 
-KNOWLEDGE_LIMIT = 8
-USER_MEMORY_LIMIT = 10
+KNOWLEDGE_LIMIT = 15
+USER_MEMORY_LIMIT = 20
 
 NAME_CACHE_TIME = 24 * 60 * 60
 
@@ -135,6 +135,9 @@ learning_retry_until = {}
 
 main_blocked_until = 0
 backup_blocked_until = 0
+learning_main_blocked_until = 0
+learning_backup_blocked_until = 0
+openrouter_blocked_until = 0
 
 TELEGRAM_BOT_ID = None
 TELEGRAM_BOT_USERNAME = ""
@@ -370,28 +373,41 @@ def is_rate_limit_error(error):
 
 def get_retry_seconds(error, default):
 
+    text = str(error)
+
     match = re.search(
         r"try again in\s+"
         r"(?:(\d+)h)?"
         r"(?:(\d+)m)?"
         r"(?:(\d+(?:\.\d+)?)s)?",
-        str(error),
+        text,
         re.I
     )
 
-    if not match:
-        return default
+    if match:
+        total = (
+            int(match.group(1) or 0) * 3600
+            + int(match.group(2) or 0) * 60
+            + float(match.group(3) or 0)
+        )
+        if total > 0:
+            return int(total) + 10
 
-    total = (
-        int(match.group(1) or 0) * 3600
-        + int(match.group(2) or 0) * 60
-        + float(match.group(3) or 0)
+    # OpenRouter may expose the reset moment as a Unix timestamp in ms.
+    reset_match = re.search(
+        r"(?:X-RateLimit-Reset|x-ratelimit-reset)[^0-9]{0,20}(\d{13})",
+        text,
+        re.I
     )
+    if reset_match:
+        try:
+            seconds = int(int(reset_match.group(1)) / 1000 - time.time())
+            if seconds > 0:
+                return seconds + 10
+        except Exception:
+            pass
 
-    if total <= 0:
-        return default
-
-    return int(total) + 10
+    return default
 
 
 # =========================================================
@@ -1724,8 +1740,9 @@ def ask_openrouter(
 
 def ask_learning_model(messages):
 
-    global main_blocked_until
-    global backup_blocked_until
+    global learning_main_blocked_until
+    global learning_backup_blocked_until
+    global openrouter_blocked_until
 
     now = time.time()
 
@@ -1733,7 +1750,7 @@ def ask_learning_model(messages):
     # Groq 20B
     # -----------------------------------------
 
-    if now >= backup_blocked_until:
+    if now >= learning_backup_blocked_until:
 
         try:
 
@@ -1752,7 +1769,7 @@ def ask_learning_model(messages):
 
             if is_rate_limit_error(e):
 
-                backup_blocked_until = (
+                learning_backup_blocked_until = (
                     time.time()
                     + get_retry_seconds(
                         e,
@@ -1770,7 +1787,7 @@ def ask_learning_model(messages):
     # Groq 120B
     # -----------------------------------------
 
-    if time.time() >= main_blocked_until:
+    if time.time() >= learning_main_blocked_until:
 
         try:
 
@@ -1789,7 +1806,7 @@ def ask_learning_model(messages):
 
             if is_rate_limit_error(e):
 
-                main_blocked_until = (
+                learning_main_blocked_until = (
                     time.time()
                     + get_retry_seconds(
                         e,
@@ -1807,7 +1824,7 @@ def ask_learning_model(messages):
     # OpenRouter FREE
     # -----------------------------------------
 
-    if OPENROUTER_API_KEY:
+    if OPENROUTER_API_KEY and time.time() >= openrouter_blocked_until:
 
         try:
 
@@ -1823,6 +1840,12 @@ def ask_learning_model(messages):
             )
 
         except Exception as e:
+
+            if is_rate_limit_error(e):
+                openrouter_blocked_until = (
+                    time.time()
+                    + get_retry_seconds(e, 24 * 60 * 60)
+                )
 
             print(
                 "OpenRouter learning error:",
@@ -2659,8 +2682,9 @@ def ask_ai(
     user_name
 ):
 
-    try:
+    global openrouter_blocked_until
 
+    try:
         return ask_groq(
             chat_id,
             text,
@@ -2671,14 +2695,22 @@ def ask_ai(
     except Exception as groq_error:
 
         print(
-            "Groq final error, "
-            "trying OpenRouter FREE:",
+            "Groq final error, trying OpenRouter FREE:",
             groq_error,
             flush=True
         )
 
-        try:
+        if time.time() < openrouter_blocked_until:
+            print(
+                f"OpenRouter blocked | retry in ~"
+                f"{max(0, int(openrouter_blocked_until-time.time()))} sec",
+                flush=True
+            )
+            raise RuntimeError(
+                "Все текстовые AI временно недоступны."
+            )
 
+        try:
             return ask_openrouter(
                 chat_id,
                 text,
@@ -2688,6 +2720,15 @@ def ask_ai(
 
         except Exception as openrouter_error:
 
+            if is_rate_limit_error(openrouter_error):
+                openrouter_blocked_until = (
+                    time.time()
+                    + get_retry_seconds(
+                        openrouter_error,
+                        24 * 60 * 60
+                    )
+                )
+
             print(
                 "OpenRouter final error:",
                 openrouter_error,
@@ -2695,8 +2736,7 @@ def ask_ai(
             )
 
             raise RuntimeError(
-                "Все текстовые AI "
-                "временно недоступны."
+                "Все текстовые AI временно недоступны."
             )
 
 
