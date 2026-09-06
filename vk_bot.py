@@ -1407,11 +1407,28 @@ def clean_model_text(text):
         flags=re.DOTALL | re.IGNORECASE
     )
 
+    # Убираем возможные служебные блоки reasoning/CoT,
+    # если провайдер всё же вернул их в текстовом поле.
+    for tag in ("think", "analysis", "reasoning"):
+        text = re.sub(
+            rf"<{tag}>.*?</{tag}>",
+            "",
+            text,
+            flags=re.DOTALL | re.IGNORECASE
+        )
+        text = re.sub(
+            rf"<{tag}>.*$",
+            "",
+            text,
+            flags=re.DOTALL | re.IGNORECASE
+        )
+
+    # Не выпускаем в пользовательский ответ служебные обёртки.
     text = re.sub(
-        r"<think>.*$",
+        r"^\s*(?:assistant|final)\s*:\s*",
         "",
         text,
-        flags=re.DOTALL | re.IGNORECASE
+        flags=re.IGNORECASE
     )
 
     return text.strip()
