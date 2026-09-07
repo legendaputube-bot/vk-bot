@@ -99,15 +99,70 @@ GROQ_MAX_TOKENS = 320
 OPENROUTER_MAX_TOKENS = 320
 LEARNING_MAX_TOKENS = 300
 
-CHAT_MEMORY_LIMIT = 15
-LEARNING_HISTORY_LIMIT = 25
+CHAT_MEMORY_LIMIT = 25
+LEARNING_HISTORY_LIMIT = 35
 
 LEARNING_EVERY_MESSAGES = 40
 
-KNOWLEDGE_LIMIT = 15
+KNOWLEDGE_LIMIT = 30
 USER_MEMORY_LIMIT = 20
 
 NAME_CACHE_TIME = 24 * 60 * 60
+
+# =========================================================
+# TANKS BLITZ KNOWLEDGE
+# =========================================================
+
+TANK_DB_CACHE = {"rows": [], "loaded_at": 0}
+TANK_DB_CACHE_TIME = 10 * 60
+
+def normalize_tank_text(text):
+    return re.sub(r"[^a-zа-яё0-9]+", " ", (text or "").lower()).strip()
+
+def get_tank_knowledge_for_text(text, limit=5):
+    query = normalize_tank_text(text)
+    if not query:
+        return []
+
+    now = time.time()
+    if (
+        not TANK_DB_CACHE["rows"]
+        or now - TANK_DB_CACHE["loaded_at"] > TANK_DB_CACHE_TIME
+    ):
+        try:
+            result = (
+                supabase.table("tanks_blitz_knowledge")
+                .select("name, nation, tier, game, game_version, source")
+                .limit(200)
+                .execute()
+            )
+            TANK_DB_CACHE["rows"] = result.data or []
+            TANK_DB_CACHE["loaded_at"] = now
+        except Exception:
+            return []
+
+    scored = []
+    query_tokens = set(query.split())
+
+    for row in TANK_DB_CACHE["rows"]:
+        name = normalize_tank_text(row.get("name") or "")
+        if not name:
+            continue
+
+        score = 0
+        if name in query:
+            score = 100 + len(name)
+        else:
+            name_tokens = set(name.split())
+            overlap = len(query_tokens & name_tokens)
+            if overlap:
+                score = overlap * 10
+
+        if score > 0:
+            scored.append((score, row))
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [row for _, row in scored[:limit]]
 
 EVENT_CACHE_TIME = 30 * 60
 EVENT_CACHE_LIMIT = 2000
@@ -2340,6 +2395,30 @@ def build_chat_context(
                         + "\n".join(lines)
                     )
             })
+
+    # =========================================
+    # TANKS BLITZ DATABASE
+    # =========================================
+
+    tank_rows = get_tank_knowledge_for_text(text)
+
+    if tank_rows:
+        tank_lines = []
+        for tank in tank_rows:
+            tank_lines.append(
+                f"- {tank.get('name', '')} | нация: {tank.get('nation', '')} | "
+                f"уровень: {tank.get('tier', '')}"
+            )
+
+        messages.append({
+            "role": "system",
+            "content": (
+                "Данные из базы Tanks Blitz. Используй их как источник фактов. "
+                "В базе указаны только название танка, нация и уровень. "
+                "Не придумывай ТТХ или другие характеристики, которых здесь нет.\n"
+                + "\n".join(tank_lines)
+            )
+        })
 
     # =========================================
     # RECENT CHAT
