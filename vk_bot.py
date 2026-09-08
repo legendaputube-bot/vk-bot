@@ -1634,6 +1634,55 @@ def clean_model_text(text):
     return text.strip()
 
 
+# Признаки "сырого" рассуждения модели, которое пришло вообще
+# БЕЗ каких-либо тегов <think> и поэтому не отлавливается
+# clean_model_text выше. Такое видели от бесплатных/авто-
+# маршрутизируемых моделей (например, "openrouter/free"),
+# которые просто пишут ход мыслей как обычный текст ответа.
+# Если находим — считаем ответ непригодным и не отправляем
+# его пользователю вообще.
+LEAKED_REASONING_MARKERS = (
+    "here's a thinking process",
+    "here is a thinking process",
+    "let me think",
+    "let me analyze",
+    "the user is asking",
+    "the current speaker is",
+    "i need to check",
+    "looking at the personal memory",
+    "identify key elements",
+    "analyze user input",
+    "possibility 1",
+)
+
+
+def looks_like_leaked_reasoning(text):
+
+    if not text:
+        return False
+
+    low = text.lower()
+
+    if any(
+        marker in low
+        for marker in LEAKED_REASONING_MARKERS
+    ):
+        return True
+
+    # Пронумерованный список из жирных заголовков ("1. **...**",
+    # "2. **...**") — типичный признак чернового рассуждения,
+    # а не финального ответа живому человеку в чате.
+    numbered_bold_steps = re.findall(
+        r"(?:^|\n)\s*\d+\.\s*\*\*",
+        text
+    )
+
+    if len(numbered_bold_steps) >= 2:
+        return True
+
+    return False
+
+
 # =========================================================
 # GROQ MODEL
 # =========================================================
@@ -1716,6 +1765,20 @@ def ask_model(
         ) or ""
     )
 
+    if reply and looks_like_leaked_reasoning(reply):
+
+        print(
+            "Groq LEAKED REASONING, "
+            "rejecting reply:",
+            reply[:200],
+            flush=True
+        )
+
+        raise RuntimeError(
+            "Groq returned raw reasoning "
+            "instead of a final answer."
+        )
+
     if reply:
         return reply
 
@@ -1768,7 +1831,19 @@ def ask_openrouter_messages(
                     max_tokens,
 
                 "stream":
-                    False
+                    False,
+
+                # Просим провайдера не возвращать содержимое
+                # reasoning/CoT в ответе вообще (даже если модель
+                # рассуждает внутри себя). Раньше без этого
+                # некоторые модели через "openrouter/free"
+                # (автомаршрутизатор — может подставить любую
+                # свободную модель) присылали своё рассуждение
+                # прямо как обычный текст, без тегов <think>,
+                # и оно уходило пользователю как ответ бота.
+                "reasoning": {
+                    "exclude": True
+                }
             },
             timeout=60
         )
@@ -1892,6 +1967,20 @@ def ask_openrouter_messages(
 
         raise RuntimeError(
             f"{label} returned empty response."
+        )
+
+    if looks_like_leaked_reasoning(reply):
+
+        print(
+            f"{label} LEAKED REASONING, "
+            f"rejecting reply:",
+            reply[:200],
+            flush=True
+        )
+
+        raise RuntimeError(
+            f"{label} returned raw reasoning "
+            f"instead of a final answer."
         )
 
     return reply
