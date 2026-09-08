@@ -319,6 +319,13 @@ Tanks Blitz — одна из тем сообщества, но не единс�
 
 Не придумывай факты о людях.
 
+Нашивки, статусы активности и рейтинг сообщений в этом чате
+считает ДРУГОЙ бот, не ты. У тебя нет доступа к этим данным.
+Если тебя спрашивают про нашивки, рейтинг активности или
+«сколько у меня сообщений» — честно скажи, что это не твоя
+функция, и не называй никаких имён, цифр или статусов
+(даже как пример).
+
 Не сохраняй пароли, адреса, документы, банковские данные
 и чувствительную личную информацию.
 
@@ -366,42 +373,58 @@ def normalize_text(text):
 # EVENT PROTECTION
 # =========================================================
 
+# ВАЖНО: раньше проверка "event_id уже обработан?" и его запись
+# в processed_events были двумя отдельными не атомарными шагами
+# без блокировки. Если два запроса на один и тот же event_id
+# приходили почти одновременно (VK/Telegram ретраят вебхук, если
+# не получают ответ достаточно быстро), оба потока успевали
+# пройти проверку "if event_id in processed_events" ДО того, как
+# любой из них успевал его записать — и оба уходили в LLM
+# параллельно. Отсюда дубли ответов с разной формулировкой.
+#
+# events_lock делает "проверить + записать" одной атомарной
+# операцией.
+events_lock = threading.Lock()
+
+
 def already_processed(event_id):
 
     if not event_id:
         return False
 
-    now = time.time()
+    with events_lock:
 
-    for key in list(processed_events):
+        now = time.time()
 
-        if (
-            now - processed_events[key]
-            > EVENT_CACHE_TIME
-        ):
+        for key in list(processed_events):
+
+            if (
+                now - processed_events[key]
+                > EVENT_CACHE_TIME
+            ):
+                processed_events.pop(
+                    key,
+                    None
+                )
+
+        if event_id in processed_events:
+            return True
+
+        processed_events[event_id] = now
+
+        if len(processed_events) > EVENT_CACHE_LIMIT:
+
+            oldest = min(
+                processed_events,
+                key=processed_events.get
+            )
+
             processed_events.pop(
-                key,
+                oldest,
                 None
             )
 
-    if event_id in processed_events:
-        return True
-
-    processed_events[event_id] = now
-
-    if len(processed_events) > EVENT_CACHE_LIMIT:
-
-        oldest = min(
-            processed_events,
-            key=processed_events.get
-        )
-
-        processed_events.pop(
-            oldest,
-            None
-        )
-
-    return False
+        return False
 
 
 # =========================================================
@@ -689,6 +712,40 @@ def get_chat_memory(
         )
 
         return []
+
+
+# =========================================================
+# ACTIVITY / BADGES — ЭТО ФУНКЦИЯ ДРУГОГО БОТА
+# =========================================================
+#
+# Нашивки и рейтинг активности принадлежат другому боту в чате.
+# У этого бота нет и не должно быть своих данных по ним — раньше
+# он на такие вопросы просто ПРИДУМЫВАЛ имена и цифры через LLM.
+# Теперь при таком вопросе бот получает жёсткую системную
+# инструкцию честно сказать, что это не его функция, и ничего
+# не считать и не выдумывать.
+
+NOT_MY_FEATURE_KEYWORDS = (
+    "рейтинг",
+    "топ активны",
+    "топ-10",
+    "топ 10",
+    "нашивк",
+    "мой статус",
+    "какой у меня статус",
+    "статистика чата",
+    "активност",
+)
+
+
+def looks_like_not_my_feature_question(text):
+
+    low = (text or "").lower()
+
+    return any(
+        word in low
+        for word in NOT_MY_FEATURE_KEYWORDS
+    )
 
 
 def get_chat_message_count(chat_id):
@@ -2417,6 +2474,27 @@ def build_chat_context(
                 "В базе указаны только название танка, нация и уровень. "
                 "Не придумывай ТТХ или другие характеристики, которых здесь нет.\n"
                 + "\n".join(tank_lines)
+            )
+        })
+
+    # =========================================
+    # ACTIVITY / BADGES — НЕ НАША ФУНКЦИЯ
+    # =========================================
+
+    if looks_like_not_my_feature_question(text):
+
+        messages.append({
+            "role": "system",
+            "content": (
+                "Пользователь спрашивает про нашивки, рейтинг "
+                "активности или статистику чата. Это функция "
+                "ДРУГОГО бота в этом чате, не твоя. У тебя нет "
+                "и не может быть данных об этом.\n"
+                "Коротко и естественно скажи, что это не твоя "
+                "функция и что за нашивками/рейтингом активности "
+                "нужно обратиться к другому боту. Не называй имён, "
+                "цифр, мест в рейтинге и статусов — ни настоящих, "
+                "ни выдуманных."
             )
         })
 
