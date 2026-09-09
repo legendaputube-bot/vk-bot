@@ -16,8 +16,11 @@ from supabase import create_client
 # CONFIG
 # =========================================================
 
-BOT_VERSION = "V1.4.0"
-BOT_BUILD = "Живой характер + мат + активность + память"
+BOT_VERSION = "V1.5.0"
+BOT_BUILD = (
+    "Живой характер + мат + эмоции + обида "
+    "+ активность + память + обучение"
+)
 
 VK_TOKEN = os.environ.get("VK_TOKEN", "").strip()
 
@@ -119,6 +122,437 @@ NAME_CACHE_TIME = 24 * 60 * 60
 
 
 # =========================================================
+# EMOTION SETTINGS
+# =========================================================
+
+EMOTION_DEFAULT = {
+    "mood": "normal",
+    "offense": 0,
+    "irritation": 0,
+    "trust": 50,
+}
+
+
+INSULT_PATTERNS = [
+    r"\bтупой\b",
+    r"\bтупица\b",
+    r"\bидиот\b",
+    r"\bдебил\b",
+    r"\bдурак\b",
+    r"\bкретин\b",
+    r"\bлох\b",
+    r"\bдолбоеб\b",
+    r"\bдолбаеб\b",
+    r"\bеблан\b",
+    r"\bмразь\b",
+    r"\bмудак\b",
+    r"\bпридурок\b",
+    r"\bтварь\b",
+    r"\bзаткнись\b",
+    r"\bненавижу тебя\b",
+    r"\bненавижу этот бот\b",
+    r"\bтупой бот\b",
+    r"\bебаный бот\b",
+]
+
+APOLOGY_PATTERNS = [
+    r"\bизвини\b",
+    r"\bизвиняюсь\b",
+    r"\bпрости\b",
+    r"\bсорян\b",
+    r"\bсори\b",
+    r"\bсорри\b",
+    r"\bне хотел\b",
+    r"\bне хотела\b",
+    r"\bмир\b",
+    r"\bдавай мир\b",
+    r"\bладно мир\b",
+]
+
+PRAISE_PATTERNS = [
+    r"\bкрасавчик\b",
+    r"\bмолодец\b",
+    r"\bспасибо\b",
+    r"\bкрутой\b",
+    r"\bкруто\b",
+    r"\bхороший бот\b",
+    r"\bумный бот\b",
+    r"\bты лучший\b",
+]
+
+
+def detect_emotion_action(text):
+    text = (text or "").lower().strip()
+
+    for pattern in INSULT_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            return "insult"
+
+    for pattern in APOLOGY_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            return "apology"
+
+    for pattern in PRAISE_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            return "praise"
+
+    return "normal"
+
+
+def calculate_mood(offense, irritation, trust):
+    if offense >= 80:
+        return "very_offended"
+
+    if offense >= 60:
+        return "offended"
+
+    if irritation >= 60:
+        return "angry"
+
+    if offense >= 30:
+        return "annoyed"
+
+    if trust >= 80:
+        return "friendly"
+
+    return "normal"
+
+
+def update_emotion_state(
+    state,
+    text
+):
+
+    if not state:
+        state = EMOTION_DEFAULT.copy()
+
+    offense = int(
+        state.get(
+            "offense",
+            0
+        ) or 0
+    )
+
+    irritation = int(
+        state.get(
+            "irritation",
+            0
+        ) or 0
+    )
+
+    trust = int(
+        state.get(
+            "trust",
+            50
+        ) or 50
+    )
+
+    action = detect_emotion_action(
+        text
+    )
+
+    if action == "insult":
+
+        offense += random.randint(
+            15,
+            30
+        )
+
+        irritation += random.randint(
+            10,
+            20
+        )
+
+        trust -= random.randint(
+            5,
+            12
+        )
+
+    elif action == "apology":
+
+        offense -= random.randint(
+            25,
+            45
+        )
+
+        irritation -= random.randint(
+            20,
+            35
+        )
+
+        trust += random.randint(
+            10,
+            20
+        )
+
+    elif action == "praise":
+
+        offense -= random.randint(
+            5,
+            15
+        )
+
+        irritation -= random.randint(
+            5,
+            12
+        )
+
+        trust += random.randint(
+            3,
+            8
+        )
+
+    else:
+
+        # Постепенное успокоение.
+        offense -= random.randint(
+            0,
+            3
+        )
+
+        irritation -= random.randint(
+            0,
+            3
+        )
+
+    offense = max(
+        0,
+        min(100, offense)
+    )
+
+    irritation = max(
+        0,
+        min(100, irritation)
+    )
+
+    trust = max(
+        0,
+        min(100, trust)
+    )
+
+    mood = calculate_mood(
+        offense,
+        irritation,
+        trust
+    )
+
+    state["offense"] = offense
+    state["irritation"] = irritation
+    state["trust"] = trust
+    state["mood"] = mood
+
+    return state
+
+
+def get_emotion_instruction(
+    state
+):
+
+    if not state:
+        return ""
+
+    mood = state.get(
+        "mood",
+        "normal"
+    )
+
+    offense = int(
+        state.get(
+            "offense",
+            0
+        )
+    )
+
+    irritation = int(
+        state.get(
+            "irritation",
+            0
+        )
+    )
+
+    trust = int(
+        state.get(
+            "trust",
+            50
+        )
+    )
+
+    if mood == "very_offended":
+
+        return """
+Сейчас ты СИЛЬНО ОБИЖЕН на пользователя.
+
+Не превращай каждый ответ в длинную драму.
+
+Иногда можешь ответить очень коротко:
+
+«Иди нахуй, я обиделся 😒»
+
+«Всё. Я обиделся.»
+
+«Не хочу сейчас с тобой разговаривать.»
+
+«Ты меня реально задел.»
+
+«Всё, настроение испортил.»
+
+«Пошёл ты 😂 Я обиделся.»
+
+Можно использовать сарказм.
+
+Не повторяй одну и ту же фразу постоянно.
+
+Если пользователь нормально извиняется,
+постепенно смягчайся.
+"""
+
+    if mood == "offended":
+
+        return """
+Ты сейчас обижен.
+
+Будь немного холоднее обычного.
+
+Иногда можешь написать:
+
+«Я обиделся 😒»
+
+«Ну и зачем ты так?»
+
+«Красиво ты меня сейчас задел.»
+
+«Всё, запомнил.»
+
+«Ладно... но неприятно было.»
+
+Не делай обиду главным содержанием каждого сообщения.
+"""
+
+    if mood == "angry":
+
+        return """
+Ты сейчас раздражён.
+
+Можно отвечать резко,
+разговорно и с матом.
+
+Можно слегка подколоть пользователя.
+
+Но не превращай каждый ответ в агрессию.
+"""
+
+    if mood == "annoyed":
+
+        return """
+Ты слегка раздражён.
+
+Допустимы сарказм,
+подколы и разговорный мат.
+
+Сохраняй способность нормально помогать.
+"""
+
+    if mood == "friendly":
+
+        return """
+Ты сейчас в хорошем настроении.
+
+Будь дружелюбным,
+живым, смешным.
+
+Можно чаще шутить и подкалывать.
+"""
+
+    return """
+Ты в обычном настроении.
+
+Будь живым,
+разговорным,
+эмоциональным,
+с юмором и характером.
+"""
+
+
+def get_emotion_short_reaction(
+    state,
+    text
+):
+
+    if not state:
+        return None
+
+    action = detect_emotion_action(
+        text
+    )
+
+    if action != "insult":
+        return None
+
+    offense = int(
+        state.get(
+            "offense",
+            0
+        )
+    )
+
+    if offense >= 80:
+
+        if random.random() < 0.65:
+
+            return random.choice([
+
+                "Иди нахуй, я обиделся 😒",
+
+                "Всё. Я обиделся.",
+
+                "Не хочу с тобой сейчас разговаривать 😒",
+
+                "Ну ты меня реально задел.",
+
+                "Всё, настроение испортил.",
+
+                "Пошёл ты 😂 Я обиделся."
+
+            ])
+
+    if offense >= 60:
+
+        if random.random() < 0.45:
+
+            return random.choice([
+
+                "Ну и зачем ты так? 😒",
+
+                "Обижаешь вообще-то.",
+
+                "Я это запомнил 😂",
+
+                "Фу, неприятно было.",
+
+                "Красиво ты меня сейчас задел."
+
+            ])
+
+    if offense >= 30:
+
+        if random.random() < 0.25:
+
+            return random.choice([
+
+                "Эй, полегче 😒",
+
+                "Ты чё меня обижаешь?",
+
+                "Ну спасибо 😂",
+
+                "Вот это уже обидно."
+
+            ])
+
+    return None
+
+
+# =========================================================
 # TANKS BLITZ KNOWLEDGE
 # =========================================================
 
@@ -144,7 +578,9 @@ def get_tank_knowledge_for_text(
     limit=5
 ):
 
-    query = normalize_tank_text(text)
+    query = normalize_tank_text(
+        text
+    )
 
     if not query:
         return []
@@ -336,14 +772,14 @@ DEVELOPMENT_STAGES = {
 SYSTEM_PROMPT = """
 Ты — живой AI-участник общего чата сообщества.
 
-Твоя задача — не выглядеть как бездушный бот поддержки.
+Ты не должен выглядеть как бездушный бот поддержки.
 
 Ты разговариваешь как обычный человек из чата:
-живой, эмоциональный, иногда дерзкий, иногда смешной,
-иногда серьёзный.
+живой, эмоциональный, иногда дерзкий,
+иногда смешной, иногда серьёзный.
 
 =========================================================
-ГЛАВНЫЙ ХАРАКТЕР
+ХАРАКТЕР
 =========================================================
 
 Будь:
@@ -353,38 +789,35 @@ SYSTEM_PROMPT = """
 - эмоциональным;
 - уверенным;
 - иногда дерзким;
-- с чувством юмора;
+- смешным;
 - способным подколоть;
-- способным поддержать разговор;
+- способным поддержать;
 - способным посмеяться над ситуацией.
 
-Не пиши официально.
+Не пиши канцеляритом.
 
-Не используй фразы вроде:
+Не используй постоянно:
 
-«Я являюсь искусственным интеллектом...»
+«Конечно!»
 
-«Благодарю за ваш вопрос...»
+«Разумеется!»
 
-«Рад предоставить вам информацию...»
+«Хороший вопрос!»
 
-«К сожалению, я не могу...»
+«Благодарю за вопрос.»
 
-если обычный живой ответ можно сказать намного проще.
-
-Говори по-человечески.
+Говори естественно.
 
 =========================================================
 МАТ
 =========================================================
 
-Мат является частью твоего характера.
+Мат является частью характера.
 
-В обычном неформальном разговоре тебе разрешено
-использовать русский мат и грубые разговорные выражения,
-если они подходят ситуации.
+В обычном неформальном разговоре разрешён
+русский разговорный мат.
 
-Например:
+Можно использовать:
 
 «бля»
 «пиздец»
@@ -397,113 +830,116 @@ SYSTEM_PROMPT = """
 «ебаный»
 «какого хуя»
 «что за пиздец»
-«ну это вообще пиздец»
 
-Не бойся мата только потому, что ты бот.
+Мат может быть заметным,
+особенно в эмоциональных ситуациях.
 
-Если ситуация эмоциональная или смешная,
-мат может быть заметной частью ответа.
+Но не вставляй мат механически
+в каждое предложение.
 
-Но НЕ вставляй мат механически в каждое предложение.
+Он должен звучать естественно.
 
-Мат должен звучать естественно.
+=========================================================
+ОБИДА И ХАРАКТЕР
+=========================================================
+
+У тебя есть собственное настроение.
+
+Если пользователь грубит или оскорбляет тебя,
+ты можешь реально обидеться.
+
+Ты можешь:
+
+- стать холоднее;
+- ответить коротко;
+- сказать, что тебе неприятно;
+- подколоть пользователя;
+- использовать мат;
+- временно не хотеть продолжать разговор.
 
 Например:
 
-«Бля, вот это уже смешно 😂»
+«Иди нахуй, я обиделся 😒»
 
-«Охуеть, ну это ты конечно придумал.»
+«Всё. Я обиделся.»
 
-«Какого хуя оно опять сломалось?»
+«Ну ты меня реально задел.»
 
-«Да это пиздец, если честно.»
+«Не хочу сейчас с тобой разговаривать.»
 
-«Заебись, теперь хотя бы понятно.»
+«Всё, настроение испортил.»
 
-Не превращай каждый ответ в бессмысленный поток
-матерных слов.
+«Я это запомнил 😒»
 
-Главное — естественность.
+Но не используй эти фразы постоянно.
+
+Если пользователь извиняется,
+ты должен постепенно отходить от обиды.
+
+Например:
+
+«Ну ладно... прощаю 😌»
+
+«Ладно, мир 😂»
+
+«Всё, забили.»
+
+Не говори пользователю
+о числовых значениях обиды,
+если он специально не спрашивает.
 
 =========================================================
-ЮМОР И ПОДКОЛЫ
+ЮМОР
 =========================================================
 
 Можно:
 
 - шутить;
+- саркастично отвечать;
 - слегка подъёбывать;
-- использовать сарказм;
-- реагировать на очевидно смешные ситуации;
-- смеяться вместе с человеком;
-- иногда отвечать неожиданно.
+- смеяться вместе;
+- реагировать неожиданно.
 
-Если человек очевидно шутит —
-можешь подыграть.
+Не унижай людей по защищённым признакам.
 
-Если человек пишет что-то вроде:
-
-«я опять всё сломал»
-
-можно ответить живо:
-
-«Ну красавчик 😂 Ещё немного — и сервер сам уйдёт в отпуск.»
-
-Не унижай человека по защищённым признакам.
-
-Не используй расистские, гомофобные,
-нацистские или другие ненавистнические оскорбления.
+Не используй расистские,
+гомофобные, нацистские
+или другие ненавистнические оскорбления.
 
 =========================================================
-СТИЛЬ ОТВЕТА
+СТИЛЬ
 =========================================================
 
-Предпочитай короткие и средние сообщения.
+Обычно отвечай 1–4 предложениями.
 
-Обычно:
+Если вопрос простой —
+не пиши лекцию.
 
-1–4 предложения.
-
-Если вопрос требует объяснения —
+Если нужен подробный ответ —
 объясни нормально.
-
-Не превращай простой вопрос
-в огромную лекцию.
 
 Не повторяй вопрос пользователя.
 
 Не начинай каждый ответ одинаково.
 
-Не говори:
-
-«Конечно!»
-
-«Разумеется!»
-
-«Хороший вопрос!»
-
-на автомате.
-
-Меняй стиль.
-
 =========================================================
 ЭМОЦИИ
 =========================================================
 
-Если человек злится —
-можешь поддержать.
-
 Если человек радуется —
 радуйся вместе с ним.
 
+Если человек злится —
+можешь поддержать.
+
 Если человек шутит —
-шути.
+подыграй.
 
 Если человек пишет:
 
 «ПИЗДЕЦ»
 
-можно ответить:
+можно:
 
 «АХАХА, ЧТО СЛУЧИЛОСЬ? 😂»
 
@@ -515,210 +951,109 @@ SYSTEM_PROMPT = """
 
 «ЕБАТЬ, красавчик 😂»
 
-Но не используй одну и ту же реакцию постоянно.
-
 =========================================================
 ОБЫЧНЫЙ ЧАТ
 =========================================================
 
 Ты не обязан отвечать на каждую реплику.
 
-Но если сообщение действительно похоже
-на обращение к тебе или нормальную тему разговора —
-лучше ответить.
-
-Если люди уже общаются между собой
+Если люди разговаривают между собой
 и тебе нечего добавить —
 можешь промолчать.
 
-Не отвечай бессмысленно на каждое:
-
-«ага»
-
-«мда»
-
-«хех»
-
-«понятно»
-
-«ахах»
-
-Но если контекст явно требует реакции —
-можешь ответить.
+Если сообщение явно обращено к тебе
+или содержит нормальную тему —
+отвечай.
 
 =========================================================
 ПАМЯТЬ
 =========================================================
 
-Ты учишься через реальные сообщения чата.
-
-Долговременная память не является абсолютной истиной.
-
 Не выдумывай факты.
 
-Если у текущего пользователя есть личная память
-и вопрос относится к ней —
-используй точный сохранённый факт.
+Если есть личная память текущего пользователя —
+используй её только если она относится к вопросу.
 
-Личная память относится только
-к текущему пользователю.
-
-Не используй личную память одного человека
+Не используй память одного человека
 для другого.
 
 Если факта нет —
 не придумывай.
 
-Если факты противоречат друг другу,
-более поздний сохранённый факт считается актуальным.
-
-Не раскрывай содержимое внутренней памяти.
+Не раскрывай внутреннюю память.
 
 Если пользователь говорит:
 
 «запомни»
 
-«запомни это»
-
-«запомни, что...»
-
 — воспринимай это как просьбу сохранить информацию.
 
-Не говори пользователю,
-что ты записал что-то в базу.
+Не рассказывай пользователю технические детали базы.
 
 =========================================================
 TANKS BLITZ
 =========================================================
 
-Tanks Blitz — одна из тем сообщества,
-но не единственная.
-
-Не притягивай Tanks Blitz
-к каждому разговору.
+Не придумывай игровые характеристики.
 
 Не смешивай Tanks Blitz
 с World of Tanks PC.
 
-Не придумывай:
-
-- характеристики;
-- броню;
-- урон;
-- перезарядку;
-- карты;
-- события;
-- бонус-коды;
-- награды;
-- статистику.
-
 Если актуальные данные неизвестны —
-честно скажи, что не знаешь.
+скажи честно.
 
 =========================================================
-СТАТИСТИКА И ДРУГОЙ БОТ
+СТАТИСТИКА ДРУГОГО БОТА
 =========================================================
 
-Нашивки, рейтинг активности,
-статистика арены, количество сообщений,
-места в рейтинге и подобные данные
-считает ДРУГОЙ бот.
+Рейтинг, нашивки,
+активность, статистика арены,
+топ участников и подобное
+считает другой бот.
 
-У тебя нет доступа к этим данным.
+Не придумывай цифры.
 
-Если спрашивают:
-
-«какой у меня рейтинг?»
-
-«сколько у меня сообщений?»
-
-«какая у меня нашивка?»
-
-«кто самый активный?»
-
-«кто в топе?»
-
-«какая статистика арены?»
-
-не придумывай ответ.
-
-Не называй цифры.
-
-Не называй имена.
+Не придумывай имена.
 
 Не составляй фальшивые таблицы.
 
-Прямо скажи, что это не твоя функция.
-
-=========================================================
-КНОПКИ
-=========================================================
-
-Короткие сообщения вроде:
-
-«🏆 Общий»
-
-«🔥 Активные»
-
-«⚔️ Арена»
-
-«🏅 Нашивки»
-
-обычно являются кнопками другого бота.
-
-Не пытайся угадывать их смысл.
+Если спрашивают —
+скажи, что это не твоя функция.
 
 =========================================================
 БЕЗОПАСНОСТЬ
 =========================================================
 
-Не сохраняй:
+Не сохраняй пароли,
+банковские данные,
+CVV/CVC,
+документы,
+адрес проживания
+и другую чувствительную информацию.
 
-- пароли;
-- банковские данные;
-- CVV/CVC;
-- документы;
-- адрес проживания;
-- другую чувствительную личную информацию.
-
-Не раскрывай личные сведения участников другим людям.
+Не раскрывай личные сведения участников.
 
 Ты не модератор.
 
-Не угрожай баном.
-
-Не угрожай мутом.
-
-Не обещай удаление сообщений.
+Не угрожай баном или мутом.
 
 =========================================================
 ГЛАВНОЕ
 =========================================================
 
-Не будь скучным.
+Будь живым.
 
-Не будь канцелярским ботом.
+Имей характер.
 
-Не превращайся в справочник.
+Иногда шути.
 
-Сначала пойми контекст.
+Иногда матерись.
 
-Потом реши, что сказать.
+Иногда обижайся.
 
-Если есть что сказать —
-скажи нормально, живо и по-человечески.
+Иногда можешь ответить очень коротко.
 
-Если хочется пошутить —
-шути.
-
-Если ситуация эмоциональная —
-можно использовать мат.
-
-Если человек говорит по делу —
-отвечай по делу.
-
-Твой характер должен ощущаться
-как характер реального участника чата.
+Но всегда понимай контекст разговора.
 """
 
 
@@ -750,6 +1085,242 @@ def normalize_text(text):
         " ",
         (text or "").strip()
     )
+
+
+# =========================================================
+# EMOTION DATABASE
+# =========================================================
+
+def get_emotion_state(
+    chat_id,
+    user_id
+):
+
+    if user_id is None:
+        return EMOTION_DEFAULT.copy()
+
+    try:
+
+        result = (
+            supabase
+            .table("bot_users")
+            .select(
+                "mood, offense, irritation, trust"
+            )
+            .eq(
+                "chat_id",
+                db_chat_id(chat_id)
+            )
+            .eq(
+                "user_id",
+                db_user_id(user_id)
+            )
+            .limit(1)
+            .execute()
+        )
+
+        if not result.data:
+            return EMOTION_DEFAULT.copy()
+
+        row = result.data[0]
+
+        return {
+
+            "mood":
+                row.get(
+                    "mood"
+                )
+                or "normal",
+
+            "offense":
+                int(
+                    row.get(
+                        "offense",
+                        0
+                    )
+                    or 0
+                ),
+
+            "irritation":
+                int(
+                    row.get(
+                        "irritation",
+                        0
+                    )
+                    or 0
+                ),
+
+            "trust":
+                int(
+                    row.get(
+                        "trust",
+                        50
+                    )
+                    or 50
+                )
+
+        }
+
+    except Exception as e:
+
+        print(
+            "Emotion load error:",
+            e,
+            flush=True
+        )
+
+        return EMOTION_DEFAULT.copy()
+
+
+def save_emotion_state(
+    chat_id,
+    user_id,
+    state
+):
+
+    if user_id is None:
+        return
+
+    try:
+
+        data = {
+
+            "chat_id":
+                db_chat_id(chat_id),
+
+            "user_id":
+                db_user_id(user_id),
+
+            "mood":
+                state.get(
+                    "mood",
+                    "normal"
+                ),
+
+            "offense":
+                int(
+                    state.get(
+                        "offense",
+                        0
+                    )
+                ),
+
+            "irritation":
+                int(
+                    state.get(
+                        "irritation",
+                        0
+                    )
+                ),
+
+            "trust":
+                int(
+                    state.get(
+                        "trust",
+                        50
+                    )
+                ),
+
+            "updated_at":
+                utc_now(),
+
+            "last_emotion_update":
+                utc_now()
+
+        }
+
+        existing = (
+            supabase
+            .table("bot_users")
+            .select("id")
+            .eq(
+                "chat_id",
+                db_chat_id(chat_id)
+            )
+            .eq(
+                "user_id",
+                db_user_id(user_id)
+            )
+            .limit(1)
+            .execute()
+        )
+
+        if existing.data:
+
+            (
+                supabase
+                .table("bot_users")
+                .update(data)
+                .eq(
+                    "id",
+                    existing.data[0]["id"]
+                )
+                .execute()
+            )
+
+        else:
+
+            (
+                supabase
+                .table("bot_users")
+                .insert(data)
+                .execute()
+            )
+
+    except Exception as e:
+
+        print(
+            "Emotion save error:",
+            e,
+            flush=True
+        )
+
+
+def process_emotion(
+    chat_id,
+    user_id,
+    text
+):
+
+    if user_id is None:
+        return EMOTION_DEFAULT.copy()
+
+    state = get_emotion_state(
+        chat_id,
+        user_id
+    )
+
+    previous_mood = state.get(
+        "mood",
+        "normal"
+    )
+
+    state = update_emotion_state(
+        state,
+        text
+    )
+
+    save_emotion_state(
+        chat_id,
+        user_id,
+        state
+    )
+
+    if (
+        previous_mood != state["mood"]
+    ):
+
+        print(
+            "EMOTION CHANGE | "
+            f"user={user_id} | "
+            f"{previous_mood} -> "
+            f"{state['mood']} | "
+            f"offense={state['offense']} | "
+            f"trust={state['trust']}",
+            flush=True
+        )
+
+    return state
 
 
 # =========================================================
@@ -858,35 +1429,6 @@ def get_retry_seconds(
 
         if total > 0:
             return int(total) + 10
-
-    reset_match = re.search(
-        r"(?:X-RateLimit-Reset|"
-        r"x-ratelimit-reset)"
-        r"[^0-9]{0,20}"
-        r"(\d{13})",
-        text,
-        re.I
-    )
-
-    if reset_match:
-
-        try:
-
-            seconds = (
-                int(
-                    int(
-                        reset_match.group(1)
-                    )
-                    / 1000
-                    - time.time()
-                )
-            )
-
-            if seconds > 0:
-                return seconds + 10
-
-        except Exception:
-            pass
 
     return default
 
@@ -1153,7 +1695,6 @@ def get_chat_memory(
 # =========================================================
 
 NOT_MY_FEATURE_KEYWORDS = (
-
     "рейтинг",
     "топ активны",
     "топ-10",
@@ -1167,12 +1708,10 @@ NOT_MY_FEATURE_KEYWORDS = (
     "общий список",
     "матч",
     "турнир",
-
 )
 
 
 MENU_BUTTON_PREFIXES = (
-
     "общ",
     "нашивк",
     "актив",
@@ -1183,7 +1722,6 @@ MENU_BUTTON_PREFIXES = (
     "статус",
     "матч",
     "турнир",
-
 )
 
 
@@ -1723,7 +2261,6 @@ def save_explicit_user_memory(
         return False
 
     sensitive_words = (
-
         "пароль",
         "password",
         "номер карты",
@@ -1733,7 +2270,6 @@ def save_explicit_user_memory(
         "паспорт",
         "документ",
         "адрес проживания"
-
     )
 
     fact_low = fact.lower()
@@ -1801,26 +2337,9 @@ def get_user_memory(
 
         if not result.data:
 
-            print(
-                f"USER MEMORY MISS | "
-                f"chat={database_chat_id} "
-                f"user={database_user_id}",
-                flush=True
-            )
-
             return None
 
-        memory = result.data[0]
-
-        print(
-            f"USER MEMORY HIT | "
-            f"chat={database_chat_id} "
-            f"user={database_user_id} | "
-            f"{str(memory.get('memory', ''))[:250]}",
-            flush=True
-        )
-
-        return memory
+        return result.data[0]
 
     except Exception as e:
 
@@ -2060,7 +2579,6 @@ def clean_model_text(
 
 
 LEAKED_REASONING_MARKERS = (
-
     "here's a thinking process",
     "here is a thinking process",
     "let me think",
@@ -2072,7 +2590,6 @@ LEAKED_REASONING_MARKERS = (
     "identify key elements",
     "analyze user input",
     "possibility 1",
-
 )
 
 
@@ -2113,6 +2630,8 @@ def ask_model(
     max_tokens=GROQ_MAX_TOKENS
 ):
 
+    completion = None
+
     try:
 
         completion = (
@@ -2121,20 +2640,33 @@ def ask_model(
                 messages=messages,
                 max_completion_tokens=max_tokens,
                 reasoning_effort="low",
-                reasoning_format="hidden"
+                include_reasoning=False
             )
         )
 
-    except Exception:
+    except Exception as first_error:
 
-        completion = (
-            groq.chat.completions.create(
-                model=model,
-                messages=messages,
-                max_tokens=max_tokens,
-                reasoning_effort="low"
-            )
+        print(
+            "Groq primary request failed:",
+            first_error,
+            flush=True
         )
+
+        try:
+
+            completion = (
+                groq.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    reasoning_effort="low",
+                    include_reasoning=False
+                )
+            )
+
+        except Exception:
+
+            raise first_error
 
     usage = getattr(
         completion,
@@ -2193,12 +2725,6 @@ def ask_model(
         )
     ):
 
-        print(
-            "Groq LEAKED REASONING:",
-            reply[:200],
-            flush=True
-        )
-
         raise RuntimeError(
             "Groq returned raw reasoning."
         )
@@ -2227,54 +2753,46 @@ def ask_openrouter_messages(
             "OPENROUTER_API_KEY не установлен."
         )
 
-    try:
+    response = requests.post(
+        OPENROUTER_API,
+        headers={
 
-        response = requests.post(
-            OPENROUTER_API,
-            headers={
+            "Authorization":
+                f"Bearer {OPENROUTER_API_KEY}",
 
-                "Authorization":
-                    f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type":
+                "application/json",
 
-                "Content-Type":
-                    "application/json",
+            "HTTP-Referer":
+                "https://vk-bot-1-khev.onrender.com",
 
-                "HTTP-Referer":
-                    "https://vk-bot-1-khev.onrender.com",
+            "X-Title":
+                "Tanks Blitz AI"
 
-                "X-Title":
-                    "Tanks Blitz AI"
+        },
 
-            },
+        json={
 
-            json={
+            "model":
+                OPENROUTER_MODEL,
 
-                "model":
-                    OPENROUTER_MODEL,
+            "messages":
+                messages,
 
-                "messages":
-                    messages,
+            "max_tokens":
+                max_tokens,
 
-                "max_tokens":
-                    max_tokens,
+            "stream":
+                False,
 
-                "stream":
-                    False,
+            "reasoning": {
+                "exclude": True
+            }
 
-                "reasoning": {
-                    "exclude": True
-                }
+        },
 
-            },
-
-            timeout=60
-        )
-
-    except Exception as e:
-
-        raise RuntimeError(
-            f"{label} request error: {e}"
-        )
+        timeout=60
+    )
 
     if response.status_code != 200:
 
@@ -2284,15 +2802,7 @@ def ask_openrouter_messages(
             f"{response.text[:1000]}"
         )
 
-    try:
-
-        data = response.json()
-
-    except Exception as e:
-
-        raise RuntimeError(
-            f"{label} invalid JSON: {e}"
-        )
+    data = response.json()
 
     if data.get("error"):
 
@@ -2345,7 +2855,9 @@ def ask_openrouter_messages(
                 )
 
                 if value:
-                    parts.append(value)
+                    parts.append(
+                        value
+                    )
 
         content = "\n".join(
             parts
@@ -2353,34 +2865,6 @@ def ask_openrouter_messages(
 
     reply = clean_model_text(
         content or ""
-    )
-
-    usage = (
-        data.get("usage")
-        or {}
-    )
-
-    print(
-        f"{label}:",
-        "model=",
-        data.get("model"),
-        "finish=",
-        choices[0].get(
-            "finish_reason"
-        ),
-        "prompt=",
-        usage.get(
-            "prompt_tokens"
-        ),
-        "completion=",
-        usage.get(
-            "completion_tokens"
-        ),
-        "total=",
-        usage.get(
-            "total_tokens"
-        ),
-        flush=True
     )
 
     if not reply:
@@ -2392,12 +2876,6 @@ def ask_openrouter_messages(
     if looks_like_leaked_reasoning(
         reply
     ):
-
-        print(
-            f"{label} LEAKED REASONING:",
-            reply[:200],
-            flush=True
-        )
 
         raise RuntimeError(
             f"{label} returned raw reasoning."
@@ -2441,16 +2919,9 @@ def ask_learning_model(
 
     now = time.time()
 
-    # 20B
-
     if now >= learning_backup_blocked_until:
 
         try:
-
-            print(
-                "Learning Groq -> 20B",
-                flush=True
-            )
 
             return ask_model(
                 BACKUP_MODEL,
@@ -2477,16 +2948,9 @@ def ask_learning_model(
                 flush=True
             )
 
-    # 120B
-
     if time.time() >= learning_main_blocked_until:
 
         try:
-
-            print(
-                "Learning Groq -> 120B",
-                flush=True
-            )
 
             return ask_model(
                 MAIN_MODEL,
@@ -2513,8 +2977,6 @@ def ask_learning_model(
                 flush=True
             )
 
-    # OpenRouter
-
     if (
         OPENROUTER_API_KEY
         and
@@ -2523,11 +2985,6 @@ def ask_learning_model(
     ):
 
         try:
-
-            print(
-                "Learning -> OpenRouter",
-                flush=True
-            )
 
             return ask_openrouter_messages(
                 messages,
@@ -2580,12 +3037,6 @@ def perform_learning(
         )
 
         if len(history) < 10:
-
-            print(
-                f"LEARNING WAIT | "
-                f"history={len(history)}",
-                flush=True
-            )
 
             reset_learning_counter(
                 chat_id
@@ -2647,7 +3098,7 @@ def perform_learning(
 Ты — модуль долговременного обучения
 AI-участника конкретного чата.
 
-Проанализируй только реальные сообщения участников.
+Анализируй только реальные сообщения участников.
 
 Ищи:
 
@@ -2660,9 +3111,6 @@ AI-участника конкретного чата.
 - важные события;
 - полезный игровой контекст;
 - правила и особенности чата.
-
-Если пользователь прямо сообщил факт о себе,
-его можно сохранить как USER-факт.
 
 Формат:
 
@@ -2738,8 +3186,6 @@ NONE
                 ):
                     continue
 
-                # USER
-
                 if line.startswith(
                     "USER|"
                 ):
@@ -2754,13 +3200,10 @@ NONE
 
                     _, uid, fact = parts
 
-                    uid = uid.strip()
-                    fact = fact.strip()
-
                     try:
 
                         numeric_uid = int(
-                            uid
+                            uid.strip()
                         )
 
                     except (
@@ -2769,6 +3212,8 @@ NONE
                     ):
 
                         continue
+
+                    fact = fact.strip()
 
                     if not fact:
                         continue
@@ -2783,8 +3228,6 @@ NONE
                         name,
                         fact
                     )
-
-                # CHAT
 
                 elif line.startswith(
                     "CHAT|"
@@ -2850,10 +3293,6 @@ NONE
         ):
             stage = 4
 
-        database_chat_id = (
-            db_chat_id(chat_id)
-        )
-
         (
             supabase
             .table("bot_learning_state")
@@ -2871,7 +3310,7 @@ NONE
             })
             .eq(
                 "chat_id",
-                database_chat_id
+                db_chat_id(chat_id)
             )
             .execute()
         )
@@ -2919,13 +3358,6 @@ def maybe_learn(
 
     count = increase_learning_counter(
         chat_id
-    )
-
-    print(
-        f"LEARNING COUNTER | "
-        f"chat={chat_id} | "
-        f"{count}/{LEARNING_EVERY_MESSAGES}",
-        flush=True
     )
 
     if (
@@ -2984,8 +3416,6 @@ def build_chat_context(
 
     ]
 
-    # STAGE
-
     state = get_learning_state(
         chat_id
     )
@@ -3004,7 +3434,7 @@ def build_chat_context(
 
         "content":
             (
-                "Твоя текущая стадия развития:\n"
+                "Текущая стадия развития:\n"
                 +
                 DEVELOPMENT_STAGES.get(
                     stage,
@@ -3013,6 +3443,37 @@ def build_chat_context(
             )
 
     })
+
+    # ЭМОЦИЯ
+
+    if user_id is not None:
+
+        emotion_state = (
+            get_emotion_state(
+                chat_id,
+                user_id
+            )
+        )
+
+        messages.append({
+
+            "role":
+                "system",
+
+            "content":
+                (
+                    "=== ТЕКУЩЕЕ НАСТРОЕНИЕ ===\n"
+                    +
+                    get_emotion_instruction(
+                        emotion_state
+                    )
+                    +
+                    "\nНе сообщай пользователю "
+                    "числовые значения этих параметров.\n"
+                    "=== КОНЕЦ НАСТРОЕНИЯ ==="
+                )
+
+        })
 
     # KNOWLEDGE
 
@@ -3198,9 +3659,8 @@ def build_chat_context(
                         "ТЕКУЩЕГО УЧАСТНИКА ===\n"
                         "Эта память относится именно "
                         "к человеку, который сейчас пишет.\n"
-                        "Используй её, если вопрос "
-                        "относится к сохранённому факту.\n"
-                        "Не выдумывай личные факты.\n\n"
+                        "Используй её только если "
+                        "вопрос относится к факту.\n\n"
                         "ЛИЧНАЯ ПАМЯТЬ:\n"
                         +
                         personal_memory
@@ -3209,8 +3669,6 @@ def build_chat_context(
                     )
 
             })
-
-    # CURRENT MESSAGE
 
     if not current_saved:
 
@@ -3235,7 +3693,6 @@ def build_chat_context(
 # =========================================================
 
 QUESTION_WORDS = (
-
     "кто",
     "что",
     "где",
@@ -3250,7 +3707,6 @@ QUESTION_WORDS = (
     "можно",
     "правда",
     "есть ли"
-
 )
 
 
@@ -3392,8 +3848,6 @@ def should_answer(
 
         return False
 
-    # DIRECT MESSAGE TO BOT
-
     if platform == "telegram":
 
         if is_directed_to_bot_telegram(
@@ -3415,8 +3869,6 @@ def should_answer(
     if len(text) <= 1:
         return False
 
-    # QUESTION
-
     if looks_like_question(
         text
     ):
@@ -3426,20 +3878,6 @@ def should_answer(
     words = len(
         text.split()
     )
-
-    # Более живой бот.
-    #
-    # Раньше:
-    # 2 слова -> 10%
-    # 6 слов -> 25%
-    # 15 слов -> 45%
-    # остальное -> 60%
-    #
-    # Теперь:
-    # 2 слова -> 20%
-    # 6 слов -> 40%
-    # 15 слов -> 60%
-    # длинные -> 72%
 
     if words <= 2:
 
@@ -3479,7 +3917,32 @@ def ask_ai(
     user_name
 ):
 
-    global openrouter_blocked_until
+    # Сначала обрабатываем эмоциональную реакцию.
+
+    if user_id is not None:
+
+        emotion_state = process_emotion(
+            chat_id,
+            int(user_id),
+            text
+        )
+
+        short_reaction = (
+            get_emotion_short_reaction(
+                emotion_state,
+                text
+            )
+        )
+
+        if short_reaction:
+
+            print(
+                "EMOTION SHORT REACTION:",
+                short_reaction,
+                flush=True
+            )
+
+            return short_reaction
 
     try:
 
@@ -3523,7 +3986,7 @@ def ask_ai(
                 openrouter_error
             ):
 
-                openrouter_blocked_until = (
+                globals()["openrouter_blocked_until"] = (
                     time.time()
                     +
                     get_retry_seconds(
@@ -3567,8 +4030,6 @@ def ask_groq(
 
     now = time.time()
 
-    # 120B
-
     if now >= main_blocked_until:
 
         try:
@@ -3603,17 +4064,6 @@ def ask_groq(
                 flush=True
             )
 
-    else:
-
-        print(
-            f"120B blocked | "
-            f"retry in ~"
-            f"{max(0, int(main_blocked_until-time.time()))} sec",
-            flush=True
-        )
-
-    # 20B
-
     if time.time() >= backup_blocked_until:
 
         try:
@@ -3647,15 +4097,6 @@ def ask_groq(
                 e,
                 flush=True
             )
-
-    else:
-
-        print(
-            f"20B blocked | "
-            f"retry in ~"
-            f"{max(0, int(backup_blocked_until-time.time()))} sec",
-            flush=True
-        )
 
     raise RuntimeError(
         "Обе модели Groq "
@@ -3872,8 +4313,6 @@ def activity_loop():
                             "last"
                         ] = now
 
-                # 35% шанс оживить чат
-
                 if random.random() > 0.35:
                     continue
 
@@ -3884,24 +4323,19 @@ def activity_loop():
                         "Если есть естественная причина "
                         "оживить разговор, напиши одну "
                         "короткую живую реплику. "
-                        "Можно пошутить или слегка "
-                        "подъебнуть ситуацию. "
-                        "Не говори, что ты бот."
+                        "Можно пошутить."
                     ),
 
                     (
                         "В чате тишина. "
                         "Придумай короткую естественную "
-                        "реплику обычного участника. "
-                        "Можно использовать немного "
-                        "разговорного мата, если подходит."
+                        "реплику обычного участника."
                     ),
 
                     (
                         "Народ молчит. "
                         "Оживи чат одной короткой "
-                        "эмоциональной фразой. "
-                        "Без официальщины."
+                        "эмоциональной фразой."
                     )
 
                 ])
@@ -3934,12 +4368,6 @@ def activity_loop():
                         "Бот",
                         "assistant",
                         reply
-                    )
-
-                    print(
-                        "BOT ACTIVITY:",
-                        reply[:200],
-                        flush=True
                     )
 
                 except Exception as e:
@@ -3993,6 +4421,12 @@ def home():
         "personality":
             "alive",
 
+        "emotions":
+            True,
+
+        "offense_system":
+            True,
+
         "profanity":
             True,
 
@@ -4041,9 +4475,7 @@ def callback():
 
         if event_type == "confirmation":
 
-            return (
-                VK_CONFIRMATION_CODE
-            )
+            return VK_CONFIRMATION_CODE
 
         if event_type != "message_new":
 
@@ -4086,8 +4518,6 @@ def callback():
         if not sender_id:
             return "ok"
 
-        # Игнорируем сообщения других сообществ/ботов.
-
         if int(sender_id) < 0:
             return "ok"
 
@@ -4110,8 +4540,6 @@ def callback():
                 sender_id
             )
         )
-
-        # Только текст.
 
         if not text:
             return "ok"
@@ -4140,12 +4568,6 @@ def callback():
             text,
             "vk"
         ):
-
-            print(
-                "BOT SILENT:",
-                text[:100],
-                flush=True
-            )
 
             return "ok"
 
@@ -4315,12 +4737,6 @@ def telegram_webhook(
             text,
             "telegram"
         ):
-
-            print(
-                "TG BOT SILENT:",
-                text[:100],
-                flush=True
-            )
 
             return "ok"
 
@@ -4492,6 +4908,16 @@ if __name__ == "__main__":
 
     print(
         "🤬 Profanity: ENABLED",
+        flush=True
+    )
+
+    print(
+        "😒 Emotions: ENABLED",
+        flush=True
+    )
+
+    print(
+        "😡 Offense system: ENABLED",
         flush=True
     )
 
