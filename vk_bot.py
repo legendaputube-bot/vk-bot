@@ -16,8 +16,8 @@ from supabase import create_client
 # CONFIG
 # =========================================================
 
-BOT_VERSION = "V1.3"
-BOT_BUILD = "Начальное самообучение + Telegram + OpenRouter"
+BOT_VERSION = "V1.4"
+BOT_BUILD = "Самообучение + Supabase settings + лимиты AI + 170 символов"
 
 VK_TOKEN = os.environ.get("VK_TOKEN", "").strip()
 VK_CONFIRMATION_CODE = os.environ.get(
@@ -148,10 +148,11 @@ LEARNING_ENABLED = True
 
 # Локальный предохранитель OpenRouter: не делаем больше 50 запросов
 # в 24-часовом окне, а после исчерпания держим его выключенным 24 часа.
-openrouter_window_started = 0.0
 openrouter_request_count = 0
 openrouter_blocked_until = 0.0
 openrouter_lock = threading.Lock()
+
+settings_row_id = None
 
 TELEGRAM_BOT_ID = None
 TELEGRAM_BOT_USERNAME = ""
@@ -390,21 +391,161 @@ def handle_owner_command(text, sender_id):
 
     if command in SYSTEM_OFF_COMMANDS:
         SYSTEM_ENABLED = False
+        save_system_setting("system_enabled", False)
         return "Система выключена."
 
     if command in SYSTEM_ON_COMMANDS:
         SYSTEM_ENABLED = True
+        save_system_setting("system_enabled", True)
         return "Система включена."
 
     if command in LEARNING_OFF_COMMANDS:
         LEARNING_ENABLED = False
-        return "Обучение отключено. Сохранённые данные остаются доступными."
+        save_system_setting("learning_enabled", False)
+        return "Обучение отключено."
 
     if command in LEARNING_ON_COMMANDS:
         LEARNING_ENABLED = True
+        save_system_setting("learning_enabled", True)
         return "Обучение включено."
 
     return None
+
+
+def load_system_settings():
+    """Загружает состояние системы/обучения и лимит OpenRouter из Supabase."""
+    global SYSTEM_ENABLED
+    global LEARNING_ENABLED
+    global openrouter_request_count
+    global openrouter_blocked_until
+    global settings_row_id
+
+    try:
+        result = (
+            supabase
+            .table("bot_system_settings")
+            .select("*")
+            .limit(1)
+            .execute()
+        )
+
+        row = (result.data or [None])[0]
+
+        if not row:
+            created = (
+                supabase
+                .table("bot_system_settings")
+                .insert({
+                    "system_enabled": True,
+                    "learning_enabled": True,
+                    "openrouter_requests": 0,
+                    "openrouter_blocked_until": None
+                })
+                .execute()
+            )
+            row = (created.data or [None])[0]
+
+        if row:
+            settings_row_id = row.get("id")
+            SYSTEM_ENABLED = bool(row.get("system_enabled", True))
+            LEARNING_ENABLED = bool(row.get("learning_enabled", True))
+            openrouter_request_count = int(
+                row.get("openrouter_requests", 0) or 0
+            )
+
+            blocked = row.get("openrouter_blocked_until")
+            if blocked:
+                try:
+                    openrouter_blocked_until = datetime.fromisoformat(
+                        str(blocked).replace("Z", "+00:00")
+                    ).timestamp()
+                except Exception:
+                    openrouter_blocked_until = 0.0
+            else:
+                openrouter_blocked_until = 0.0
+
+            print(
+                f"SETTINGS LOADED | system={SYSTEM_ENABLED} | "
+                f"learning={LEARNING_ENABLED} | "
+                f"openrouter={openrouter_request_count}/"
+                f"{OPENROUTER_DAILY_LIMIT}",
+                flush=True
+            )
+            return
+
+    except Exception as e:
+        print(
+            "Settings load error (using defaults):",
+            e,
+            flush=True
+        )
+
+
+def save_system_setting(field, value):
+    """Сохраняет одно системное значение в Supabase."""
+    global settings_row_id
+
+    try:
+        payload = {
+            field: value,
+            "updated_at": utc_now()
+        }
+
+        query = supabase.table("bot_system_settings").update(payload)
+
+        if settings_row_id is not None:
+            query = query.eq("id", settings_row_id)
+        else:
+            query = query.limit(1)
+
+        result = query.execute()
+
+        if result.data:
+            settings_row_id = result.data[0].get("id", settings_row_id)
+
+    except Exception as e:
+        print(
+            f"Settings save error [{field}]:",
+            e,
+            flush=True
+        )
+
+
+def save_openrouter_state():
+    """Сохраняет счётчик/блокировку OpenRouter."""
+    global settings_row_id
+
+    blocked_iso = None
+    if openrouter_blocked_until > 0:
+        blocked_iso = datetime.fromtimestamp(
+            openrouter_blocked_until,
+            timezone.utc
+        ).isoformat()
+
+    try:
+        payload = {
+            "openrouter_requests": int(openrouter_request_count),
+            "openrouter_blocked_until": blocked_iso,
+            "updated_at": utc_now()
+        }
+
+        query = supabase.table("bot_system_settings").update(payload)
+
+        if settings_row_id is not None:
+            query = query.eq("id", settings_row_id)
+        else:
+            query = query.limit(1)
+
+        result = query.execute()
+        if result.data:
+            settings_row_id = result.data[0].get("id", settings_row_id)
+
+    except Exception as e:
+        print(
+            "OpenRouter settings save error:",
+            e,
+            flush=True
+        )
 
 
 # =========================================================
@@ -472,16 +613,16 @@ def is_rate_limit_error(error):
 
 
 def get_retry_seconds(error, default):
+    """Понимает интервалы сброса из ошибок провайдера."""
+    text = str(error or "")
 
-    text = str(error)
-
-    patterns = [
-        r"try again in\s+(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?",
-        r"retry[- ]after[:= ]+([0-9]+(?:\.[0-9]+)?)\s*s",
-        r"in\s+([0-9]+(?:\.[0-9]+)?)\s*seconds?",
-        r"reset[^0-9]*(\d+)\s*(?:seconds?|s)",
-        r"reset[^0-9]*(\d+)\s*(?:minutes?|m)",
-    ]
+    patterns = (
+        r"try again in\s+(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+(?:\.\d+)?)s)?",
+        r"retry[- ]after\s*[:=]?\s*(\d+(?:\.\d+)?)\s*s",
+        r"in\s+(\d+(?:\.\d+)?)\s*seconds?",
+        r"reset[^0-9]*(\d+(?:\.\d+)?)\s*(?:seconds?|s)",
+        r"reset[^0-9]*(\d+(?:\.\d+)?)\s*(?:minutes?|m)",
+    )
 
     match = re.search(patterns[0], text, re.I)
     if match:
@@ -491,19 +632,19 @@ def get_retry_seconds(error, default):
             + float(match.group(3) or 0)
         )
         if total > 0:
-            return int(total) + 10
+            return max(1, int(total) + 10)
 
     for pattern in patterns[1:]:
         match = re.search(pattern, text, re.I)
         if not match:
             continue
         value = float(match.group(1))
-        if "minutes?" in pattern:
+        if "minutes" in pattern or "minute" in pattern:
             value *= 60
         if value > 0:
-            return int(value) + 10
+            return max(1, int(value) + 10)
 
-    return default
+    return max(1, int(default))
 
 
 # =========================================================
@@ -804,6 +945,9 @@ def save_knowledge(
     importance=1
 ):
 
+    if not LEARNING_ENABLED:
+        return
+
     knowledge = normalize_text(
         knowledge
     )
@@ -988,6 +1132,9 @@ def save_user_memory(
         or user_id is None
         or not memory
     ):
+        return
+
+    if not LEARNING_ENABLED:
         return
 
     memory = normalize_text(
@@ -1637,7 +1784,6 @@ def ask_model(
 # =========================================================
 
 def openrouter_request_allowed():
-    global openrouter_window_started
     global openrouter_request_count
     global openrouter_blocked_until
 
@@ -1647,39 +1793,50 @@ def openrouter_request_allowed():
         if now < openrouter_blocked_until:
             return False
 
-        if (
-            not openrouter_window_started
-            or now - openrouter_window_started >= OPENROUTER_BLOCK_SECONDS
-        ):
-            openrouter_window_started = now
-            openrouter_request_count = 0
+        # После локальной 24-часовой блокировки счётчик начинается заново.
+        # Временная блокировка самим провайдером не должна сбрасывать
+        # наш накопленный счётчик 50 запросов.
+        if openrouter_blocked_until > 0 and now >= openrouter_blocked_until:
+            if openrouter_request_count >= OPENROUTER_DAILY_LIMIT:
+                openrouter_request_count = 0
+            openrouter_blocked_until = 0.0
+            save_openrouter_state()
 
         if openrouter_request_count >= OPENROUTER_DAILY_LIMIT:
             openrouter_blocked_until = now + OPENROUTER_BLOCK_SECONDS
+            save_openrouter_state()
             return False
 
         openrouter_request_count += 1
 
+        # 50-й запрос разрешён; после него OpenRouter закрывается на 24 часа.
         if openrouter_request_count >= OPENROUTER_DAILY_LIMIT:
-            # После 50-го запроса больше не допускаем новый запрос.
             openrouter_blocked_until = now + OPENROUTER_BLOCK_SECONDS
 
+        save_openrouter_state()
         return True
 
 
 def block_openrouter_from_error(error):
     global openrouter_blocked_until
 
-    text = str(error).lower()
     if not is_rate_limit_error(error):
         return
 
-    retry = get_retry_seconds(error, OPENROUTER_BLOCK_SECONDS)
+    retry = get_retry_seconds(
+        error,
+        OPENROUTER_BLOCK_SECONDS
+    )
+
     with openrouter_lock:
         openrouter_blocked_until = max(
             openrouter_blocked_until,
-            time.time() + min(retry, OPENROUTER_BLOCK_SECONDS)
+            time.time() + min(
+                max(1, retry),
+                OPENROUTER_BLOCK_SECONDS
+            )
         )
+        save_openrouter_state()
 
 
 def ask_openrouter_messages(
@@ -3595,15 +3752,6 @@ def telegram_webhook(secret):
         if not text:
             return "ok"
 
-        owner_reply = handle_owner_command(
-            text,
-            sender_id
-        )
-
-        if owner_reply is not None:
-            send_telegram_message(raw_chat_id, owner_reply)
-            return "ok"
-
         if not SYSTEM_ENABLED:
             return "ok"
 
@@ -3893,6 +4041,18 @@ if __name__ == "__main__":
 
     print(
         "========================================",
+        flush=True
+    )
+
+    load_system_settings()
+
+    print(
+        f"⚙️ System: {'ON' if SYSTEM_ENABLED else 'OFF'}",
+        flush=True
+    )
+
+    print(
+        f"📚 Learning: {'ON' if LEARNING_ENABLED else 'OFF'}",
         flush=True
     )
 
