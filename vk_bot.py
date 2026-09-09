@@ -16,27 +16,49 @@ from supabase import create_client
 # CONFIG
 # =========================================================
 
-BOT_VERSION = "V1.5.1"
+BOT_VERSION = "V1.6.0"
+
 BOT_BUILD = (
     "Живой характер + мат + эмоции + обида "
     "+ активность + память + обучение "
-    "+ устойчивый AI fallback"
+    "+ устойчивый AI fallback "
+    "+ automatic LOCAL MODE "
+    "+ AI cooldown/recovery"
 )
 
 VK_TOKEN = os.environ.get("VK_TOKEN", "").strip()
-VK_CONFIRMATION_CODE = os.environ.get("VK_CONFIRMATION_CODE", "").strip()
-VK_GROUP_SECRET = os.environ.get("VK_GROUP_SECRET", "").strip()
+VK_CONFIRMATION_CODE = os.environ.get(
+    "VK_CONFIRMATION_CODE", ""
+).strip()
+VK_GROUP_SECRET = os.environ.get(
+    "VK_GROUP_SECRET", ""
+).strip()
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_BOT_TOKEN = os.environ.get(
+    "TELEGRAM_BOT_TOKEN", ""
+).strip()
 
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
+GROQ_API_KEY = os.environ.get(
+    "GROQ_API_KEY", ""
+).strip()
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
-SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY", "").strip()
+OPENROUTER_API_KEY = os.environ.get(
+    "OPENROUTER_API_KEY", ""
+).strip()
 
-if SUPABASE_URL and not SUPABASE_URL.startswith(("http://", "https://")):
+SUPABASE_URL = os.environ.get(
+    "SUPABASE_URL", ""
+).strip()
+
+SUPABASE_SECRET_KEY = os.environ.get(
+    "SUPABASE_SECRET_KEY", ""
+).strip()
+
+if SUPABASE_URL and not SUPABASE_URL.startswith(
+    ("http://", "https://")
+):
     SUPABASE_URL = "https://" + SUPABASE_URL
+
 
 supabase = create_client(
     SUPABASE_URL,
@@ -52,7 +74,13 @@ TELEGRAM_API = (
     else ""
 )
 
-OPENROUTER_API = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_API = (
+    "https://openrouter.ai/api/v1/chat/completions"
+)
+
+OPENROUTER_MODELS_API = (
+    "https://openrouter.ai/api/v1/models"
+)
 
 
 # =========================================================
@@ -62,12 +90,6 @@ OPENROUTER_API = "https://openrouter.ai/api/v1/chat/completions"
 MAIN_MODEL = "openai/gpt-oss-120b"
 BACKUP_MODEL = "openai/gpt-oss-20b"
 
-# Можно изменить через переменную окружения:
-#
-# OPENROUTER_MODELS=
-# model1,model2,model3
-#
-# Если переменная не задана, используются резервные модели ниже.
 OPENROUTER_MODELS = [
     x.strip()
     for x in os.environ.get(
@@ -81,7 +103,6 @@ OPENROUTER_MODELS = [
     if x.strip()
 ]
 
-# Старый OPENROUTER_MODEL тоже поддерживается.
 CUSTOM_OPENROUTER_MODEL = os.environ.get(
     "OPENROUTER_MODEL",
     "",
@@ -93,7 +114,6 @@ if CUSTOM_OPENROUTER_MODEL:
         CUSTOM_OPENROUTER_MODEL,
     )
 
-# Удаляем дубликаты, сохраняя порядок.
 OPENROUTER_MODELS = list(
     dict.fromkeys(OPENROUTER_MODELS)
 )
@@ -124,12 +144,24 @@ NAME_CACHE_TIME = 24 * 60 * 60
 
 
 # =========================================================
-# COOLDOWN
+# AI COOLDOWN / LOCAL MODE
 # =========================================================
 
 DEFAULT_GROQ_MAIN_BLOCK = 3600
 DEFAULT_GROQ_BACKUP_BLOCK = 900
 DEFAULT_OPENROUTER_BLOCK = 300
+
+# Для обычных временных сетевых/API ошибок.
+TEMP_GROQ_MAIN_BLOCK = 120
+TEMP_GROQ_BACKUP_BLOCK = 120
+TEMP_OPENROUTER_BLOCK = 180
+
+# Период проверки восстановления.
+AI_RECOVERY_CHECK_INTERVAL = 30
+
+# Не делаем probe каждую секунду.
+# Проверка происходит только после окончания cooldown.
+AI_RECOVERY_PROBE_TIMEOUT = 15
 
 
 main_blocked_until = 0
@@ -140,6 +172,24 @@ learning_main_blocked_until = 0
 learning_backup_blocked_until = 0
 
 ai_state_lock = threading.Lock()
+
+# Отдельный статус LOCAL MODE.
+#
+# Он включается автоматически, когда ни один
+# доступный AI-провайдер не может использоваться.
+local_mode = False
+
+local_mode_since = 0
+
+local_mode_lock = threading.Lock()
+
+# Последняя информация о восстановлении.
+last_ai_recovery_check = 0
+
+# Для отдельных моделей OpenRouter.
+openrouter_model_blocked_until = {}
+
+openrouter_model_lock = threading.Lock()
 
 
 # =========================================================
@@ -757,6 +807,1071 @@ def db_user_id(user_id):
 
 
 # =========================================================
+# AI AVAILABILITY
+# =========================================================
+
+def groq_main_configured():
+    return bool(GROQ_API_KEY and groq)
+
+
+def groq_backup_configured():
+    return bool(GROQ_API_KEY and groq)
+
+
+def openrouter_configured():
+    return bool(
+        OPENROUTER_API_KEY
+        and OPENROUTER_MODELS
+    )
+
+
+def provider_available(name):
+    now = time.time()
+
+    with ai_state_lock:
+
+        if name == "groq_main":
+            return (
+                groq_main_configured()
+                and now >= main_blocked_until
+            )
+
+        if name == "groq_backup":
+            return (
+                groq_backup_configured()
+                and now >= backup_blocked_until
+            )
+
+        if name == "openrouter":
+            return (
+                openrouter_configured()
+                and now >= openrouter_blocked_until
+            )
+
+        if name == "learning_main":
+            return (
+                groq_main_configured()
+                and now >= learning_main_blocked_until
+            )
+
+        if name == "learning_backup":
+            return (
+                groq_backup_configured()
+                and now >= learning_backup_blocked_until
+            )
+
+    return False
+
+
+def any_ai_available():
+    return (
+        provider_available("groq_main")
+        or provider_available("groq_backup")
+        or provider_available("openrouter")
+    )
+
+
+def all_ai_unavailable():
+    return not any_ai_available()
+
+
+def get_provider_remaining(name):
+    now = time.time()
+
+    with ai_state_lock:
+
+        if name == "groq_main":
+            value = main_blocked_until
+
+        elif name == "groq_backup":
+            value = backup_blocked_until
+
+        elif name == "openrouter":
+            value = openrouter_blocked_until
+
+        elif name == "learning_main":
+            value = learning_main_blocked_until
+
+        elif name == "learning_backup":
+            value = learning_backup_blocked_until
+
+        else:
+            return 0
+
+    return max(
+        0,
+        int(value - now),
+    )
+
+
+def update_local_mode():
+    global local_mode
+    global local_mode_since
+
+    unavailable = all_ai_unavailable()
+
+    with local_mode_lock:
+
+        if unavailable and not local_mode:
+            local_mode = True
+            local_mode_since = time.time()
+
+            print(
+                "========================================",
+                flush=True,
+            )
+
+            print(
+                "🟡 LOCAL MODE ENABLED",
+                flush=True,
+            )
+
+            print(
+                "Все AI временно недоступны.",
+                flush=True,
+            )
+
+            print(
+                "Пользовательские сообщения "
+                "в AI не отправляются.",
+                flush=True,
+            )
+
+            print(
+                "========================================",
+                flush=True,
+            )
+
+        elif not unavailable and local_mode:
+            local_mode = False
+
+            print(
+                "========================================",
+                flush=True,
+            )
+
+            print(
+                "🟢 LOCAL MODE DISABLED",
+                flush=True,
+            )
+
+            print(
+                "AI снова доступен.",
+                flush=True,
+            )
+
+            print(
+                "Следующие подходящие сообщения "
+                "снова используют AI.",
+                flush=True,
+            )
+
+            print(
+                "========================================",
+                flush=True,
+            )
+
+    return local_mode
+
+
+def is_local_mode():
+    update_local_mode()
+
+    with local_mode_lock:
+        return local_mode
+
+
+# =========================================================
+# RATE LIMIT / ERROR ANALYSIS
+# =========================================================
+
+def is_rate_limit_error(error):
+    text = str(error).lower()
+
+    return any(
+        x in text
+        for x in (
+            "429",
+            "rate limit",
+            "rate_limit",
+            "rate-limit",
+            "rate limited",
+            "tokens per day",
+            "token per day",
+            "tpd",
+            "too many requests",
+            "quota",
+            "exceeded",
+            "daily limit",
+            "requests per minute",
+            "rpm",
+        )
+    )
+
+
+def is_temporary_ai_error(error):
+    """
+    Определяет ошибки, при которых имеет смысл
+    временно убрать провайдера из цепочки.
+
+    Важно:
+    ошибки авторизации/неправильного запроса
+    не должны автоматически включать огромный cooldown.
+    """
+
+    text = str(error).lower()
+
+    if is_rate_limit_error(error):
+        return True
+
+    temporary_markers = (
+        "timeout",
+        "timed out",
+        "read timed out",
+        "connection error",
+        "connection reset",
+        "connection aborted",
+        "temporarily unavailable",
+        "temporary unavailable",
+        "service unavailable",
+        "bad gateway",
+        "gateway timeout",
+        "internal server error",
+        "server error",
+        "overloaded",
+        "overload",
+        "503",
+        "502",
+        "504",
+        "network error",
+        "connection refused",
+        "empty final response",
+    )
+
+    return any(
+        marker in text
+        for marker in temporary_markers
+    )
+
+
+def get_retry_seconds(
+    error,
+    default,
+):
+    text = str(error)
+
+    # try again in 1h 2m 3s
+    match = re.search(
+        r"try again in\s+"
+        r"(?:(\d+)h)?"
+        r"(?:(\d+)m)?"
+        r"(?:(\d+(?:\.\d+)?)s)?",
+        text,
+        re.IGNORECASE,
+    )
+
+    if match:
+        total = (
+            int(match.group(1) or 0)
+            * 3600
+            +
+            int(match.group(2) or 0)
+            * 60
+            +
+            float(match.group(3) or 0)
+        )
+
+        if total > 0:
+            return int(total) + 10
+
+    # retry-after: 360
+    match = re.search(
+        r"retry[- _]?after[^0-9]*(\d+)",
+        text,
+        re.IGNORECASE,
+    )
+
+    if match:
+        return int(match.group(1)) + 5
+
+    # "in 360 seconds"
+    match = re.search(
+        r"(?:in|after)\s+(\d+)\s*(?:seconds|secs|sec|s)\b",
+        text,
+        re.IGNORECASE,
+    )
+
+    if match:
+        return int(match.group(1)) + 5
+
+    return default
+
+
+def mark_provider_blocked(
+    name,
+    seconds,
+):
+    global main_blocked_until
+    global backup_blocked_until
+    global openrouter_blocked_until
+    global learning_main_blocked_until
+    global learning_backup_blocked_until
+
+    seconds = max(
+        1,
+        int(seconds),
+    )
+
+    until = (
+        time.time()
+        + seconds
+    )
+
+    with ai_state_lock:
+
+        if name == "groq_main":
+            main_blocked_until = max(
+                main_blocked_until,
+                until,
+            )
+
+        elif name == "groq_backup":
+            backup_blocked_until = max(
+                backup_blocked_until,
+                until,
+            )
+
+        elif name == "openrouter":
+            openrouter_blocked_until = max(
+                openrouter_blocked_until,
+                until,
+            )
+
+        elif name == "learning_main":
+            learning_main_blocked_until = max(
+                learning_main_blocked_until,
+                until,
+            )
+
+        elif name == "learning_backup":
+            learning_backup_blocked_until = max(
+                learning_backup_blocked_until,
+                until,
+            )
+
+    print(
+        f"AI BLOCK | {name} | "
+        f"{seconds} sec | "
+        f"until={datetime.fromtimestamp(until).isoformat()}",
+        flush=True,
+    )
+
+    update_local_mode()
+
+
+def mark_provider_error(
+    name,
+    error,
+    default_rate_limit,
+    default_temporary,
+):
+    if is_rate_limit_error(error):
+        seconds = get_retry_seconds(
+            error,
+            default_rate_limit,
+        )
+
+        mark_provider_blocked(
+            name,
+            seconds,
+        )
+
+        return
+
+    if is_temporary_ai_error(error):
+        mark_provider_blocked(
+            name,
+            default_temporary,
+        )
+
+
+# =========================================================
+# OPENROUTER MODEL COOLDOWN
+# =========================================================
+
+def is_openrouter_model_available(model):
+    now = time.time()
+
+    with openrouter_model_lock:
+        blocked_until = (
+            openrouter_model_blocked_until.get(
+                model,
+                0,
+            )
+        )
+
+    return now >= blocked_until
+
+
+def mark_openrouter_model_blocked(
+    model,
+    seconds,
+):
+    until = (
+        time.time()
+        + max(1, int(seconds))
+    )
+
+    with openrouter_model_lock:
+        openrouter_model_blocked_until[
+            model
+        ] = max(
+            openrouter_model_blocked_until.get(
+                model,
+                0,
+            ),
+            until,
+        )
+
+    print(
+        f"OPENROUTER MODEL BLOCK | "
+        f"{model} | "
+        f"{int(seconds)} sec",
+        flush=True,
+    )
+
+
+def cleanup_openrouter_model_cooldowns():
+    now = time.time()
+
+    with openrouter_model_lock:
+        for model in list(
+            openrouter_model_blocked_until
+        ):
+            if (
+                openrouter_model_blocked_until[
+                    model
+                ] <= now
+            ):
+                openrouter_model_blocked_until.pop(
+                    model,
+                    None,
+                )
+
+
+# =========================================================
+# LOCAL MODE HELPERS
+# =========================================================
+
+SIMPLE_LOCAL_MESSAGES = {
+    "привет",
+    "прив",
+    "здарова",
+    "здравствуйте",
+    "добрый день",
+    "доброе утро",
+    "добрый вечер",
+    "хай",
+    "hello",
+    "hi",
+    "йо",
+    "ку",
+    "ок",
+    "окей",
+    "оке",
+    "ага",
+    "угу",
+    "да",
+    "нет",
+    "понятно",
+    "ясно",
+    "спасибо",
+    "спс",
+    "пасиб",
+    "благодарю",
+    "понял",
+    "поняла",
+    "хорошо",
+    "ладно",
+    "норм",
+    "нормально",
+    "го",
+    "погнали",
+}
+
+
+def normalize_simple_message(text):
+    text = (text or "").lower().strip()
+
+    text = re.sub(
+        r"[!?.,:;]+",
+        "",
+        text,
+    )
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text,
+    )
+
+    return text.strip()
+
+
+def is_simple_local_message(text):
+    normalized = normalize_simple_message(
+        text
+    )
+
+    if normalized in SIMPLE_LOCAL_MESSAGES:
+        return True
+
+    if len(normalized) <= 3:
+        return True
+
+    return False
+
+
+def local_mood_prefix(state):
+    if not state:
+        return ""
+
+    mood = state.get(
+        "mood",
+        "normal",
+    )
+
+    if mood == "very_offended":
+        return random.choice([
+            "Я всё ещё обижен 😒",
+            "Я пока ещё дуюсь 😒",
+            "Настроение всё ещё так себе 😒",
+        ])
+
+    if mood == "offended":
+        return random.choice([
+            "Я ещё немного обижен 😒",
+            "Ну я всё ещё помню, между прочим 😒",
+            "Ладно, но осадочек остался 😂",
+        ])
+
+    if mood == "angry":
+        return random.choice([
+            "Да блин 😒",
+            "Ну ё-моё 😂",
+            "Чё опять? 😒",
+        ])
+
+    if mood == "annoyed":
+        return random.choice([
+            "Ну давай 😂",
+            "Я тебя слушаю 😒",
+            "Ага, вижу тебя.",
+        ])
+
+    if mood == "friendly":
+        return random.choice([
+            "😎",
+            "Ахах, ну давай.",
+            "Я тут 😂",
+        ])
+
+    return ""
+
+
+def get_recent_local_context(
+    chat_id,
+    limit=5,
+):
+    history = get_chat_memory(
+        chat_id,
+        limit,
+    )
+
+    return history or []
+
+
+def local_memory_text(
+    chat_id,
+    user_id,
+):
+    personal = get_user_memory(
+        chat_id,
+        user_id,
+    )
+
+    if not personal:
+        return None
+
+    memory = (
+        personal.get("memory")
+        or ""
+    ).strip()
+
+    if not memory:
+        return None
+
+    return memory
+
+
+def looks_like_memory_question(text):
+    low = (
+        text or ""
+    ).lower()
+
+    patterns = (
+        "что ты помнишь",
+        "что помнишь",
+        "что ты обо мне знаешь",
+        "что обо мне знаешь",
+        "что ты знаешь обо мне",
+        "помнишь меня",
+        "ты меня помнишь",
+        "какая у меня память",
+        "моя память",
+    )
+
+    return any(
+        pattern in low
+        for pattern in patterns
+    )
+
+
+def looks_like_tank_question(text):
+    low = (
+        text or ""
+    ).lower()
+
+    return any(
+        word in low
+        for word in (
+            "танк",
+            "танке",
+            "танка",
+            "танков",
+            "блиц",
+            "tanks blitz",
+        )
+    )
+
+
+def local_answer(
+    chat_id,
+    text,
+    user_id=None,
+    user_name=None,
+):
+    """
+    Полностью локальный ответ.
+
+    Здесь НЕТ вызовов Groq/OpenRouter.
+
+    Используются:
+    - эмоции;
+    - личная память;
+    - память чата;
+    - знания;
+    - локальная база Tanks Blitz;
+    - простые шаблоны.
+    """
+
+    text = normalize_text(text)
+
+    state = EMOTION_DEFAULT.copy()
+
+    if user_id is not None:
+        try:
+            state = get_emotion_state(
+                chat_id,
+                int(user_id),
+            )
+        except Exception:
+            state = EMOTION_DEFAULT.copy()
+
+    low = text.lower()
+    normalized = normalize_simple_message(
+        text
+    )
+
+    # -----------------------------------------------------
+    # Простые сообщения
+    # -----------------------------------------------------
+
+    if normalized in (
+        "привет",
+        "прив",
+        "здарова",
+        "здравствуйте",
+        "добрый день",
+        "доброе утро",
+        "добрый вечер",
+        "хай",
+        "hello",
+        "hi",
+        "йо",
+        "ку",
+    ):
+        if state.get("mood") in (
+            "very_offended",
+            "offended",
+        ):
+            return random.choice([
+                "Привет... 😒",
+                "Ага, привет.",
+                "Привет. Я ещё немного обижен 😂",
+            ])
+
+        return random.choice([
+            "Привет 😎",
+            "О, привет.",
+            "Йо 👋",
+            "Привет 😂",
+            "Здарова.",
+            "Я тут.",
+        ])
+
+    if normalized in (
+        "спасибо",
+        "спс",
+        "пасиб",
+        "благодарю",
+    ):
+        return random.choice([
+            "Да не за что 😎",
+            "Пожалуйста.",
+            "Всегда пожалуйста 😂",
+            "Да ладно.",
+        ])
+
+    if normalized in (
+        "ок",
+        "окей",
+        "оке",
+        "ага",
+        "угу",
+        "понятно",
+        "ясно",
+        "понял",
+        "поняла",
+        "хорошо",
+        "ладно",
+        "норм",
+        "нормально",
+    ):
+        return random.choice([
+            "👍",
+            "Ага.",
+            "Окей.",
+            "Понял.",
+            "Ну и отлично 😎",
+            "Договорились.",
+        ])
+
+    if normalized in (
+        "да",
+        "нет",
+    ):
+        return random.choice([
+            "Ага.",
+            "Понял.",
+            "Окей.",
+            "Принял.",
+        ])
+
+    # -----------------------------------------------------
+    # Память пользователя
+    # -----------------------------------------------------
+
+    if looks_like_memory_question(
+        text
+    ):
+        memory = local_memory_text(
+            chat_id,
+            user_id,
+        )
+
+        if memory:
+            return (
+                "Вот что я помню о тебе:\n"
+                + memory[:1800]
+            )
+
+        return random.choice([
+            "Пока ничего полезного о тебе не накопил 😅",
+            "Пока в памяти о тебе пустовато.",
+            "Ничего существенного пока не запомнил.",
+        ])
+
+    # -----------------------------------------------------
+    # Явное сохранение памяти
+    # -----------------------------------------------------
+
+    if re.search(
+        r"\bзапомни\b",
+        low,
+        re.IGNORECASE,
+    ):
+        if user_id is not None:
+            saved = save_explicit_user_memory(
+                chat_id,
+                int(user_id),
+                user_name,
+                text,
+            )
+
+            if saved:
+                return random.choice([
+                    "Запомнил 👍",
+                    "Ага, сохранил.",
+                    "Всё, запомнил 😎",
+                    "Есть, это уже в памяти.",
+                ])
+
+        return "Ага, понял."
+
+    # -----------------------------------------------------
+    # Локальная база Tanks Blitz
+    # -----------------------------------------------------
+
+    if looks_like_tank_question(
+        text
+    ):
+        tanks = get_tank_knowledge_for_text(
+            text,
+            limit=5,
+        )
+
+        if tanks:
+            lines = []
+
+            for tank in tanks:
+                name = (
+                    tank.get("name")
+                    or ""
+                ).strip()
+
+                nation = (
+                    tank.get("nation")
+                    or ""
+                ).strip()
+
+                tier = (
+                    tank.get("tier")
+                    or ""
+                )
+
+                if name:
+                    line = f"• {name}"
+
+                    if nation:
+                        line += (
+                            f" — {nation}"
+                        )
+
+                    if tier:
+                        line += (
+                            f", уровень {tier}"
+                        )
+
+                    lines.append(line)
+
+            if lines:
+                return (
+                    "Из того, что есть у меня "
+                    "в локальной базе:\n"
+                    + "\n".join(lines)
+                )
+
+    # -----------------------------------------------------
+    # Эмоциональная реакция
+    # -----------------------------------------------------
+
+    if detect_emotion_action(
+        text
+    ) == "insult":
+        short = get_emotion_short_reaction(
+            state,
+            text,
+        )
+
+        if short:
+            return short
+
+        return random.choice([
+            "Эй, полегче 😒",
+            "Ну ты чего 😂",
+            "Вот это ты загнул.",
+            "Не начинай.",
+        ])
+
+    if detect_emotion_action(
+        text
+    ) == "apology":
+        return random.choice([
+            "Ладно, проехали 😌",
+            "Да всё, мир.",
+            "Ладно, не держу зла.",
+            "Окей, забыли.",
+        ])
+
+    if detect_emotion_action(
+        text
+    ) == "praise":
+        return random.choice([
+            "Ахах, спасибо 😎",
+            "Вот это уже приятно.",
+            "Красиво сказал 😂",
+            "Ну всё, засмущал.",
+        ])
+
+    # -----------------------------------------------------
+    # Локальная работа с последним контекстом
+    # -----------------------------------------------------
+
+    recent = get_recent_local_context(
+        chat_id,
+        5,
+    )
+
+    recent_user_messages = [
+        (
+            item.get("content")
+            or ""
+        ).strip()
+        for item in recent
+        if item.get("role") == "user"
+        and (
+            item.get("content")
+            or ""
+        ).strip()
+    ]
+
+    # -----------------------------------------------------
+    # Короткие вопросы
+    # -----------------------------------------------------
+
+    if looks_like_question(text):
+
+        # Если есть релевантное сохранённое знание,
+        # используем его вместо пустого ответа.
+        knowledge = get_knowledge(
+            chat_id
+        )
+
+        if knowledge:
+            for item in knowledge:
+                value = (
+                    item.get("knowledge")
+                    or ""
+                ).strip()
+
+                if not value:
+                    continue
+
+                tokens = [
+                    token
+                    for token in re.findall(
+                        r"[a-zа-яё0-9]+",
+                        low,
+                    )
+                    if len(token) >= 4
+                ]
+
+                value_low = value.lower()
+
+                if any(
+                    token in value_low
+                    for token in tokens[:6]
+                ):
+                    return value[:1800]
+
+        # Если вопрос относится к предыдущей реплике,
+        # локально поддерживаем разговор.
+        if recent_user_messages:
+            return random.choice([
+                "Понял тебя. Расскажи чуть подробнее.",
+                "Хм, понял вопрос.",
+                "Интересный вопрос. Давай разберёмся.",
+                "Ага, понял, о чём ты.",
+                "Слушаю тебя.",
+            ])
+
+        return random.choice([
+            "Хм. А можешь чуть подробнее?",
+            "Понял вопрос. Расскажи контекст.",
+            "Интересно. Уточни немного.",
+            "Слушаю 👀",
+        ])
+
+    # -----------------------------------------------------
+    # Обычная реплика
+    # -----------------------------------------------------
+
+    if len(text.split()) <= 3:
+        return random.choice([
+            "Ага 😎",
+            "Понял.",
+            "Угу.",
+            "Да-да.",
+            "Я тебя слушаю.",
+            "Хех 😂",
+        ])
+
+    if len(text.split()) <= 8:
+        return random.choice([
+            "Ага, понял тебя.",
+            "Да, есть такое.",
+            "Хм, звучит интересно.",
+            "Понял, о чём ты.",
+            "Ахах, бывает 😂",
+            "Угу, продолжаем.",
+        ])
+
+    # Более длинная реплика.
+    # Здесь специально не говорится пользователю
+    # про AI или LOCAL MODE.
+    return random.choice([
+        "Понял тебя. Продолжай.",
+        "Ага, уловил мысль.",
+        "Да, контекст понял.",
+        "Хм, интересно. Я тебя слушаю.",
+        "Понял. Давай дальше.",
+        "Ага, нормально.",
+    ])
+
+
+# =========================================================
+# SIMPLE MESSAGE AI FILTER
+# =========================================================
+
+def should_use_ai_for_message(text):
+    """
+    Экономия токенов.
+
+    Простые реплики не требуют AI даже тогда,
+    когда AI полностью доступен.
+    """
+
+    normalized = normalize_simple_message(
+        text
+    )
+
+    if not normalized:
+        return False
+
+    if is_simple_local_message(
+        normalized
+    ):
+        return False
+
+    # Очень короткие эмоциональные реплики.
+    if len(normalized) <= 4:
+        return False
+
+    return True
+
+
+# =========================================================
 # EMOTION DB
 # =========================================================
 
@@ -968,143 +2083,6 @@ def already_processed(event_id):
             )
 
         return False
-
-
-# =========================================================
-# RATE LIMIT
-# =========================================================
-
-def is_rate_limit_error(error):
-    text = str(error).lower()
-
-    return any(
-        x in text
-        for x in (
-            "429",
-            "rate limit",
-            "rate_limit_exceeded",
-            "tokens per day",
-            "tpd",
-            "too many requests",
-            "quota",
-        )
-    )
-
-
-def get_retry_seconds(
-    error,
-    default,
-):
-    text = str(error)
-
-    match = re.search(
-        r"try again in\s+"
-        r"(?:(\d+)h)?"
-        r"(?:(\d+)m)?"
-        r"(?:(\d+(?:\.\d+)?)s)?",
-        text,
-        re.IGNORECASE,
-    )
-
-    if match:
-        total = (
-            int(match.group(1) or 0)
-            * 3600
-            +
-            int(match.group(2) or 0)
-            * 60
-            +
-            float(match.group(3) or 0)
-        )
-
-        if total > 0:
-            return int(total) + 10
-
-    match = re.search(
-        r"retry[- ]after[^0-9]*(\d+)",
-        text,
-        re.IGNORECASE,
-    )
-
-    if match:
-        return int(match.group(1)) + 5
-
-    return default
-
-
-def mark_provider_blocked(
-    name,
-    seconds,
-):
-    global main_blocked_until
-    global backup_blocked_until
-    global openrouter_blocked_until
-    global learning_main_blocked_until
-    global learning_backup_blocked_until
-
-    until = (
-        time.time()
-        + max(1, int(seconds))
-    )
-
-    with ai_state_lock:
-
-        if name == "groq_main":
-            main_blocked_until = max(
-                main_blocked_until,
-                until,
-            )
-
-        elif name == "groq_backup":
-            backup_blocked_until = max(
-                backup_blocked_until,
-                until,
-            )
-
-        elif name == "openrouter":
-            openrouter_blocked_until = max(
-                openrouter_blocked_until,
-                until,
-            )
-
-        elif name == "learning_main":
-            learning_main_blocked_until = max(
-                learning_main_blocked_until,
-                until,
-            )
-
-        elif name == "learning_backup":
-            learning_backup_blocked_until = max(
-                learning_backup_blocked_until,
-                until,
-            )
-
-    print(
-        f"AI BLOCK | {name} | "
-        f"{int(seconds)} sec",
-        flush=True,
-    )
-
-
-def provider_available(name):
-    now = time.time()
-
-    if name == "groq_main":
-        return now >= main_blocked_until
-
-    if name == "groq_backup":
-        return now >= backup_blocked_until
-
-    if name == "openrouter":
-        return now >= openrouter_blocked_until
-
-    if name == "learning_main":
-        return now >= learning_main_blocked_until
-
-    if name == "learning_backup":
-        return now >= learning_backup_blocked_until
-
-    return True
 
 
 # =========================================================
@@ -1944,7 +2922,6 @@ def increase_learning_counter(chat_id):
         LEARNING_EVERY_MESSAGES,
     )
 
-    # Небольшой retry именно для временной ошибки БД.
     for attempt in range(3):
         try:
             (
@@ -2133,12 +3110,9 @@ def ask_model(
             flush=True,
         )
 
-        # 429 НИКОГДА не повторяем вторым запросом.
         if is_rate_limit_error(e):
             raise
 
-        # Повторяем только для совместимости
-        # со старыми вариантами параметров SDK.
         try:
             completion = (
                 groq.chat.completions.create(
@@ -2234,15 +3208,6 @@ def ask_model(
 # =========================================================
 
 def extract_openrouter_text(data):
-    """
-    OpenRouter может вернуть:
-    message.content
-    message.content как список частей
-    choice.text
-
-    reasoning/reasoning_details НЕ используются.
-    """
-
     choices = data.get(
         "choices"
     ) or []
@@ -2354,8 +3319,6 @@ def ask_openrouter_messages(
         "messages": messages,
         "max_tokens": max_tokens,
         "stream": False,
-
-        # Не отдаём reasoning как пользовательский ответ.
         "reasoning": {
             "exclude": True,
         },
@@ -2421,8 +3384,6 @@ def ask_openrouter_messages(
     )
 
     if not reply:
-        # ВАЖНО:
-        # reasoning здесь не используется.
         raise RuntimeError(
             f"{label} returned empty final response."
         )
@@ -2459,9 +3420,24 @@ def ask_openrouter(
             "Нет моделей OpenRouter."
         )
 
+    cleanup_openrouter_model_cooldowns()
+
     last_error = None
+    attempted = False
 
     for model in OPENROUTER_MODELS:
+
+        if not is_openrouter_model_available(
+            model
+        ):
+            print(
+                f"OpenRouter -> {model} "
+                f"SKIPPED: model cooldown",
+                flush=True,
+            )
+            continue
+
+        attempted = True
 
         try:
             print(
@@ -2485,15 +3461,30 @@ def ask_openrouter(
                 flush=True,
             )
 
-            # Не останавливаем fallback.
-            # Даже если одна модель дала:
-            # empty response
-            # raw reasoning
-            # 404
-            # 429
-            # идём к следующей.
+            if is_rate_limit_error(e):
+                seconds = get_retry_seconds(
+                    e,
+                    DEFAULT_OPENROUTER_BLOCK,
+                )
+
+                mark_openrouter_model_blocked(
+                    model,
+                    seconds,
+                )
+
+            elif is_temporary_ai_error(e):
+                mark_openrouter_model_blocked(
+                    model,
+                    TEMP_OPENROUTER_BLOCK,
+                )
 
             continue
+
+    if not attempted:
+        raise RuntimeError(
+            "Все модели OpenRouter "
+            "находятся в cooldown."
+        )
 
     raise RuntimeError(
         "Все модели OpenRouter "
@@ -2506,7 +3497,22 @@ def ask_openrouter(
 # LEARNING MODEL
 # =========================================================
 
+def learning_ai_available():
+    return (
+        provider_available("learning_backup")
+        or provider_available("learning_main")
+        or provider_available("openrouter")
+    )
+
+
 def ask_learning_model(messages):
+    # Если вообще нет AI — обучение не запускаем.
+    if not learning_ai_available():
+        raise RuntimeError(
+            "Learning skipped: "
+            "all AI providers unavailable."
+        )
+
     # Сначала backup 20B.
     if provider_available(
         "learning_backup"
@@ -2525,14 +3531,12 @@ def ask_learning_model(messages):
 
         except Exception as e:
 
-            if is_rate_limit_error(e):
-                mark_provider_blocked(
-                    "learning_backup",
-                    get_retry_seconds(
-                        e,
-                        DEFAULT_GROQ_BACKUP_BLOCK,
-                    ),
-                )
+            mark_provider_error(
+                "learning_backup",
+                e,
+                DEFAULT_GROQ_BACKUP_BLOCK,
+                TEMP_GROQ_BACKUP_BLOCK,
+            )
 
             print(
                 "Learning 20B error:",
@@ -2558,14 +3562,12 @@ def ask_learning_model(messages):
 
         except Exception as e:
 
-            if is_rate_limit_error(e):
-                mark_provider_blocked(
-                    "learning_main",
-                    get_retry_seconds(
-                        e,
-                        DEFAULT_GROQ_MAIN_BLOCK,
-                    ),
-                )
+            mark_provider_error(
+                "learning_main",
+                e,
+                DEFAULT_GROQ_MAIN_BLOCK,
+                TEMP_GROQ_MAIN_BLOCK,
+            )
 
             print(
                 "Learning 120B error:",
@@ -2582,7 +3584,14 @@ def ask_learning_model(messages):
     ):
         last_error = None
 
+        cleanup_openrouter_model_cooldowns()
+
         for model in OPENROUTER_MODELS:
+
+            if not is_openrouter_model_available(
+                model
+            ):
+                continue
 
             try:
                 print(
@@ -2607,6 +3616,23 @@ def ask_learning_model(messages):
                     flush=True,
                 )
 
+                if is_rate_limit_error(e):
+                    seconds = get_retry_seconds(
+                        e,
+                        DEFAULT_OPENROUTER_BLOCK,
+                    )
+
+                    mark_openrouter_model_blocked(
+                        model,
+                        seconds,
+                    )
+
+                elif is_temporary_ai_error(e):
+                    mark_openrouter_model_blocked(
+                        model,
+                        TEMP_OPENROUTER_BLOCK,
+                    )
+
         if (
             last_error
             and is_rate_limit_error(
@@ -2621,6 +3647,19 @@ def ask_learning_model(messages):
                 ),
             )
 
+        elif (
+            last_error
+            and is_temporary_ai_error(
+                last_error
+            )
+        ):
+            mark_provider_blocked(
+                "openrouter",
+                TEMP_OPENROUTER_BLOCK,
+            )
+
+    update_local_mode()
+
     raise RuntimeError(
         "Все модели временно "
         "недоступны для обучения."
@@ -2633,6 +3672,26 @@ def ask_learning_model(messages):
 
 def perform_learning(chat_id):
     try:
+        # ВАЖНО:
+        # Если LOCAL MODE активен, здесь вообще
+        # не отправляем историю пользователей в AI.
+        if is_local_mode():
+            print(
+                "🧠 Learning skipped: LOCAL MODE",
+                flush=True,
+            )
+            return
+
+        if not learning_ai_available():
+            update_local_mode()
+
+            print(
+                "🧠 Learning skipped: "
+                "no AI available",
+                flush=True,
+            )
+            return
+
         state = get_learning_state(
             chat_id
         )
@@ -2742,6 +3801,17 @@ NONE
 
 {chr(10).join(text_parts)}
 """
+
+        # Повторно проверяем перед самим AI-запросом.
+        # Это важно, если LOCAL MODE включился
+        # пока поток обучения собирал историю.
+        if is_local_mode():
+            print(
+                "🧠 Learning cancelled: "
+                "LOCAL MODE activated",
+                flush=True,
+            )
+            return
 
         learned = ask_learning_model([
             {
@@ -2926,11 +3996,32 @@ NONE
 
 
 def maybe_learn(chat_id):
+    # Самое важное изменение:
+    # когда все AI недоступны, счётчик можно продолжать
+    # вести, но запускать AI-обучение нельзя.
     count = increase_learning_counter(
         chat_id
     )
 
     if count < LEARNING_EVERY_MESSAGES:
+        return
+
+    if is_local_mode():
+        print(
+            f"🧠 Learning waiting | "
+            f"chat={chat_id} | LOCAL MODE",
+            flush=True,
+        )
+        return
+
+    if not learning_ai_available():
+        update_local_mode()
+
+        print(
+            f"🧠 Learning waiting | "
+            f"chat={chat_id} | no AI",
+            flush=True,
+        )
         return
 
     retry_until = (
@@ -3365,6 +4456,20 @@ def ask_ai(
     user_id,
     user_name,
 ):
+    """
+    Главная точка входа в AI.
+
+    Порядок:
+
+    1. Обновляем эмоции.
+    2. Простое сообщение -> LOCAL без AI.
+    3. Если все AI заблокированы -> LOCAL.
+    4. Groq 120B.
+    5. Groq 20B.
+    6. OpenRouter.
+    7. Если все провайдеры заблокировались -> LOCAL.
+    """
+
     if user_id is not None:
 
         emotion_state = process_emotion(
@@ -3389,17 +4494,58 @@ def ask_ai(
 
             return short_reaction
 
-    # =====================================================
-    # 1. GROQ
-    # =====================================================
+    # -----------------------------------------------------
+    # Простые сообщения вообще не отправляем в AI.
+    # -----------------------------------------------------
 
-    try:
-        return ask_groq(
+    if not should_use_ai_for_message(
+        text
+    ):
+        print(
+            "AI SKIPPED | simple message -> LOCAL",
+            flush=True,
+        )
+
+        return local_answer(
             chat_id,
             text,
             user_id,
             user_name,
         )
+
+    # -----------------------------------------------------
+    # Если все AI уже заблокированы —
+    # НИКАКОГО запроса в AI.
+    # -----------------------------------------------------
+
+    if is_local_mode():
+        print(
+            "AI SKIPPED | LOCAL MODE",
+            flush=True,
+        )
+
+        return local_answer(
+            chat_id,
+            text,
+            user_id,
+            user_name,
+        )
+
+    # -----------------------------------------------------
+    # 1. GROQ
+    # -----------------------------------------------------
+
+    try:
+        reply = ask_groq(
+            chat_id,
+            text,
+            user_id,
+            user_name,
+        )
+
+        update_local_mode()
+
+        return reply
 
     except Exception as groq_error:
         print(
@@ -3408,42 +4554,88 @@ def ask_ai(
             flush=True,
         )
 
-    # =====================================================
-    # 2. OPENROUTER
-    # =====================================================
+    # -----------------------------------------------------
+    # После Groq проверяем:
+    # вдруг Groq 120B/20B заблокировались,
+    # а OpenRouter тоже уже был в cooldown.
+    # -----------------------------------------------------
 
-    if not OPENROUTER_API_KEY:
+    update_local_mode()
+
+    if is_local_mode():
+        print(
+            "All AI unavailable after Groq -> LOCAL",
+            flush=True,
+        )
+
+        return local_answer(
+            chat_id,
+            text,
+            user_id,
+            user_name,
+        )
+
+    # -----------------------------------------------------
+    # 2. OPENROUTER
+    # -----------------------------------------------------
+
+    if (
+        not OPENROUTER_API_KEY
+        or not OPENROUTER_MODELS
+    ):
+        update_local_mode()
+
+        if is_local_mode():
+            return local_answer(
+                chat_id,
+                text,
+                user_id,
+                user_name,
+            )
+
         raise RuntimeError(
-            "Все текстовые AI временно "
-            "недоступны: Groq недоступен, "
+            "Groq недоступен, "
             "OpenRouter token отсутствует."
         )
 
     if not provider_available(
         "openrouter"
     ):
-        remaining = max(
-            1,
-            int(
-                openrouter_blocked_until
-                - time.time()
-            ),
+        remaining = get_provider_remaining(
+            "openrouter"
         )
 
+        print(
+            f"OpenRouter skipped: "
+            f"cooldown {remaining}s",
+            flush=True,
+        )
+
+        update_local_mode()
+
+        if is_local_mode():
+            return local_answer(
+                chat_id,
+                text,
+                user_id,
+                user_name,
+            )
+
         raise RuntimeError(
-            "Все текстовые AI временно "
-            "недоступны. "
-            f"OpenRouter cooldown: "
-            f"{remaining} сек."
+            "OpenRouter временно недоступен."
         )
 
     try:
-        return ask_openrouter(
+        reply = ask_openrouter(
             chat_id,
             text,
             user_id,
             user_name,
         )
+
+        update_local_mode()
+
+        return reply
 
     except Exception as openrouter_error:
 
@@ -3458,11 +4650,40 @@ def ask_ai(
                 ),
             )
 
+        elif is_temporary_ai_error(
+            openrouter_error
+        ):
+            mark_provider_blocked(
+                "openrouter",
+                TEMP_OPENROUTER_BLOCK,
+            )
+
         print(
             "OpenRouter final error:",
             openrouter_error,
             flush=True,
         )
+
+        update_local_mode()
+
+        # -------------------------------------------------
+        # Все AI закончились.
+        # Вместо ошибки пользователю —
+        # локальный ответ.
+        # -------------------------------------------------
+
+        if is_local_mode():
+            print(
+                "ALL AI BLOCKED -> LOCAL MODE",
+                flush=True,
+            )
+
+            return local_answer(
+                chat_id,
+                text,
+                user_id,
+                user_name,
+            )
 
         raise RuntimeError(
             "Все текстовые AI временно "
@@ -3509,14 +4730,12 @@ def ask_groq(
 
         except Exception as e:
 
-            if is_rate_limit_error(e):
-                mark_provider_blocked(
-                    "groq_main",
-                    get_retry_seconds(
-                        e,
-                        DEFAULT_GROQ_MAIN_BLOCK,
-                    ),
-                )
+            mark_provider_error(
+                "groq_main",
+                e,
+                DEFAULT_GROQ_MAIN_BLOCK,
+                TEMP_GROQ_MAIN_BLOCK,
+            )
 
             print(
                 "120B error:",
@@ -3525,12 +4744,8 @@ def ask_groq(
             )
 
     else:
-        remaining = max(
-            1,
-            int(
-                main_blocked_until
-                - time.time()
-            ),
+        remaining = get_provider_remaining(
+            "groq_main"
         )
 
         print(
@@ -3561,14 +4776,12 @@ def ask_groq(
 
         except Exception as e:
 
-            if is_rate_limit_error(e):
-                mark_provider_blocked(
-                    "groq_backup",
-                    get_retry_seconds(
-                        e,
-                        DEFAULT_GROQ_BACKUP_BLOCK,
-                    ),
-                )
+            mark_provider_error(
+                "groq_backup",
+                e,
+                DEFAULT_GROQ_BACKUP_BLOCK,
+                TEMP_GROQ_BACKUP_BLOCK,
+            )
 
             print(
                 "20B error:",
@@ -3577,12 +4790,8 @@ def ask_groq(
             )
 
     else:
-        remaining = max(
-            1,
-            int(
-                backup_blocked_until
-                - time.time()
-            ),
+        remaining = get_provider_remaining(
+            "groq_backup"
         )
 
         print(
@@ -3591,10 +4800,231 @@ def ask_groq(
             flush=True,
         )
 
+    update_local_mode()
+
     raise RuntimeError(
         "Обе модели Groq "
         "временно недоступны."
     )
+
+
+# =========================================================
+# AI RECOVERY PROBES
+# =========================================================
+
+def probe_groq():
+    """
+    Проверка Groq без генерации ответа.
+
+    Используется models.list(), поэтому мы не отправляем
+    пользовательский текст и не расходуем completion tokens.
+    """
+
+    if not groq_main_configured():
+        return False
+
+    try:
+        groq.models.list()
+
+        print(
+            "AI RECOVERY | Groq API reachable",
+            flush=True,
+        )
+
+        return True
+
+    except Exception as e:
+        print(
+            "AI RECOVERY | Groq probe failed:",
+            e,
+            flush=True,
+        )
+
+        return False
+
+
+def probe_openrouter():
+    """
+    Проверка OpenRouter через /models.
+
+    Пользовательские сообщения сюда НЕ передаются.
+    """
+
+    if not OPENROUTER_API_KEY:
+        return False
+
+    try:
+        response = requests.get(
+            OPENROUTER_MODELS_API,
+            headers={
+                "Authorization":
+                    f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type":
+                    "application/json",
+            },
+            timeout=AI_RECOVERY_PROBE_TIMEOUT,
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+
+            if isinstance(data, dict):
+                print(
+                    "AI RECOVERY | "
+                    "OpenRouter API reachable",
+                    flush=True,
+                )
+
+                return True
+
+        print(
+            "AI RECOVERY | "
+            f"OpenRouter probe HTTP "
+            f"{response.status_code}",
+            flush=True,
+        )
+
+        return False
+
+    except Exception as e:
+        print(
+            "AI RECOVERY | "
+            "OpenRouter probe failed:",
+            e,
+            flush=True,
+        )
+
+        return False
+
+
+def clear_groq_main_cooldown():
+    global main_blocked_until
+
+    with ai_state_lock:
+        main_blocked_until = 0
+
+
+def clear_groq_backup_cooldown():
+    global backup_blocked_until
+
+    with ai_state_lock:
+        backup_blocked_until = 0
+
+
+def clear_openrouter_cooldown():
+    global openrouter_blocked_until
+
+    with ai_state_lock:
+        openrouter_blocked_until = 0
+
+
+def ai_recovery_loop():
+    """
+    Отдельный фоновой механизм восстановления.
+
+    Никаких постоянных запросов к AI.
+
+    Проверяет только те провайдеры, чей cooldown
+    уже закончился.
+
+    Для Groq/OpenRouter используются API health-style
+    endpoints, а не пользовательские сообщения.
+    """
+
+    global last_ai_recovery_check
+
+    while True:
+
+        try:
+            now = time.time()
+
+            if (
+                now - last_ai_recovery_check
+                < AI_RECOVERY_CHECK_INTERVAL
+            ):
+                time.sleep(5)
+                continue
+
+            last_ai_recovery_check = now
+
+            cleanup_openrouter_model_cooldowns()
+
+            # -------------------------------------------------
+            # Groq 120B
+            # -------------------------------------------------
+
+            if (
+                groq_main_configured()
+                and get_provider_remaining(
+                    "groq_main"
+                ) <= 0
+            ):
+                if not provider_available(
+                    "groq_main"
+                ):
+                    if probe_groq():
+                        clear_groq_main_cooldown()
+
+                        print(
+                            "AI RECOVERY | "
+                            "Groq 120B cooldown cleared",
+                            flush=True,
+                        )
+
+            # -------------------------------------------------
+            # Groq 20B
+            # -------------------------------------------------
+
+            if (
+                groq_backup_configured()
+                and get_provider_remaining(
+                    "groq_backup"
+                ) <= 0
+            ):
+                if not provider_available(
+                    "groq_backup"
+                ):
+                    if probe_groq():
+                        clear_groq_backup_cooldown()
+
+                        print(
+                            "AI RECOVERY | "
+                            "Groq 20B cooldown cleared",
+                            flush=True,
+                        )
+
+            # -------------------------------------------------
+            # OpenRouter
+            # -------------------------------------------------
+
+            if (
+                openrouter_configured()
+                and get_provider_remaining(
+                    "openrouter"
+                ) <= 0
+            ):
+                if not provider_available(
+                    "openrouter"
+                ):
+                    if probe_openrouter():
+                        clear_openrouter_cooldown()
+
+                        print(
+                            "AI RECOVERY | "
+                            "OpenRouter cooldown cleared",
+                            flush=True,
+                        )
+
+            update_local_mode()
+
+        except Exception as e:
+            print(
+                "AI recovery loop error:",
+                e,
+                flush=True,
+            )
+
+        time.sleep(5)
 
 
 # =========================================================
@@ -3785,8 +5215,8 @@ def activity_loop():
                         item["peer_id"]
                     )
 
-                    # Активность тоже использует
-                    # Groq -> OpenRouter.
+                    # ask_ai автоматически использует
+                    # LOCAL MODE, если все AI заблокированы.
                     reply = ask_ai(
                         activity_chat_id,
                         prompt,
@@ -3841,6 +5271,8 @@ def activity_loop():
 def home():
     now = time.time()
 
+    current_local_mode = is_local_mode()
+
     return {
         "status": "ok",
         "bot": "Tanks Blitz AI",
@@ -3853,6 +5285,8 @@ def home():
         "offense_system": True,
         "profanity": True,
 
+        "local_mode": current_local_mode,
+
         "openrouter":
             bool(OPENROUTER_API_KEY),
 
@@ -3860,13 +5294,34 @@ def home():
             OPENROUTER_MODELS,
 
         "groq_120b_available":
-            now >= main_blocked_until,
+            (
+                groq_main_configured()
+                and now >= main_blocked_until
+            ),
 
         "groq_20b_available":
-            now >= backup_blocked_until,
+            (
+                groq_backup_configured()
+                and now >= backup_blocked_until
+            ),
 
         "openrouter_available":
-            now >= openrouter_blocked_until,
+            (
+                openrouter_configured()
+                and now >= openrouter_blocked_until
+            ),
+
+        "cooldowns": {
+            "groq_120b": get_provider_remaining(
+                "groq_main"
+            ),
+            "groq_20b": get_provider_remaining(
+                "groq_backup"
+            ),
+            "openrouter": get_provider_remaining(
+                "openrouter"
+            ),
+        },
 
         "vision": False,
         "voice": False,
@@ -4330,6 +5785,16 @@ if __name__ == "__main__":
     )
 
     print(
+        "🟡 Automatic LOCAL MODE: ENABLED",
+        flush=True,
+    )
+
+    print(
+        "🔄 Automatic AI recovery: ENABLED",
+        flush=True,
+    )
+
+    print(
         f"🧠 MAIN MODEL: {MAIN_MODEL}",
         flush=True,
     )
@@ -4406,11 +5871,34 @@ if __name__ == "__main__":
         flush=True,
     )
 
+    # -----------------------------------------------------
+    # При старте сразу определяем режим.
+    # -----------------------------------------------------
+
+    update_local_mode()
+
+    # -----------------------------------------------------
+    # Telegram
+    # -----------------------------------------------------
+
     if TELEGRAM_BOT_TOKEN:
         setup_telegram()
 
+    # -----------------------------------------------------
+    # Фоновая активность
+    # -----------------------------------------------------
+
     threading.Thread(
         target=activity_loop,
+        daemon=True,
+    ).start()
+
+    # -----------------------------------------------------
+    # Фоновое восстановление AI
+    # -----------------------------------------------------
+
+    threading.Thread(
+        target=ai_recovery_loop,
         daemon=True,
     ).start()
 
