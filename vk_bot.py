@@ -4691,4 +4691,1322 @@ def ask_ai(
             )
 
         raise RuntimeError(
-         
+            "Groq недоступен, "
+            "OpenRouter token отсутствует."
+        )
+
+    if not provider_available(
+        "openrouter"
+    ):
+        remaining = get_provider_remaining(
+            "openrouter"
+        )
+
+        print(
+            f"OpenRouter skipped: "
+            f"cooldown {remaining}s",
+            flush=True,
+        )
+
+        update_local_mode()
+
+        if is_local_mode():
+            return local_answer(
+                chat_id,
+                text,
+                user_id,
+                user_name,
+            )
+
+        raise RuntimeError(
+            "OpenRouter временно недоступен."
+        )
+
+    try:
+        reply = ask_openrouter(
+            chat_id,
+            text,
+            user_id,
+            user_name,
+        )
+
+        update_local_mode()
+
+        return reply
+
+    except Exception as openrouter_error:
+
+        if is_rate_limit_error(
+            openrouter_error
+        ):
+            mark_provider_blocked(
+                "openrouter",
+                get_retry_seconds(
+                    openrouter_error,
+                    DEFAULT_OPENROUTER_BLOCK,
+                ),
+            )
+
+        elif is_temporary_ai_error(
+            openrouter_error
+        ):
+            mark_provider_blocked(
+                "openrouter",
+                TEMP_OPENROUTER_BLOCK,
+            )
+
+        print(
+            "OpenRouter final error:",
+            openrouter_error,
+            flush=True,
+        )
+
+        update_local_mode()
+
+        # -------------------------------------------------
+        # Все AI закончились.
+        # Вместо ошибки пользователю —
+        # локальный ответ.
+        # -------------------------------------------------
+
+        if is_local_mode():
+            print(
+                "ALL AI BLOCKED -> LOCAL MODE",
+                flush=True,
+            )
+
+            return local_answer(
+                chat_id,
+                text,
+                user_id,
+                user_name,
+            )
+
+        raise RuntimeError(
+            "Все текстовые AI временно "
+            "недоступны."
+        )
+
+
+# =========================================================
+# GROQ CHAT
+# =========================================================
+
+def ask_groq(
+    chat_id,
+    text,
+    user_id,
+    user_name,
+):
+    messages = build_chat_context(
+        chat_id,
+        user_id,
+        user_name,
+        text,
+    )
+
+    # -----------------------------------------------------
+    # 120B
+    # -----------------------------------------------------
+
+    if provider_available(
+        "groq_main"
+    ):
+
+        try:
+            print(
+                "Groq -> 120B",
+                flush=True,
+            )
+
+            return ask_model(
+                MAIN_MODEL,
+                messages,
+                GROQ_MAX_TOKENS,
+            )
+
+        except Exception as e:
+
+            mark_provider_error(
+                "groq_main",
+                e,
+                DEFAULT_GROQ_MAIN_BLOCK,
+                TEMP_GROQ_MAIN_BLOCK,
+            )
+
+            print(
+                "120B error:",
+                e,
+                flush=True,
+            )
+
+    else:
+        remaining = get_provider_remaining(
+            "groq_main"
+        )
+
+        print(
+            f"120B skipped: "
+            f"cooldown {remaining}s",
+            flush=True,
+        )
+
+    # -----------------------------------------------------
+    # 20B
+    # -----------------------------------------------------
+
+    if provider_available(
+        "groq_backup"
+    ):
+
+        try:
+            print(
+                "Groq -> 20B",
+                flush=True,
+            )
+
+            return ask_model(
+                BACKUP_MODEL,
+                messages,
+                GROQ_MAX_TOKENS,
+            )
+
+        except Exception as e:
+
+            mark_provider_error(
+                "groq_backup",
+                e,
+                DEFAULT_GROQ_BACKUP_BLOCK,
+                TEMP_GROQ_BACKUP_BLOCK,
+            )
+
+            print(
+                "20B error:",
+                e,
+                flush=True,
+            )
+
+    else:
+        remaining = get_provider_remaining(
+            "groq_backup"
+        )
+
+        print(
+            f"20B skipped: "
+            f"cooldown {remaining}s",
+            flush=True,
+        )
+
+    update_local_mode()
+
+    raise RuntimeError(
+        "Обе модели Groq "
+        "временно недоступны."
+    )
+
+
+# =========================================================
+# AI RECOVERY PROBES
+# =========================================================
+
+def probe_groq():
+    """
+    Проверка Groq без генерации ответа.
+
+    Используется models.list(), поэтому мы не отправляем
+    пользовательский текст и не расходуем completion tokens.
+    """
+
+    if not groq_main_configured():
+        return False
+
+    try:
+        groq.models.list()
+
+        print(
+            "AI RECOVERY | Groq API reachable",
+            flush=True,
+        )
+
+        return True
+
+    except Exception as e:
+        print(
+            "AI RECOVERY | Groq probe failed:",
+            e,
+            flush=True,
+        )
+
+        return False
+
+
+def probe_openrouter():
+    """
+    Проверка OpenRouter через /models.
+
+    Пользовательские сообщения сюда НЕ передаются.
+    """
+
+    if not OPENROUTER_API_KEY:
+        return False
+
+    try:
+        response = requests.get(
+            OPENROUTER_MODELS_API,
+            headers={
+                "Authorization":
+                    f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type":
+                    "application/json",
+            },
+            timeout=AI_RECOVERY_PROBE_TIMEOUT,
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+
+            if isinstance(data, dict):
+                print(
+                    "AI RECOVERY | "
+                    "OpenRouter API reachable",
+                    flush=True,
+                )
+
+                return True
+
+        print(
+            "AI RECOVERY | "
+            f"OpenRouter probe HTTP "
+            f"{response.status_code}",
+            flush=True,
+        )
+
+        return False
+
+    except Exception as e:
+        print(
+            "AI RECOVERY | "
+            "OpenRouter probe failed:",
+            e,
+            flush=True,
+        )
+
+        return False
+
+
+def clear_groq_main_cooldown():
+    global main_blocked_until
+
+    with ai_state_lock:
+        main_blocked_until = 0
+
+
+def clear_groq_backup_cooldown():
+    global backup_blocked_until
+
+    with ai_state_lock:
+        backup_blocked_until = 0
+
+
+def clear_openrouter_cooldown():
+    global openrouter_blocked_until
+
+    with ai_state_lock:
+        openrouter_blocked_until = 0
+
+
+def ai_recovery_loop():
+    """
+    Отдельный фоновой механизм восстановления.
+
+    Никаких постоянных запросов к AI.
+
+    Проверяет только те провайдеры, чей cooldown
+    уже закончился.
+
+    Для Groq/OpenRouter используются API health-style
+    endpoints, а не пользовательские сообщения.
+    """
+
+    global last_ai_recovery_check
+
+    while True:
+
+        try:
+            now = time.time()
+
+            if (
+                now - last_ai_recovery_check
+                < AI_RECOVERY_CHECK_INTERVAL
+            ):
+                time.sleep(5)
+                continue
+
+            last_ai_recovery_check = now
+
+            cleanup_openrouter_model_cooldowns()
+
+            # -------------------------------------------------
+            # Groq 120B
+            # -------------------------------------------------
+
+            if (
+                groq_main_configured()
+                and get_provider_remaining(
+                    "groq_main"
+                ) <= 0
+            ):
+                if not provider_available(
+                    "groq_main"
+                ):
+                    if probe_groq():
+                        clear_groq_main_cooldown()
+
+                        print(
+                            "AI RECOVERY | "
+                            "Groq 120B cooldown cleared",
+                            flush=True,
+                        )
+
+            # -------------------------------------------------
+            # Groq 20B
+            # -------------------------------------------------
+
+            if (
+                groq_backup_configured()
+                and get_provider_remaining(
+                    "groq_backup"
+                ) <= 0
+            ):
+                if not provider_available(
+                    "groq_backup"
+                ):
+                    if probe_groq():
+                        clear_groq_backup_cooldown()
+
+                        print(
+                            "AI RECOVERY | "
+                            "Groq 20B cooldown cleared",
+                            flush=True,
+                        )
+
+            # -------------------------------------------------
+            # OpenRouter
+            # -------------------------------------------------
+
+            if (
+                openrouter_configured()
+                and get_provider_remaining(
+                    "openrouter"
+                ) <= 0
+            ):
+                if not provider_available(
+                    "openrouter"
+                ):
+                    if probe_openrouter():
+                        clear_openrouter_cooldown()
+
+                        print(
+                            "AI RECOVERY | "
+                            "OpenRouter cooldown cleared",
+                            flush=True,
+                        )
+
+            update_local_mode()
+
+        except Exception as e:
+            print(
+                "AI recovery loop error:",
+                e,
+                flush=True,
+            )
+
+        time.sleep(5)
+
+
+# =========================================================
+# VK SEND
+# =========================================================
+
+def send_message(
+    peer_id,
+    text,
+):
+    if not text:
+        return
+
+    response = requests.post(
+        f"{VK_API}/messages.send",
+        data={
+            "access_token": VK_TOKEN,
+            "v": VK_VERSION,
+            "peer_id": int(peer_id),
+            "message": text[:4096],
+            "random_id": 0,
+        },
+        timeout=15,
+    )
+
+    result = response.json()
+
+    if "error" in result:
+        print(
+            "VK send error:",
+            result["error"],
+            flush=True,
+        )
+
+    return result
+
+
+# =========================================================
+# TELEGRAM API
+# =========================================================
+
+def telegram_call(
+    method,
+    **kwargs,
+):
+    if not TELEGRAM_API:
+        raise RuntimeError(
+            "TELEGRAM_BOT_TOKEN не установлен"
+        )
+
+    response = requests.post(
+        f"{TELEGRAM_API}/{method}",
+        json=kwargs,
+        timeout=30,
+    )
+
+    data = response.json()
+
+    if not data.get("ok"):
+        raise RuntimeError(
+            f"Telegram {method}: {data}"
+        )
+
+    return data.get(
+        "result"
+    )
+
+
+def send_telegram_message(
+    chat_id,
+    text,
+    reply_to_message_id=None,
+):
+    if not text:
+        return
+
+    payload = {
+        "chat_id": int(chat_id),
+        "text": text[:4096],
+        "disable_web_page_preview": True,
+    }
+
+    if reply_to_message_id:
+        payload[
+            "reply_parameters"
+        ] = {
+            "message_id":
+                int(reply_to_message_id),
+        }
+
+    return telegram_call(
+        "sendMessage",
+        **payload,
+    )
+
+
+# =========================================================
+# ACTIVE CHATS
+# =========================================================
+
+def register_active_chat(
+    platform,
+    peer_id,
+):
+    key = (
+        f"{platform}:{peer_id}"
+    )
+
+    with activity_lock:
+        active_chats[key] = {
+            "platform": platform,
+            "peer_id": str(peer_id),
+            "last": time.time(),
+        }
+
+
+def send_platform_message(
+    platform,
+    peer_id,
+    text,
+):
+    if platform == "vk":
+        return send_message(
+            int(peer_id),
+            text,
+        )
+
+    return send_telegram_message(
+        int(peer_id),
+        text,
+    )
+
+
+# =========================================================
+# ACTIVITY
+# =========================================================
+
+def activity_loop():
+    while True:
+
+        try:
+            now = time.time()
+
+            with activity_lock:
+                chats = dict(
+                    active_chats
+                )
+
+            for key, item in chats.items():
+
+                if (
+                    now - item["last"]
+                    < 20 * 60
+                ):
+                    continue
+
+                with activity_lock:
+                    if key in active_chats:
+                        active_chats[
+                            key
+                        ]["last"] = now
+
+                if random.random() > 0.35:
+                    continue
+
+                prompt = random.choice([
+                    (
+                        "В чате давно тихо. "
+                        "Если есть естественная причина "
+                        "оживить разговор, напиши "
+                        "одну короткую живую реплику."
+                    ),
+                    (
+                        "В чате тишина. "
+                        "Придумай короткую естественную "
+                        "реплику обычного участника."
+                    ),
+                    (
+                        "Народ молчит. "
+                        "Оживи чат одной короткой "
+                        "эмоциональной фразой."
+                    ),
+                ])
+
+                try:
+
+                    activity_chat_id = int(
+                        item["peer_id"]
+                    )
+
+                    # ask_ai автоматически использует
+                    # LOCAL MODE, если все AI заблокированы.
+                    reply = ask_ai(
+                        activity_chat_id,
+                        prompt,
+                        None,
+                        None,
+                    )
+
+                    if not reply:
+                        continue
+
+                    send_platform_message(
+                        item["platform"],
+                        item["peer_id"],
+                        reply,
+                    )
+
+                    save_chat_message(
+                        activity_chat_id,
+                        None,
+                        "Бот",
+                        "assistant",
+                        reply,
+                    )
+
+                except Exception as e:
+                    print(
+                        "Activity error:",
+                        e,
+                        flush=True,
+                    )
+
+            time.sleep(60)
+
+        except Exception as e:
+            print(
+                "Activity loop error:",
+                e,
+                flush=True,
+            )
+
+            time.sleep(60)
+
+
+# =========================================================
+# HEALTH
+# =========================================================
+
+@app.route(
+    "/",
+    methods=["GET"],
+)
+def home():
+    now = time.time()
+
+    current_local_mode = is_local_mode()
+
+    return {
+        "status": "ok",
+        "bot": "Tanks Blitz AI",
+        "version": BOT_VERSION,
+        "build": BOT_BUILD,
+
+        "self_learning": True,
+        "personality": "alive",
+        "emotions": True,
+        "offense_system": True,
+        "profanity": True,
+
+        "local_mode": current_local_mode,
+
+        "openrouter":
+            bool(OPENROUTER_API_KEY),
+
+        "openrouter_models":
+            OPENROUTER_MODELS,
+
+        "groq_120b_available":
+            (
+                groq_main_configured()
+                and now >= main_blocked_until
+            ),
+
+        "groq_20b_available":
+            (
+                groq_backup_configured()
+                and now >= backup_blocked_until
+            ),
+
+        "openrouter_available":
+            (
+                openrouter_configured()
+                and now >= openrouter_blocked_until
+            ),
+
+        "cooldowns": {
+            "groq_120b": get_provider_remaining(
+                "groq_main"
+            ),
+            "groq_20b": get_provider_remaining(
+                "groq_backup"
+            ),
+            "openrouter": get_provider_remaining(
+                "openrouter"
+            ),
+        },
+
+        "vision": False,
+        "voice": False,
+    }, 200
+
+
+# =========================================================
+# VK CALLBACK
+# =========================================================
+
+@app.route(
+    "/callback",
+    methods=["POST"],
+)
+def callback():
+
+    try:
+        data = request.get_json(
+            force=True
+        ) or {}
+
+        if (
+            VK_GROUP_SECRET
+            and data.get("secret")
+            != VK_GROUP_SECRET
+        ):
+            return "invalid secret", 403
+
+        event_type = data.get(
+            "type"
+        )
+
+        if event_type == "confirmation":
+            return VK_CONFIRMATION_CODE
+
+        if event_type != "message_new":
+            return "ok"
+
+        event_id = data.get(
+            "event_id",
+            "",
+        )
+
+        if already_processed(
+            "vk:" + str(event_id)
+        ):
+            return "ok"
+
+        message = (
+            data["object"]["message"]
+        )
+
+        peer_id = message[
+            "peer_id"
+        ]
+
+        sender_id = (
+            message.get("from_id")
+            or message.get("user_id")
+        )
+
+        if (
+            sender_id
+            and int(peer_id)
+            == int(sender_id)
+        ):
+            return "ok"
+
+        if not sender_id:
+            return "ok"
+
+        if int(sender_id) < 0:
+            return "ok"
+
+        chat_id = int(peer_id)
+
+        register_active_chat(
+            "vk",
+            peer_id,
+        )
+
+        text = (
+            message.get("text")
+            or ""
+        ).strip()
+
+        user_name = get_vk_user_name(
+            sender_id
+        )
+
+        if not text:
+            return "ok"
+
+        save_chat_message(
+            chat_id,
+            sender_id,
+            user_name,
+            "user",
+            text,
+        )
+
+        save_explicit_user_memory(
+            chat_id,
+            sender_id,
+            user_name,
+            text,
+        )
+
+        maybe_learn(
+            chat_id
+        )
+
+        if not should_answer(
+            message,
+            text,
+            "vk",
+        ):
+            return "ok"
+
+        reply = ask_ai(
+            chat_id,
+            text,
+            str(sender_id),
+            user_name,
+        )
+
+        if reply:
+
+            save_chat_message(
+                chat_id,
+                None,
+                "Бот",
+                "assistant",
+                reply,
+            )
+
+            send_message(
+                peer_id,
+                reply,
+            )
+
+        return "ok"
+
+    except Exception as e:
+
+        print(
+            "Callback error:",
+            e,
+            flush=True,
+        )
+
+        return "ok"
+
+
+# =========================================================
+# TELEGRAM WEBHOOK
+# =========================================================
+
+@app.route(
+    "/telegram/webhook/<secret>",
+    methods=["POST"],
+)
+def telegram_webhook(
+    secret,
+):
+    if not TELEGRAM_BOT_TOKEN:
+        return "ok"
+
+    expected = hashlib.sha256(
+        TELEGRAM_BOT_TOKEN.encode()
+    ).hexdigest()[:32]
+
+    if secret != expected:
+        return "forbidden", 403
+
+    try:
+        data = request.get_json(
+            force=True
+        ) or {}
+
+        update_id = data.get(
+            "update_id"
+        )
+
+        if already_processed(
+            "tg:" + str(update_id)
+        ):
+            return "ok"
+
+        message = data.get(
+            "message"
+        )
+
+        if not message:
+            return "ok"
+
+        sender = (
+            message.get("from")
+            or {}
+        )
+
+        if sender.get(
+            "is_bot"
+        ):
+            return "ok"
+
+        chat = (
+            message.get("chat")
+            or {}
+        )
+
+        raw_chat_id = chat.get(
+            "id"
+        )
+
+        sender_id = sender.get(
+            "id"
+        )
+
+        if (
+            raw_chat_id is None
+            or sender_id is None
+        ):
+            return "ok"
+
+        chat_id = int(
+            raw_chat_id
+        )
+
+        register_active_chat(
+            "telegram",
+            raw_chat_id,
+        )
+
+        user_name = (
+            get_telegram_user_name(
+                sender
+            )
+        )
+
+        text = (
+            message.get("text")
+            or message.get("caption")
+            or ""
+        ).strip()
+
+        if not text:
+            return "ok"
+
+        save_chat_message(
+            chat_id,
+            sender_id,
+            user_name,
+            "user",
+            text,
+        )
+
+        save_explicit_user_memory(
+            chat_id,
+            sender_id,
+            user_name,
+            text,
+        )
+
+        maybe_learn(
+            chat_id
+        )
+
+        if not should_answer(
+            message,
+            text,
+            "telegram",
+        ):
+            return "ok"
+
+        reply = ask_ai(
+            chat_id,
+            text,
+            str(sender_id),
+            user_name,
+        )
+
+        if reply:
+
+            save_chat_message(
+                chat_id,
+                None,
+                "Бот",
+                "assistant",
+                reply,
+            )
+
+            send_telegram_message(
+                raw_chat_id,
+                reply,
+                message.get(
+                    "message_id"
+                ),
+            )
+
+        return "ok"
+
+    except Exception as e:
+
+        print(
+            "Telegram webhook error:",
+            e,
+            flush=True,
+        )
+
+        return "ok"
+
+
+# =========================================================
+# TELEGRAM SETUP
+# =========================================================
+
+def setup_telegram():
+    global TELEGRAM_BOT_ID
+    global TELEGRAM_BOT_USERNAME
+
+    if not TELEGRAM_BOT_TOKEN:
+        return
+
+    try:
+        me = telegram_call(
+            "getMe"
+        )
+
+        TELEGRAM_BOT_ID = me.get(
+            "id"
+        )
+
+        TELEGRAM_BOT_USERNAME = (
+            me.get(
+                "username",
+                "",
+            )
+        )
+
+        external = (
+            os.environ.get(
+                "RENDER_EXTERNAL_URL",
+                "",
+            )
+            .strip()
+            .rstrip("/")
+        )
+
+        if not external:
+
+            host = (
+                os.environ.get(
+                    "RENDER_EXTERNAL_HOSTNAME",
+                    "",
+                )
+                .strip()
+            )
+
+            external = (
+                f"https://{host}"
+                if host
+                else ""
+            )
+
+        if not external:
+
+            print(
+                "Telegram: Render URL "
+                "не найден — webhook "
+                "не установлен.",
+                flush=True,
+            )
+
+            return
+
+        secret = hashlib.sha256(
+            TELEGRAM_BOT_TOKEN.encode()
+        ).hexdigest()[:32]
+
+        webhook_url = (
+            f"{external}"
+            f"/telegram/webhook/"
+            f"{secret}"
+        )
+
+        telegram_call(
+            "setWebhook",
+            url=webhook_url,
+            allowed_updates=[
+                "message"
+            ],
+            drop_pending_updates=False,
+        )
+
+        print(
+            "Telegram connected: "
+            f"@{TELEGRAM_BOT_USERNAME} "
+            "| webhook enabled",
+            flush=True,
+        )
+
+    except Exception as e:
+
+        print(
+            "Telegram setup error:",
+            e,
+            flush=True,
+        )
+
+
+# =========================================================
+# START
+# =========================================================
+
+if __name__ == "__main__":
+
+    print(
+        "========================================",
+        flush=True,
+    )
+
+    print(
+        f"🤖 BOT VERSION: {BOT_VERSION}",
+        flush=True,
+    )
+
+    print(
+        f"🧠 BUILD: {BOT_BUILD}",
+        flush=True,
+    )
+
+    print(
+        "🔥 Personality: ALIVE",
+        flush=True,
+    )
+
+    print(
+        "🤬 Profanity: ENABLED",
+        flush=True,
+    )
+
+    print(
+        "😒 Emotions: ENABLED",
+        flush=True,
+    )
+
+    print(
+        "😡 Offense system: ENABLED",
+        flush=True,
+    )
+
+    print(
+        "😂 Humor: ENABLED",
+        flush=True,
+    )
+
+    print(
+        "🧠 Self-learning: ENABLED",
+        flush=True,
+    )
+
+    print(
+        "🟡 Automatic LOCAL MODE: ENABLED",
+        flush=True,
+    )
+
+    print(
+        "🔄 Automatic AI recovery: ENABLED",
+        flush=True,
+    )
+
+    print(
+        f"🧠 MAIN MODEL: {MAIN_MODEL}",
+        flush=True,
+    )
+
+    print(
+        f"🔄 BACKUP MODEL: {BACKUP_MODEL}",
+        flush=True,
+    )
+
+    print(
+        "🆓 OPENROUTER MODELS: "
+        + ", ".join(
+            OPENROUTER_MODELS
+        ),
+        flush=True,
+    )
+
+    print(
+        "🌐 OpenRouter token: "
+        + (
+            "YES"
+            if OPENROUTER_API_KEY
+            else "NO"
+        ),
+        flush=True,
+    )
+
+    print(
+        "🖼 Image processing: DISABLED",
+        flush=True,
+    )
+
+    print(
+        "🎤 Voice processing: DISABLED",
+        flush=True,
+    )
+
+    print(
+        "📱 Telegram token: "
+        + (
+            "YES"
+            if TELEGRAM_BOT_TOKEN
+            else "NO"
+        ),
+        flush=True,
+    )
+
+    print(
+        f"🧠 Learning every: "
+        f"{LEARNING_EVERY_MESSAGES} messages",
+        flush=True,
+    )
+
+    print(
+        f"💬 Chat context: "
+        f"{CHAT_MEMORY_LIMIT} messages",
+        flush=True,
+    )
+
+    print(
+        f"📚 Knowledge context: "
+        f"{KNOWLEDGE_LIMIT} records",
+        flush=True,
+    )
+
+    print(
+        f"👤 User memory: "
+        f"{USER_MEMORY_LIMIT} facts",
+        flush=True,
+    )
+
+    print(
+        "========================================",
+        flush=True,
+    )
+
+    # -----------------------------------------------------
+    # При старте сразу определяем режим.
+    # -----------------------------------------------------
+
+    update_local_mode()
+
+    # -----------------------------------------------------
+    # Telegram
+    # -----------------------------------------------------
+
+    if TELEGRAM_BOT_TOKEN:
+        setup_telegram()
+
+    # -----------------------------------------------------
+    # Фоновая активность
+    # -----------------------------------------------------
+
+    threading.Thread(
+        target=activity_loop,
+        daemon=True,
+    ).start()
+
+    # -----------------------------------------------------
+    # Фоновое восстановление AI
+    # -----------------------------------------------------
+
+    threading.Thread(
+        target=ai_recovery_loop,
+        daemon=True,
+    ).start()
+
+    port = int(
+        os.environ.get(
+            "PORT",
+            5000,
+        )
+    )
+
+    app.run(
+        host="0.0.0.0",
+        port=port,
+    )
