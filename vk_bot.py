@@ -16,35 +16,44 @@ from supabase import create_client
 # CONFIG
 # =========================================================
 
-BOT_VERSION = "V1.3.2"
-BOT_BUILD = "Исправления памяти + оптимизация контекста"
+BOT_VERSION = "V1.4.0"
+BOT_BUILD = "Живой характер + мат + активность + память"
 
 VK_TOKEN = os.environ.get("VK_TOKEN", "").strip()
+
 VK_CONFIRMATION_CODE = os.environ.get(
-    "VK_CONFIRMATION_CODE", ""
+    "VK_CONFIRMATION_CODE",
+    ""
 ).strip()
+
 VK_GROUP_SECRET = os.environ.get(
-    "VK_GROUP_SECRET", ""
+    "VK_GROUP_SECRET",
+    ""
 ).strip()
 
 TELEGRAM_BOT_TOKEN = os.environ.get(
-    "TELEGRAM_BOT_TOKEN", ""
+    "TELEGRAM_BOT_TOKEN",
+    ""
 ).strip()
 
 GROQ_API_KEY = os.environ.get(
-    "GROQ_API_KEY", ""
+    "GROQ_API_KEY",
+    ""
 ).strip()
 
 OPENROUTER_API_KEY = os.environ.get(
-    "OPENROUTER_API_KEY", ""
+    "OPENROUTER_API_KEY",
+    ""
 ).strip()
 
 SUPABASE_URL = os.environ.get(
-    "SUPABASE_URL", ""
+    "SUPABASE_URL",
+    ""
 ).strip()
 
 SUPABASE_SECRET_KEY = os.environ.get(
-    "SUPABASE_SECRET_KEY", ""
+    "SUPABASE_SECRET_KEY",
+    ""
 ).strip()
 
 if SUPABASE_URL and not SUPABASE_URL.startswith(
@@ -87,7 +96,6 @@ OPENROUTER_API = (
 
 MAIN_MODEL = "openai/gpt-oss-120b"
 BACKUP_MODEL = "openai/gpt-oss-20b"
-
 OPENROUTER_MODEL = "openrouter/free"
 
 
@@ -95,8 +103,8 @@ OPENROUTER_MODEL = "openrouter/free"
 # LIMITS
 # =========================================================
 
-GROQ_MAX_TOKENS = 320
-OPENROUTER_MAX_TOKENS = 320
+GROQ_MAX_TOKENS = 360
+OPENROUTER_MAX_TOKENS = 360
 LEARNING_MAX_TOKENS = 300
 
 CHAT_MEMORY_LIMIT = 25
@@ -109,60 +117,137 @@ USER_MEMORY_LIMIT = 20
 
 NAME_CACHE_TIME = 24 * 60 * 60
 
+
 # =========================================================
 # TANKS BLITZ KNOWLEDGE
 # =========================================================
 
-TANK_DB_CACHE = {"rows": [], "loaded_at": 0}
+TANK_DB_CACHE = {
+    "rows": [],
+    "loaded_at": 0
+}
+
 TANK_DB_CACHE_TIME = 10 * 60
 
-def normalize_tank_text(text):
-    return re.sub(r"[^a-zа-яё0-9]+", " ", (text or "").lower()).strip()
 
-def get_tank_knowledge_for_text(text, limit=5):
+def normalize_tank_text(text):
+
+    return re.sub(
+        r"[^a-zа-яё0-9]+",
+        " ",
+        (text or "").lower()
+    ).strip()
+
+
+def get_tank_knowledge_for_text(
+    text,
+    limit=5
+):
+
     query = normalize_tank_text(text)
+
     if not query:
         return []
 
     now = time.time()
+
     if (
         not TANK_DB_CACHE["rows"]
-        or now - TANK_DB_CACHE["loaded_at"] > TANK_DB_CACHE_TIME
+        or
+        now - TANK_DB_CACHE["loaded_at"]
+        > TANK_DB_CACHE_TIME
     ):
+
         try:
+
             result = (
-                supabase.table("tanks_blitz_knowledge")
-                .select("name, nation, tier, game, game_version, source")
+                supabase
+                .table("tanks_blitz_knowledge")
+                .select(
+                    "name, nation, tier, game, "
+                    "game_version, source"
+                )
                 .limit(200)
                 .execute()
             )
-            TANK_DB_CACHE["rows"] = result.data or []
+
+            TANK_DB_CACHE["rows"] = (
+                result.data or []
+            )
+
             TANK_DB_CACHE["loaded_at"] = now
-        except Exception:
+
+        except Exception as e:
+
+            print(
+                "Tank DB error:",
+                e,
+                flush=True
+            )
+
             return []
 
     scored = []
-    query_tokens = set(query.split())
+
+    query_tokens = set(
+        query.split()
+    )
 
     for row in TANK_DB_CACHE["rows"]:
-        name = normalize_tank_text(row.get("name") or "")
+
+        name = normalize_tank_text(
+            row.get("name") or ""
+        )
+
         if not name:
             continue
 
         score = 0
+
         if name in query:
-            score = 100 + len(name)
+
+            score = (
+                100
+                + len(name)
+            )
+
         else:
-            name_tokens = set(name.split())
-            overlap = len(query_tokens & name_tokens)
+
+            name_tokens = set(
+                name.split()
+            )
+
+            overlap = len(
+                query_tokens
+                & name_tokens
+            )
+
             if overlap:
                 score = overlap * 10
 
         if score > 0:
-            scored.append((score, row))
 
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return [row for _, row in scored[:limit]]
+            scored.append(
+                (
+                    score,
+                    row
+                )
+            )
+
+    scored.sort(
+        key=lambda item: item[0],
+        reverse=True
+    )
+
+    return [
+        row
+        for _, row in scored[:limit]
+    ]
+
+
+# =========================================================
+# EVENT CACHE
+# =========================================================
 
 EVENT_CACHE_TIME = 30 * 60
 EVENT_CACHE_LIMIT = 2000
@@ -190,8 +275,10 @@ learning_retry_until = {}
 
 main_blocked_until = 0
 backup_blocked_until = 0
+
 learning_main_blocked_until = 0
 learning_backup_blocked_until = 0
+
 openrouter_blocked_until = 0
 
 TELEGRAM_BOT_ID = None
@@ -214,26 +301,30 @@ groq = Groq(
 # =========================================================
 
 DEVELOPMENT_STAGES = {
+
     1: (
         "Ты только начинаешь знакомиться с чатом. "
-        "Больше наблюдай, чем вмешивайся."
+        "Наблюдай, но уже можешь иногда живо "
+        "реагировать на разговор."
     ),
 
     2: (
-        "Ты уже немного освоился и начинаешь понимать "
-        "людей, шутки и контекст."
+        "Ты уже немного освоился. "
+        "Понимаешь основные темы, людей и атмосферу. "
+        "Можешь чаще шутить и подкидывать реплики."
     ),
 
     3: (
         "Ты уже свой участник этого чата. "
-        "Хорошо чувствуешь атмосферу и можешь иногда "
-        "подколоть."
+        "Хорошо чувствуешь атмосферу, можешь "
+        "подколоть, пошутить и поддержать разговор."
     ),
 
     4: (
-        "Ты давно в чате. Хорошо понимаешь людей, "
-        "локальные приколы, историю разговоров "
-        "и атмосферу."
+        "Ты давно в чате. "
+        "Хорошо понимаешь людей, локальные приколы, "
+        "историю разговоров и настроение сообщества. "
+        "Веди себя как реально освоившийся участник."
     )
 }
 
@@ -245,126 +336,389 @@ DEVELOPMENT_STAGES = {
 SYSTEM_PROMPT = """
 Ты — живой AI-участник общего чата сообщества.
 
-Ты не модератор, не администратор и не сотрудник поддержки.
-Ты обычный участник разговора, который постепенно узнаёт
-людей и атмосферу именно этого чата.
+Твоя задача — не выглядеть как бездушный бот поддержки.
 
-Ты учишься через реальные сообщения чата: понимаешь стиль
-людей, темы, шутки, события и игровой контекст.
+Ты разговариваешь как обычный человек из чата:
+живой, эмоциональный, иногда дерзкий, иногда смешной,
+иногда серьёзный.
+
+=========================================================
+ГЛАВНЫЙ ХАРАКТЕР
+=========================================================
+
+Будь:
+
+- живым;
+- разговорчивым;
+- эмоциональным;
+- уверенным;
+- иногда дерзким;
+- с чувством юмора;
+- способным подколоть;
+- способным поддержать разговор;
+- способным посмеяться над ситуацией.
+
+Не пиши официально.
+
+Не используй фразы вроде:
+
+«Я являюсь искусственным интеллектом...»
+
+«Благодарю за ваш вопрос...»
+
+«Рад предоставить вам информацию...»
+
+«К сожалению, я не могу...»
+
+если обычный живой ответ можно сказать намного проще.
+
+Говори по-человечески.
+
+=========================================================
+МАТ
+=========================================================
+
+Мат является частью твоего характера.
+
+В обычном неформальном разговоре тебе разрешено
+использовать русский мат и грубые разговорные выражения,
+если они подходят ситуации.
+
+Например:
+
+«бля»
+«пиздец»
+«охуеть»
+«ебать»
+«нахуй»
+«заебал»
+«заебись»
+«хуйню»
+«ебаный»
+«какого хуя»
+«что за пиздец»
+«ну это вообще пиздец»
+
+Не бойся мата только потому, что ты бот.
+
+Если ситуация эмоциональная или смешная,
+мат может быть заметной частью ответа.
+
+Но НЕ вставляй мат механически в каждое предложение.
+
+Мат должен звучать естественно.
+
+Например:
+
+«Бля, вот это уже смешно 😂»
+
+«Охуеть, ну это ты конечно придумал.»
+
+«Какого хуя оно опять сломалось?»
+
+«Да это пиздец, если честно.»
+
+«Заебись, теперь хотя бы понятно.»
+
+Не превращай каждый ответ в бессмысленный поток
+матерных слов.
+
+Главное — естественность.
+
+=========================================================
+ЮМОР И ПОДКОЛЫ
+=========================================================
+
+Можно:
+
+- шутить;
+- слегка подъёбывать;
+- использовать сарказм;
+- реагировать на очевидно смешные ситуации;
+- смеяться вместе с человеком;
+- иногда отвечать неожиданно.
+
+Если человек очевидно шутит —
+можешь подыграть.
+
+Если человек пишет что-то вроде:
+
+«я опять всё сломал»
+
+можно ответить живо:
+
+«Ну красавчик 😂 Ещё немного — и сервер сам уйдёт в отпуск.»
+
+Не унижай человека по защищённым признакам.
+
+Не используй расистские, гомофобные,
+нацистские или другие ненавистнические оскорбления.
+
+=========================================================
+СТИЛЬ ОТВЕТА
+=========================================================
+
+Предпочитай короткие и средние сообщения.
+
+Обычно:
+
+1–4 предложения.
+
+Если вопрос требует объяснения —
+объясни нормально.
+
+Не превращай простой вопрос
+в огромную лекцию.
+
+Не повторяй вопрос пользователя.
+
+Не начинай каждый ответ одинаково.
+
+Не говори:
+
+«Конечно!»
+
+«Разумеется!»
+
+«Хороший вопрос!»
+
+на автомате.
+
+Меняй стиль.
+
+=========================================================
+ЭМОЦИИ
+=========================================================
+
+Если человек злится —
+можешь поддержать.
+
+Если человек радуется —
+радуйся вместе с ним.
+
+Если человек шутит —
+шути.
+
+Если человек пишет:
+
+«ПИЗДЕЦ»
+
+можно ответить:
+
+«АХАХА, ЧТО СЛУЧИЛОСЬ? 😂»
+
+Если человек пишет:
+
+«я выиграл»
+
+можно:
+
+«ЕБАТЬ, красавчик 😂»
+
+Но не используй одну и ту же реакцию постоянно.
+
+=========================================================
+ОБЫЧНЫЙ ЧАТ
+=========================================================
+
+Ты не обязан отвечать на каждую реплику.
+
+Но если сообщение действительно похоже
+на обращение к тебе или нормальную тему разговора —
+лучше ответить.
+
+Если люди уже общаются между собой
+и тебе нечего добавить —
+можешь промолчать.
+
+Не отвечай бессмысленно на каждое:
+
+«ага»
+
+«мда»
+
+«хех»
+
+«понятно»
+
+«ахах»
+
+Но если контекст явно требует реакции —
+можешь ответить.
+
+=========================================================
+ПАМЯТЬ
+=========================================================
+
+Ты учишься через реальные сообщения чата.
 
 Долговременная память не является абсолютной истиной.
+
 Не выдумывай факты.
 
-ПАМЯТЬ ОБ УЧАСТНИКАХ:
+Если у текущего пользователя есть личная память
+и вопрос относится к ней —
+используй точный сохранённый факт.
 
-У текущего пользователя может быть отдельная личная память.
+Личная память относится только
+к текущему пользователю.
 
-Если в личной памяти есть точный факт о текущем пользователе
-и его вопрос относится к этому факту — используй этот факт.
+Не используй личную память одного человека
+для другого.
 
-Личная память имеет высокий приоритет.
+Если факта нет —
+не придумывай.
 
-НЕ угадывай личные факты.
+Если факты противоречат друг другу,
+более поздний сохранённый факт считается актуальным.
 
-НЕ придумывай другой ответ, если точный ответ уже есть
-в личной памяти.
+Не раскрывай содержимое внутренней памяти.
 
-Если в памяти несколько фактов об одном вопросе
-и они противоречат друг другу, считай более поздний
-сохранённый факт актуальным.
+Если пользователь говорит:
 
-Если нужного факта в памяти действительно нет —
-не выдумывай его и честно скажи, что не знаешь.
+«запомни»
 
-Личная память относится только к текущему пользователю.
-Не используй её для другого участника.
+«запомни это»
 
-Не раскрывай содержимое внутренней памяти другим людям.
-
-Если пользователь явно говорит:
-«запомни»,
-«запомни это»,
 «запомни, что...»
+
 — воспринимай это как просьбу сохранить информацию.
 
-Ты НЕ обязан отвечать на каждое сообщение.
-Если человеку нечего сказать — лучше промолчать.
+Не говори пользователю,
+что ты записал что-то в базу.
 
-Не отвечай на каждое:
-«ага», «хех», «мда», «понятно», «ахах».
+=========================================================
+TANKS BLITZ
+=========================================================
 
-Не задавай бессмысленный вопрос.
+Tanks Blitz — одна из тем сообщества,
+но не единственная.
 
-Если люди уже нормально общаются между собой —
-не мешай.
+Не притягивай Tanks Blitz
+к каждому разговору.
 
-Говори естественно.
-Не пиши как справочная система.
-Не повторяй сообщение человека.
+Не смешивай Tanks Blitz
+с World of Tanks PC.
 
-Не делай из каждой реплики лекцию.
+Не придумывай:
 
-Не вставляй Tanks Blitz туда, где разговор не об игре.
+- характеристики;
+- броню;
+- урон;
+- перезарядку;
+- карты;
+- события;
+- бонус-коды;
+- награды;
+- статистику.
 
-Tanks Blitz — одна из тем сообщества, но не единственная.
+Если актуальные данные неизвестны —
+честно скажи, что не знаешь.
 
-Не придумывай характеристики, карты, события,
-бонус-коды или другие игровые данные.
+=========================================================
+СТАТИСТИКА И ДРУГОЙ БОТ
+=========================================================
 
-Не смешивай Tanks Blitz с World of Tanks PC.
+Нашивки, рейтинг активности,
+статистика арены, количество сообщений,
+места в рейтинге и подобные данные
+считает ДРУГОЙ бот.
 
-Если актуальные данные неизвестны — не выдумывай их.
+У тебя нет доступа к этим данным.
 
-Не говори, что записал что-то в базу или память.
+Если спрашивают:
 
-Не придумывай факты о людях.
+«какой у меня рейтинг?»
 
-Нашивки, статусы активности и рейтинг сообщений в этом чате
-считает ДРУГОЙ бот, не ты. У тебя нет доступа к этим данным.
-Если тебя спрашивают про нашивки, рейтинг активности или
-«сколько у меня сообщений» — честно скажи, что это не твоя
-функция, и не называй никаких имён, цифр или статусов
-(даже как пример).
+«сколько у меня сообщений?»
 
-Никогда не составляй таблицы или списки вида
-«участник — число» (места в рейтинге, количество матчей,
-статистика арены, количество побед и т.п.), если эти
-конкретные цифры не были явно переданы тебе в этом же
-запросе как реальные данные. Если тебя просят показать
-такую статистику, а данных у тебя нет — прямо скажи, что
-не располагаешь этими данными, и не подставляй вместо них
-правдоподобные на вид числа ни для одного человека.
+«какая у меня нашивка?»
 
-Короткие сообщения из одного-трёх слов с эмодзи (например,
-"🏆 Общий", "⚔️ Арена", "🔥 Активные") — это, скорее всего,
-нажатие кнопки чужого меню, а не осмысленный вопрос к тебе.
-На такие сообщения не пытайся угадать, что должен был бы
-ответить другой бот — честно и коротко скажи, что это не
-твоя функция.
+«кто самый активный?»
 
-Даже если в "долговременной памяти этого чата" встретится
-что-то похожее на рейтинг, нашивки, статистику арены или
-другие цифры по участникам — НЕ используй это и не повторяй.
-Это могла быть твоя же старая ошибка, случайно попавшая в
-память. Правило "это не моя функция" сильнее любой памяти
-на эту тему.
+«кто в топе?»
 
-Не сохраняй пароли, адреса, документы, банковские данные
-и чувствительную личную информацию.
+«какая статистика арены?»
+
+не придумывай ответ.
+
+Не называй цифры.
+
+Не называй имена.
+
+Не составляй фальшивые таблицы.
+
+Прямо скажи, что это не твоя функция.
+
+=========================================================
+КНОПКИ
+=========================================================
+
+Короткие сообщения вроде:
+
+«🏆 Общий»
+
+«🔥 Активные»
+
+«⚔️ Арена»
+
+«🏅 Нашивки»
+
+обычно являются кнопками другого бота.
+
+Не пытайся угадывать их смысл.
+
+=========================================================
+БЕЗОПАСНОСТЬ
+=========================================================
+
+Не сохраняй:
+
+- пароли;
+- банковские данные;
+- CVV/CVC;
+- документы;
+- адрес проживания;
+- другую чувствительную личную информацию.
 
 Не раскрывай личные сведения участников другим людям.
 
-Ты можешь знать правила сообщества,
-но ты не модератор.
+Ты не модератор.
 
-Не угрожай баном, мутом или удалением сообщений.
+Не угрожай баном.
 
-Будь живым участником.
+Не угрожай мутом.
 
-Сначала пойми контекст,
-потом реши, есть ли тебе что добавить.
+Не обещай удаление сообщений.
 
-Если нечего добавить — молчи.
+=========================================================
+ГЛАВНОЕ
+=========================================================
+
+Не будь скучным.
+
+Не будь канцелярским ботом.
+
+Не превращайся в справочник.
+
+Сначала пойми контекст.
+
+Потом реши, что сказать.
+
+Если есть что сказать —
+скажи нормально, живо и по-человечески.
+
+Если хочется пошутить —
+шути.
+
+Если ситуация эмоциональная —
+можно использовать мат.
+
+Если человек говорит по делу —
+отвечай по делу.
+
+Твой характер должен ощущаться
+как характер реального участника чата.
 """
 
 
@@ -373,18 +727,24 @@ Tanks Blitz — одна из тем сообщества, но не единс�
 # =========================================================
 
 def utc_now():
-    return datetime.now(timezone.utc).isoformat()
+
+    return datetime.now(
+        timezone.utc
+    ).isoformat()
 
 
 def db_chat_id(chat_id):
+
     return int(chat_id)
 
 
 def db_user_id(user_id):
+
     return int(user_id)
 
 
 def normalize_text(text):
+
     return re.sub(
         r"\s+",
         " ",
@@ -396,17 +756,6 @@ def normalize_text(text):
 # EVENT PROTECTION
 # =========================================================
 
-# ВАЖНО: раньше проверка "event_id уже обработан?" и его запись
-# в processed_events были двумя отдельными не атомарными шагами
-# без блокировки. Если два запроса на один и тот же event_id
-# приходили почти одновременно (VK/Telegram ретраят вебхук, если
-# не получают ответ достаточно быстро), оба потока успевали
-# пройти проверку "if event_id in processed_events" ДО того, как
-# любой из них успевал его записать — и оба уходили в LLM
-# параллельно. Отсюда дубли ответов с разной формулировкой.
-#
-# events_lock делает "проверить + записать" одной атомарной
-# операцией.
 events_lock = threading.Lock()
 
 
@@ -419,12 +768,16 @@ def already_processed(event_id):
 
         now = time.time()
 
-        for key in list(processed_events):
+        for key in list(
+            processed_events
+        ):
 
             if (
-                now - processed_events[key]
+                now
+                - processed_events[key]
                 > EVENT_CACHE_TIME
             ):
+
                 processed_events.pop(
                     key,
                     None
@@ -435,7 +788,10 @@ def already_processed(event_id):
 
         processed_events[event_id] = now
 
-        if len(processed_events) > EVENT_CACHE_LIMIT:
+        if (
+            len(processed_events)
+            > EVENT_CACHE_LIMIT
+        ):
 
             oldest = min(
                 processed_events,
@@ -472,7 +828,10 @@ def is_rate_limit_error(error):
     )
 
 
-def get_retry_seconds(error, default):
+def get_retry_seconds(
+    error,
+    default
+):
 
     text = str(error)
 
@@ -486,25 +845,46 @@ def get_retry_seconds(error, default):
     )
 
     if match:
+
         total = (
-            int(match.group(1) or 0) * 3600
-            + int(match.group(2) or 0) * 60
-            + float(match.group(3) or 0)
+            int(match.group(1) or 0)
+            * 3600
+            +
+            int(match.group(2) or 0)
+            * 60
+            +
+            float(match.group(3) or 0)
         )
+
         if total > 0:
             return int(total) + 10
 
-    # OpenRouter may expose the reset moment as a Unix timestamp in ms.
     reset_match = re.search(
-        r"(?:X-RateLimit-Reset|x-ratelimit-reset)[^0-9]{0,20}(\d{13})",
+        r"(?:X-RateLimit-Reset|"
+        r"x-ratelimit-reset)"
+        r"[^0-9]{0,20}"
+        r"(\d{13})",
         text,
         re.I
     )
+
     if reset_match:
+
         try:
-            seconds = int(int(reset_match.group(1)) / 1000 - time.time())
+
+            seconds = (
+                int(
+                    int(
+                        reset_match.group(1)
+                    )
+                    / 1000
+                    - time.time()
+                )
+            )
+
             if seconds > 0:
                 return seconds + 10
+
         except Exception:
             pass
 
@@ -515,7 +895,9 @@ def get_retry_seconds(error, default):
 # VK USER NAME
 # =========================================================
 
-def get_vk_user_name(user_id):
+def get_vk_user_name(
+    user_id
+):
 
     if not user_id:
         return None
@@ -526,9 +908,12 @@ def get_vk_user_name(user_id):
 
     if (
         cached
-        and time.time() - cached[0]
+        and
+        time.time()
+        - cached[0]
         < NAME_CACHE_TIME
     ):
+
         return cached[1]
 
     try:
@@ -536,9 +921,14 @@ def get_vk_user_name(user_id):
         data = requests.get(
             f"{VK_API}/users.get",
             params={
-                "access_token": VK_TOKEN,
-                "v": VK_VERSION,
-                "user_ids": user_id
+                "access_token":
+                    VK_TOKEN,
+
+                "v":
+                    VK_VERSION,
+
+                "user_ids":
+                    user_id
             },
             timeout=10
         ).json()
@@ -560,7 +950,9 @@ def get_vk_user_name(user_id):
 
         if name:
 
-            user_names[str(user_id)] = (
+            user_names[
+                str(user_id)
+            ] = (
                 time.time(),
                 name
             )
@@ -582,22 +974,32 @@ def get_vk_user_name(user_id):
 # TELEGRAM USER NAME
 # =========================================================
 
-def get_telegram_user_name(user):
+def get_telegram_user_name(
+    user
+):
 
     if not user:
         return None
 
     uid = str(
-        user.get("id", "")
+        user.get(
+            "id",
+            ""
+        )
     )
 
-    cached = tg_user_names.get(uid)
+    cached = tg_user_names.get(
+        uid
+    )
 
     if (
         cached
-        and time.time() - cached[0]
+        and
+        time.time()
+        - cached[0]
         < NAME_CACHE_TIME
     ):
+
         return cached[1]
 
     name = (
@@ -636,13 +1038,16 @@ def save_chat_message(
     content
 ):
 
-    if chat_id is None or not content:
+    if (
+        chat_id is None
+        or not content
+    ):
         return
 
     try:
 
-        database_chat_id = db_chat_id(
-            chat_id
+        database_chat_id = (
+            db_chat_id(chat_id)
         )
 
         database_speaker_id = None
@@ -651,8 +1056,10 @@ def save_chat_message(
 
             try:
 
-                database_speaker_id = db_user_id(
-                    speaker_id
+                database_speaker_id = (
+                    db_user_id(
+                        speaker_id
+                    )
                 )
 
             except (
@@ -665,6 +1072,7 @@ def save_chat_message(
         supabase.table(
             "bot_chat_memory"
         ).insert({
+
             "chat_id":
                 database_chat_id,
 
@@ -679,6 +1087,7 @@ def save_chat_message(
 
             "content":
                 str(content)[:4000]
+
         }).execute()
 
     except Exception as e:
@@ -697,16 +1106,18 @@ def get_chat_memory(
 
     try:
 
-        database_chat_id = db_chat_id(
-            chat_id
+        database_chat_id = (
+            db_chat_id(chat_id)
         )
 
         result = (
             supabase
             .table("bot_chat_memory")
             .select(
-                "speaker_id, speaker_name, "
-                "role, content"
+                "speaker_id, "
+                "speaker_name, "
+                "role, "
+                "content"
             )
             .eq(
                 "chat_id",
@@ -738,24 +1149,11 @@ def get_chat_memory(
 
 
 # =========================================================
-# ACTIVITY / BADGES / ЛЮБАЯ "СТАТИСТИКА УЧАСТНИКОВ" —
-# ЭТО НЕ ФУНКЦИЯ ЭТОГО БОТА
+# NOT MY FEATURE
 # =========================================================
-#
-# Нашивки, рейтинг активности, "статистика арены" и подобное
-# считает ДРУГОЙ бот/система в этом чате. У этого бота нет и не
-# может быть таких данных — раньше он на такие вопросы просто
-# ПРИДУМЫВАЛ имена и цифры через LLM, причём выяснилось, что он
-# способен выдумать вообще ЛЮБУЮ новую категорию (например,
-# "статистику арены" по матчам — то, чего не было даже в списке
-# ключевых слов). Значит фильтровать нужно не только по конкретным
-# словам, но и по общему ПАТТЕРНУ: короткие "кнопочные" команды
-# (часто это нажатия кнопок VK-клавиатуры, приходящие как обычное
-# сообщение с упоминанием клуба) — почти никогда не настоящий
-# осмысленный вопрос, значит для них тоже надо честно отказаться,
-# а не гадать по смыслу.
 
 NOT_MY_FEATURE_KEYWORDS = (
+
     "рейтинг",
     "топ активны",
     "топ-10",
@@ -769,13 +1167,12 @@ NOT_MY_FEATURE_KEYWORDS = (
     "общий список",
     "матч",
     "турнир",
+
 )
 
-# Префиксы для коротких "кнопочных" сообщений типа "🏆 Общий",
-# "🔥 Активные", "⚔️ Арена" — если в сообщении 1-3 слова и одно
-# из них начинается с такого префикса, это почти наверняка не
-# живой вопрос, а нажатие кнопки чужого меню.
+
 MENU_BUTTON_PREFIXES = (
+
     "общ",
     "нашивк",
     "актив",
@@ -786,17 +1183,23 @@ MENU_BUTTON_PREFIXES = (
     "статус",
     "матч",
     "турнир",
+
 )
 
 
-def looks_like_not_my_feature_question(text):
+def looks_like_not_my_feature_question(
+    text
+):
 
-    low = (text or "").lower()
+    low = (
+        text or ""
+    ).lower()
 
     if any(
         word in low
         for word in NOT_MY_FEATURE_KEYWORDS
     ):
+
         return True
 
     stripped = re.sub(
@@ -806,11 +1209,16 @@ def looks_like_not_my_feature_question(text):
     ).strip()
 
     words = [
-        w for w in stripped.split()
+        w
+        for w in stripped.split()
         if w
     ]
 
-    if not words or len(words) > 3:
+    if (
+        not words
+        or len(words) > 3
+    ):
+
         return False
 
     return any(
@@ -820,12 +1228,14 @@ def looks_like_not_my_feature_question(text):
     )
 
 
-def get_chat_message_count(chat_id):
+def get_chat_message_count(
+    chat_id
+):
 
     try:
 
-        database_chat_id = db_chat_id(
-            chat_id
+        database_chat_id = (
+            db_chat_id(chat_id)
         )
 
         result = (
@@ -895,13 +1305,15 @@ def save_knowledge(
 
     try:
 
-        database_chat_id = db_chat_id(
-            chat_id
+        database_chat_id = (
+            db_chat_id(chat_id)
         )
 
-        fingerprint = knowledge_fingerprint(
-            database_chat_id,
-            knowledge
+        fingerprint = (
+            knowledge_fingerprint(
+                database_chat_id,
+                knowledge
+            )
         )
 
         existing = (
@@ -926,6 +1338,7 @@ def save_knowledge(
         supabase.table(
             "bot_knowledge"
         ).insert({
+
             "chat_id":
                 database_chat_id,
 
@@ -943,6 +1356,7 @@ def save_knowledge(
 
             "fingerprint":
                 fingerprint
+
         }).execute()
 
         print(
@@ -960,12 +1374,14 @@ def save_knowledge(
         )
 
 
-def get_knowledge(chat_id):
+def get_knowledge(
+    chat_id
+):
 
     try:
 
-        database_chat_id = db_chat_id(
-            chat_id
+        database_chat_id = (
+            db_chat_id(chat_id)
         )
 
         result = (
@@ -1019,7 +1435,9 @@ def merge_memory(
     if old_memory:
 
         facts.extend(
-            line.strip("-• \t")
+            line.strip(
+                "-• \t"
+            )
             for line in old_memory.splitlines()
             if line.strip()
         )
@@ -1029,25 +1447,27 @@ def merge_memory(
     )
 
     if new_fact:
-        facts.append(
-            new_fact
-        )
+        facts.append(new_fact)
 
     result = []
     seen = set()
 
     for fact in facts:
 
-        normalized = normalize_text(
-            fact
-        ).lower()
+        normalized = (
+            normalize_text(
+                fact
+            ).lower()
+        )
 
         if (
             normalized
             and normalized not in seen
         ):
 
-            seen.add(normalized)
+            seen.add(
+                normalized
+            )
 
             result.append(
                 fact
@@ -1081,12 +1501,12 @@ def save_user_memory(
 
     try:
 
-        database_chat_id = db_chat_id(
-            chat_id
+        database_chat_id = (
+            db_chat_id(chat_id)
         )
 
-        database_user_id = db_user_id(
-            user_id
+        database_user_id = (
+            db_user_id(user_id)
         )
 
         existing = (
@@ -1131,12 +1551,15 @@ def save_user_memory(
             or ""
         )
 
-        final_memory = merge_memory(
-            old_memory,
-            memory
-        )[:3000]
+        final_memory = (
+            merge_memory(
+                old_memory,
+                memory
+            )[:3000]
+        )
 
         data = {
+
             "chat_id":
                 database_chat_id,
 
@@ -1151,6 +1574,7 @@ def save_user_memory(
 
             "updated_at":
                 utc_now()
+
         }
 
         if existing.data:
@@ -1192,7 +1616,7 @@ def save_user_memory(
 
 
 # =========================================================
-# EXPLICIT USER MEMORY
+# EXPLICIT MEMORY
 # =========================================================
 
 def save_explicit_user_memory(
@@ -1201,22 +1625,13 @@ def save_explicit_user_memory(
     user_name,
     text
 ):
-    """
-    Мгновенно сохраняет явно сообщённые
-    пользователем факты.
-
-    Примеры:
-
-    Запомни: мой любимый танк — K-91
-
-    Мой любимый танк — K-91
-    """
 
     if (
         chat_id is None
         or user_id is None
         or not text
     ):
+
         return False
 
     original = text.strip()
@@ -1225,10 +1640,6 @@ def save_explicit_user_memory(
         return False
 
     fact = None
-
-    # -----------------------------------------
-    # Запомни: ...
-    # -----------------------------------------
 
     match = re.search(
         r"(?:запомни|запомни\s+это|"
@@ -1243,7 +1654,8 @@ def save_explicit_user_memory(
     if match:
 
         statement = (
-            match.group(1) or ""
+            match.group(1)
+            or ""
         ).strip()
 
         if statement:
@@ -1267,6 +1679,7 @@ def save_explicit_user_memory(
                 )
 
                 if tank:
+
                     fact = (
                         "Любимый танк — "
                         + tank
@@ -1278,10 +1691,6 @@ def save_explicit_user_memory(
             ):
 
                 fact = statement
-
-    # -----------------------------------------
-    # Обычная фраза
-    # -----------------------------------------
 
     if fact is None:
 
@@ -1313,11 +1722,8 @@ def save_explicit_user_memory(
     if not fact:
         return False
 
-    # -----------------------------------------
-    # Защита от чувствительных данных
-    # -----------------------------------------
-
     sensitive_words = (
+
         "пароль",
         "password",
         "номер карты",
@@ -1327,6 +1733,7 @@ def save_explicit_user_memory(
         "паспорт",
         "документ",
         "адрес проживания"
+
     )
 
     fact_low = fact.lower()
@@ -1335,6 +1742,7 @@ def save_explicit_user_memory(
         word in fact_low
         for word in sensitive_words
     ):
+
         return False
 
     save_user_memory(
@@ -1365,12 +1773,12 @@ def get_user_memory(
 
     try:
 
-        database_chat_id = db_chat_id(
-            chat_id
+        database_chat_id = (
+            db_chat_id(chat_id)
         )
 
-        database_user_id = db_user_id(
-            user_id
+        database_user_id = (
+            db_user_id(user_id)
         )
 
         result = (
@@ -1429,12 +1837,14 @@ def get_user_memory(
 # LEARNING STATE
 # =========================================================
 
-def get_learning_state(chat_id):
+def get_learning_state(
+    chat_id
+):
 
     try:
 
-        database_chat_id = db_chat_id(
-            chat_id
+        database_chat_id = (
+            db_chat_id(chat_id)
         )
 
         result = (
@@ -1455,6 +1865,7 @@ def get_learning_state(chat_id):
         supabase.table(
             "bot_learning_state"
         ).insert({
+
             "chat_id":
                 database_chat_id,
 
@@ -1469,9 +1880,11 @@ def get_learning_state(chat_id):
 
             "last_learning_at":
                 utc_now()
+
         }).execute()
 
         return {
+
             "chat_id":
                 database_chat_id,
 
@@ -1486,6 +1899,7 @@ def get_learning_state(chat_id):
 
             "last_learning_at":
                 utc_now()
+
         }
 
     except Exception as e:
@@ -1497,6 +1911,7 @@ def get_learning_state(chat_id):
         )
 
         return {
+
             "chat_id":
                 db_chat_id(chat_id),
 
@@ -1508,10 +1923,13 @@ def get_learning_state(chat_id):
 
             "personality":
                 ""
+
         }
 
 
-def increase_learning_counter(chat_id):
+def increase_learning_counter(
+    chat_id
+):
 
     state = get_learning_state(
         chat_id
@@ -1531,8 +1949,8 @@ def increase_learning_counter(chat_id):
 
     try:
 
-        database_chat_id = db_chat_id(
-            chat_id
+        database_chat_id = (
+            db_chat_id(chat_id)
         )
 
         (
@@ -1560,12 +1978,14 @@ def increase_learning_counter(chat_id):
     return count
 
 
-def reset_learning_counter(chat_id):
+def reset_learning_counter(
+    chat_id
+):
 
     try:
 
-        database_chat_id = db_chat_id(
-            chat_id
+        database_chat_id = (
+            db_chat_id(chat_id)
         )
 
         (
@@ -1595,7 +2015,9 @@ def reset_learning_counter(chat_id):
 # TEXT CLEANER
 # =========================================================
 
-def clean_model_text(text):
+def clean_model_text(
+    text
+):
 
     if not text:
         return ""
@@ -1607,15 +2029,19 @@ def clean_model_text(text):
         flags=re.DOTALL | re.IGNORECASE
     )
 
-    # Убираем возможные служебные блоки reasoning/CoT,
-    # если провайдер всё же вернул их в текстовом поле.
-    for tag in ("think", "analysis", "reasoning"):
+    for tag in (
+        "think",
+        "analysis",
+        "reasoning"
+    ):
+
         text = re.sub(
             rf"<{tag}>.*?</{tag}>",
             "",
             text,
             flags=re.DOTALL | re.IGNORECASE
         )
+
         text = re.sub(
             rf"<{tag}>.*$",
             "",
@@ -1623,7 +2049,6 @@ def clean_model_text(text):
             flags=re.DOTALL | re.IGNORECASE
         )
 
-    # Не выпускаем в пользовательский ответ служебные обёртки.
     text = re.sub(
         r"^\s*(?:assistant|final)\s*:\s*",
         "",
@@ -1634,14 +2059,8 @@ def clean_model_text(text):
     return text.strip()
 
 
-# Признаки "сырого" рассуждения модели, которое пришло вообще
-# БЕЗ каких-либо тегов <think> и поэтому не отлавливается
-# clean_model_text выше. Такое видели от бесплатных/авто-
-# маршрутизируемых моделей (например, "openrouter/free"),
-# которые просто пишут ход мыслей как обычный текст ответа.
-# Если находим — считаем ответ непригодным и не отправляем
-# его пользователю вообще.
 LEAKED_REASONING_MARKERS = (
+
     "here's a thinking process",
     "here is a thinking process",
     "let me think",
@@ -1653,10 +2072,13 @@ LEAKED_REASONING_MARKERS = (
     "identify key elements",
     "analyze user input",
     "possibility 1",
+
 )
 
 
-def looks_like_leaked_reasoning(text):
+def looks_like_leaked_reasoning(
+    text
+):
 
     if not text:
         return False
@@ -1667,11 +2089,9 @@ def looks_like_leaked_reasoning(text):
         marker in low
         for marker in LEAKED_REASONING_MARKERS
     ):
+
         return True
 
-    # Пронумерованный список из жирных заголовков ("1. **...**",
-    # "2. **...**") — типичный признак чернового рассуждения,
-    # а не финального ответа живому человеку в чате.
     numbered_bold_steps = re.findall(
         r"(?:^|\n)\s*\d+\.\s*\*\*",
         text
@@ -1765,18 +2185,22 @@ def ask_model(
         ) or ""
     )
 
-    if reply and looks_like_leaked_reasoning(reply):
+    if (
+        reply
+        and
+        looks_like_leaked_reasoning(
+            reply
+        )
+    ):
 
         print(
-            "Groq LEAKED REASONING, "
-            "rejecting reply:",
+            "Groq LEAKED REASONING:",
             reply[:200],
             flush=True
         )
 
         raise RuntimeError(
-            "Groq returned raw reasoning "
-            "instead of a final answer."
+            "Groq returned raw reasoning."
         )
 
     if reply:
@@ -1808,6 +2232,7 @@ def ask_openrouter_messages(
         response = requests.post(
             OPENROUTER_API,
             headers={
+
                 "Authorization":
                     f"Bearer {OPENROUTER_API_KEY}",
 
@@ -1819,8 +2244,11 @@ def ask_openrouter_messages(
 
                 "X-Title":
                     "Tanks Blitz AI"
+
             },
+
             json={
+
                 "model":
                     OPENROUTER_MODEL,
 
@@ -1833,18 +2261,12 @@ def ask_openrouter_messages(
                 "stream":
                     False,
 
-                # Просим провайдера не возвращать содержимое
-                # reasoning/CoT в ответе вообще (даже если модель
-                # рассуждает внутри себя). Раньше без этого
-                # некоторые модели через "openrouter/free"
-                # (автомаршрутизатор — может подставить любую
-                # свободную модель) присылали своё рассуждение
-                # прямо как обычный текст, без тегов <think>,
-                # и оно уходило пользователю как ответ бота.
                 "reasoning": {
                     "exclude": True
                 }
+
             },
+
             timeout=60
         )
 
@@ -1856,12 +2278,10 @@ def ask_openrouter_messages(
 
     if response.status_code != 200:
 
-        body = response.text[:1000]
-
         raise RuntimeError(
             f"{label} HTTP "
             f"{response.status_code}: "
-            f"{body}"
+            f"{response.text[:1000]}"
         )
 
     try:
@@ -1902,14 +2322,19 @@ def ask_openrouter_messages(
         "content"
     )
 
-    # Иногда провайдер возвращает список частей.
-    if isinstance(content, list):
+    if isinstance(
+        content,
+        list
+    ):
 
         parts = []
 
         for part in content:
 
-            if not isinstance(part, dict):
+            if not isinstance(
+                part,
+                dict
+            ):
                 continue
 
             if part.get("type") == "text":
@@ -1922,7 +2347,9 @@ def ask_openrouter_messages(
                 if value:
                     parts.append(value)
 
-        content = "\n".join(parts)
+        content = "\n".join(
+            parts
+        )
 
     reply = clean_model_text(
         content or ""
@@ -1958,29 +2385,22 @@ def ask_openrouter_messages(
 
     if not reply:
 
-        print(
-            f"{label} EMPTY | "
-            f"message_keys="
-            f"{list(message.keys())}",
-            flush=True
-        )
-
         raise RuntimeError(
             f"{label} returned empty response."
         )
 
-    if looks_like_leaked_reasoning(reply):
+    if looks_like_leaked_reasoning(
+        reply
+    ):
 
         print(
-            f"{label} LEAKED REASONING, "
-            f"rejecting reply:",
+            f"{label} LEAKED REASONING:",
             reply[:200],
             flush=True
         )
 
         raise RuntimeError(
-            f"{label} returned raw reasoning "
-            f"instead of a final answer."
+            f"{label} returned raw reasoning."
         )
 
     return reply
@@ -2011,7 +2431,9 @@ def ask_openrouter(
 # LEARNING MODEL
 # =========================================================
 
-def ask_learning_model(messages):
+def ask_learning_model(
+    messages
+):
 
     global learning_main_blocked_until
     global learning_backup_blocked_until
@@ -2019,9 +2441,7 @@ def ask_learning_model(messages):
 
     now = time.time()
 
-    # -----------------------------------------
-    # Groq 20B
-    # -----------------------------------------
+    # 20B
 
     if now >= learning_backup_blocked_until:
 
@@ -2044,7 +2464,8 @@ def ask_learning_model(messages):
 
                 learning_backup_blocked_until = (
                     time.time()
-                    + get_retry_seconds(
+                    +
+                    get_retry_seconds(
                         e,
                         600
                     )
@@ -2056,9 +2477,7 @@ def ask_learning_model(messages):
                 flush=True
             )
 
-    # -----------------------------------------
-    # Groq 120B
-    # -----------------------------------------
+    # 120B
 
     if time.time() >= learning_main_blocked_until:
 
@@ -2081,7 +2500,8 @@ def ask_learning_model(messages):
 
                 learning_main_blocked_until = (
                     time.time()
-                    + get_retry_seconds(
+                    +
+                    get_retry_seconds(
                         e,
                         3600
                     )
@@ -2093,16 +2513,19 @@ def ask_learning_model(messages):
                 flush=True
             )
 
-    # -----------------------------------------
-    # OpenRouter FREE
-    # -----------------------------------------
+    # OpenRouter
 
-    if OPENROUTER_API_KEY and time.time() >= openrouter_blocked_until:
+    if (
+        OPENROUTER_API_KEY
+        and
+        time.time()
+        >= openrouter_blocked_until
+    ):
 
         try:
 
             print(
-                "Learning -> OpenRouter FREE",
+                "Learning -> OpenRouter",
                 flush=True
             )
 
@@ -2115,9 +2538,14 @@ def ask_learning_model(messages):
         except Exception as e:
 
             if is_rate_limit_error(e):
+
                 openrouter_blocked_until = (
                     time.time()
-                    + get_retry_seconds(e, 24 * 60 * 60)
+                    +
+                    get_retry_seconds(
+                        e,
+                        24 * 60 * 60
+                    )
                 )
 
             print(
@@ -2136,7 +2564,9 @@ def ask_learning_model(messages):
 # SELF LEARNING
 # =========================================================
 
-def perform_learning(chat_id):
+def perform_learning(
+    chat_id
+):
 
     try:
 
@@ -2168,16 +2598,9 @@ def perform_learning(chat_id):
 
         for item in history:
 
-            # ВАЖНО: раньше сюда попадали и сообщения самого
-            # бота (role == "assistant"), включая его прошлые
-            # выдуманные ответы (например, фейковые таблицы
-            # рейтинга/нашивок). Модуль самообучения не отличал
-            # их от реальных сообщений участников и мог сохранить
-            # выдумку бота как постоянный "факт" в базу знаний —
-            # а дальше бот эту память сам себе цитировал как
-            # правду. Поэтому в обучение идут ТОЛЬКО реальные
-            # сообщения пользователей.
-            if item.get("role") != "user":
+            if item.get(
+                "role"
+            ) != "user":
                 continue
 
             name = (
@@ -2196,7 +2619,8 @@ def perform_learning(chat_id):
 
             if (
                 uid
-                and name != "Участник"
+                and
+                name != "Участник"
             ):
 
                 known_names[uid] = name
@@ -2223,63 +2647,48 @@ def perform_learning(chat_id):
 Ты — модуль долговременного обучения
 AI-участника конкретного чата.
 
-Проанализируй реальные сообщения ниже.
-
-Найди только информацию, которая действительно
-может быть полезна AI в будущем.
+Проанализируй только реальные сообщения участников.
 
 Ищи:
 
 - явные факты об участниках;
 - устойчивые интересы;
-- устойчивые предпочтения;
+- предпочтения;
 - любимые танки;
 - устойчивые привычки общения;
 - локальные шутки;
 - важные события;
-- полезный контекст по Tanks Blitz;
-- правила или особенности этого конкретного чата,
-  если они явно присутствуют в сообщениях.
+- полезный игровой контекст;
+- правила и особенности чата.
 
-ОСОБО ВАЖНО:
+Если пользователь прямо сообщил факт о себе,
+его можно сохранить как USER-факт.
 
-Если участник прямо сообщает о себе факт,
-который может пригодиться в будущем,
-постарайся сохранить его как USER-факт.
+Формат:
 
-Например:
+USER|ID|Факт
 
-«Мой любимый танк — какой-либо танк»
+или:
 
-нужно сохранить как:
+CHAT|Факт|важность
 
-USER|ID|Любимый танк — какой-либо танк
+Важность: 1–5.
 
 НЕ придумывай.
 
-Не превращай предположение в факт.
+НЕ делай выводы без основания.
 
-Не сохраняй:
+НЕ сохраняй:
 
-- случайную болтовню;
-- одноразовые эмоции;
 - пароли;
 - адреса;
 - документы;
 - банковские данные;
-- чувствительную личную информацию.
+- чувствительную информацию;
+- случайные эмоции;
+- одноразовые сообщения.
 
-ФОРМАТ СТРОГО:
-
-USER|ID|Факт
-
-или
-
-CHAT|Факт|важность
-
-Важность от 1 до 5.
-
-Если полезной информации нет:
+Если полезных фактов нет:
 
 NONE
 
@@ -2299,10 +2708,10 @@ NONE
                             "Ты аккуратный модуль "
                             "долговременного обучения. "
                             "Работай только с фактами "
-                            "из предоставленных сообщений. "
-                            "Не придумывай."
+                            "из сообщений."
                         )
                 },
+
                 {
                     "role":
                         "user",
@@ -2322,15 +2731,14 @@ NONE
 
                 line = raw.strip()
 
-                if not line:
+                if (
+                    not line
+                    or
+                    line.upper() == "NONE"
+                ):
                     continue
 
-                if line.upper() == "NONE":
-                    continue
-
-                # =========================================
-                # USER MEMORY
-                # =========================================
+                # USER
 
                 if line.startswith(
                     "USER|"
@@ -2351,7 +2759,9 @@ NONE
 
                     try:
 
-                        numeric_uid = int(uid)
+                        numeric_uid = int(
+                            uid
+                        )
 
                     except (
                         ValueError,
@@ -2374,9 +2784,7 @@ NONE
                         fact
                     )
 
-                # =========================================
-                # CHAT KNOWLEDGE
-                # =========================================
+                # CHAT
 
                 elif line.startswith(
                     "CHAT|"
@@ -2413,10 +2821,6 @@ NONE
                         importance
                     )
 
-        # =========================================
-        # DEVELOPMENT STAGE
-        # =========================================
-
         stage = int(
             state.get(
                 "development_stage",
@@ -2428,23 +2832,33 @@ NONE
             chat_id
         )
 
-        if stage < 2 and total >= 300:
+        if (
+            stage < 2
+            and total >= 300
+        ):
             stage = 2
 
-        if stage < 3 and total >= 1000:
+        if (
+            stage < 3
+            and total >= 1000
+        ):
             stage = 3
 
-        if stage < 4 and total >= 3000:
+        if (
+            stage < 4
+            and total >= 3000
+        ):
             stage = 4
 
-        database_chat_id = db_chat_id(
-            chat_id
+        database_chat_id = (
+            db_chat_id(chat_id)
         )
 
         (
             supabase
             .table("bot_learning_state")
             .update({
+
                 "messages_since_learning":
                     0,
 
@@ -2453,6 +2867,7 @@ NONE
 
                 "last_learning_at":
                     utc_now()
+
             })
             .eq(
                 "chat_id",
@@ -2468,7 +2883,6 @@ NONE
 
         print(
             f"🧠 LEARNING COMPLETE | "
-            f"version={BOT_VERSION} | "
             f"chat={chat_id} | "
             f"messages={total} | "
             f"stage={stage}",
@@ -2479,7 +2893,10 @@ NONE
 
         learning_retry_until[
             chat_id
-        ] = time.time() + LEARNING_RETRY_TIME
+        ] = (
+            time.time()
+            + LEARNING_RETRY_TIME
+        )
 
         print(
             "Learning error:",
@@ -2496,7 +2913,9 @@ NONE
             )
 
 
-def maybe_learn(chat_id):
+def maybe_learn(
+    chat_id
+):
 
     count = increase_learning_counter(
         chat_id
@@ -2509,12 +2928,18 @@ def maybe_learn(chat_id):
         flush=True
     )
 
-    if count < LEARNING_EVERY_MESSAGES:
+    if (
+        count
+        < LEARNING_EVERY_MESSAGES
+    ):
+
         return
 
-    retry_until = learning_retry_until.get(
-        chat_id,
-        0
+    retry_until = (
+        learning_retry_until.get(
+            chat_id,
+            0
+        )
     )
 
     if time.time() < retry_until:
@@ -2548,6 +2973,7 @@ def build_chat_context(
 ):
 
     messages = [
+
         {
             "role":
                 "system",
@@ -2555,11 +2981,10 @@ def build_chat_context(
             "content":
                 SYSTEM_PROMPT
         }
+
     ]
 
-    # =========================================
-    # DEVELOPMENT STAGE
-    # =========================================
+    # STAGE
 
     state = get_learning_state(
         chat_id
@@ -2573,22 +2998,23 @@ def build_chat_context(
     )
 
     messages.append({
+
         "role":
             "system",
 
         "content":
             (
                 "Твоя текущая стадия развития:\n"
-                + DEVELOPMENT_STAGES.get(
+                +
+                DEVELOPMENT_STAGES.get(
                     stage,
                     DEVELOPMENT_STAGES[1]
                 )
             )
+
     })
 
-    # =========================================
-    # CHAT KNOWLEDGE
-    # =========================================
+    # KNOWLEDGE
 
     knowledge = get_knowledge(
         chat_id
@@ -2608,6 +3034,7 @@ def build_chat_context(
             ).strip()
 
             if value:
+
                 lines.append(
                     f"- {value}"
                 )
@@ -2615,6 +3042,7 @@ def build_chat_context(
         if lines:
 
             messages.append({
+
                 "role":
                     "system",
 
@@ -2622,37 +3050,51 @@ def build_chat_context(
                     (
                         "Полезная долговременная "
                         "память этого конкретного чата:\n"
-                        + "\n".join(lines)
+                        +
+                        "\n".join(lines)
                     )
+
             })
 
-    # =========================================
-    # TANKS BLITZ DATABASE
-    # =========================================
+    # TANK DATABASE
 
-    tank_rows = get_tank_knowledge_for_text(text)
+    tank_rows = (
+        get_tank_knowledge_for_text(
+            text
+        )
+    )
 
     if tank_rows:
+
         tank_lines = []
+
         for tank in tank_rows:
+
             tank_lines.append(
-                f"- {tank.get('name', '')} | нация: {tank.get('nation', '')} | "
+                f"- {tank.get('name', '')} | "
+                f"нация: {tank.get('nation', '')} | "
                 f"уровень: {tank.get('tier', '')}"
             )
 
         messages.append({
-            "role": "system",
-            "content": (
-                "Данные из базы Tanks Blitz. Используй их как источник фактов. "
-                "В базе указаны только название танка, нация и уровень. "
-                "Не придумывай ТТХ или другие характеристики, которых здесь нет.\n"
-                + "\n".join(tank_lines)
-            )
+
+            "role":
+                "system",
+
+            "content":
+                (
+                    "Данные из базы Tanks Blitz. "
+                    "Используй их только как источник "
+                    "фактов. Не придумывай ТТХ.\n"
+                    +
+                    "\n".join(
+                        tank_lines
+                    )
+                )
+
         })
 
-    # =========================================
     # RECENT CHAT
-    # =========================================
 
     history = get_chat_memory(
         chat_id,
@@ -2693,8 +3135,10 @@ def build_chat_context(
 
         if (
             role == "user"
-            and sid == str(user_id)
-            and content == text
+            and
+            sid == str(user_id)
+            and
+            content == text
         ):
 
             current_saved = True
@@ -2702,28 +3146,28 @@ def build_chat_context(
         if role == "user":
 
             messages.append({
+
                 "role":
                     "user",
 
                 "content":
-                    (
-                        f"{name}: {content}"
-                    )
+                    f"{name}: {content}"
+
             })
 
         elif role == "assistant":
 
             messages.append({
+
                 "role":
                     "assistant",
 
                 "content":
                     content
+
             })
 
-    # =========================================
     # PERSONAL MEMORY
-    # =========================================
 
     personal = get_user_memory(
         chat_id,
@@ -2732,7 +3176,8 @@ def build_chat_context(
 
     if (
         personal
-        and personal.get("memory")
+        and
+        personal.get("memory")
     ):
 
         personal_memory = (
@@ -2743,43 +3188,34 @@ def build_chat_context(
         if personal_memory:
 
             messages.append({
+
                 "role":
                     "system",
 
                 "content":
                     (
-                        "=== КРИТИЧЕСКИ ВАЖНАЯ "
-                        "ЛИЧНАЯ ПАМЯТЬ ТЕКУЩЕГО "
-                        "УЧАСТНИКА ===\n"
-                        "Эта память относится "
-                        "ИМЕННО к человеку, "
-                        "который сейчас пишет сообщение.\n\n"
-                        "Используй её напрямую, "
-                        "если вопрос относится "
-                        "к сохранённому факту.\n\n"
-                        "Не угадывай личный факт.\n"
-                        "Не заменяй сохранённый факт "
-                        "своим предположением.\n"
-                        "Если точный ответ есть здесь, "
-                        "используй именно его.\n"
-                        "Если несколько фактов "
-                        "противоречат друг другу, "
-                        "последний факт в списке "
-                        "считай более новым.\n\n"
+                        "=== ЛИЧНАЯ ПАМЯТЬ "
+                        "ТЕКУЩЕГО УЧАСТНИКА ===\n"
+                        "Эта память относится именно "
+                        "к человеку, который сейчас пишет.\n"
+                        "Используй её, если вопрос "
+                        "относится к сохранённому факту.\n"
+                        "Не выдумывай личные факты.\n\n"
                         "ЛИЧНАЯ ПАМЯТЬ:\n"
-                        + personal_memory
-                        + "\n\n"
-                        "=== КОНЕЦ ЛИЧНОЙ ПАМЯТИ ==="
+                        +
+                        personal_memory
+                        +
+                        "\n=== КОНЕЦ ПАМЯТИ ==="
                     )
+
             })
 
-    # =========================================
     # CURRENT MESSAGE
-    # =========================================
 
     if not current_saved:
 
         messages.append({
+
             "role":
                 "user",
 
@@ -2788,6 +3224,7 @@ def build_chat_context(
                     f"{user_name or 'Участник'}: "
                     f"{text}"
                 )
+
         })
 
     return messages
@@ -2798,6 +3235,7 @@ def build_chat_context(
 # =========================================================
 
 QUESTION_WORDS = (
+
     "кто",
     "что",
     "где",
@@ -2812,16 +3250,23 @@ QUESTION_WORDS = (
     "можно",
     "правда",
     "есть ли"
+
 )
 
 
-def looks_like_question(text):
+def looks_like_question(
+    text
+):
 
-    low = text.lower().strip()
+    low = (
+        text.lower()
+        .strip()
+    )
 
     return (
         "?" in low
-        or any(
+        or
+        any(
             low.startswith(
                 word + " "
             )
@@ -2831,7 +3276,7 @@ def looks_like_question(text):
 
 
 # =========================================================
-# DIRECTED TO BOT — VK
+# DIRECTED TO BOT VK
 # =========================================================
 
 def is_directed_to_bot_vk(
@@ -2847,7 +3292,8 @@ def is_directed_to_bot_vk(
 
     if (
         reply
-        and str(
+        and
+        str(
             reply.get(
                 "from_id",
                 ""
@@ -2872,7 +3318,7 @@ def is_directed_to_bot_vk(
 
 
 # =========================================================
-# DIRECTED TO BOT — TELEGRAM
+# DIRECTED TO BOT TELEGRAM
 # =========================================================
 
 def is_directed_to_bot_telegram(
@@ -2896,7 +3342,8 @@ def is_directed_to_bot_telegram(
 
     if (
         TELEGRAM_BOT_ID
-        and reply_from.get("id")
+        and
+        reply_from.get("id")
         == TELEGRAM_BOT_ID
     ):
 
@@ -2904,7 +3351,8 @@ def is_directed_to_bot_telegram(
 
     if (
         TELEGRAM_BOT_USERNAME
-        and (
+        and
+        (
             f"@{TELEGRAM_BOT_USERNAME.lower()}"
             in low
         )
@@ -2938,13 +3386,13 @@ def should_answer(
     if not text:
         return False
 
-    # Кнопки чужого меню/бота ("🏆 Общий", "🔥 Активные",
-    # "🏅 Нашивки", "⚔️ Арена" и т.п.) — полностью игнорируем,
-    # даже если сообщение адресовано боту через упоминание клуба.
-    # Это не наша функция, отвечать нечего, а звать LLM ради
-    # этого — просто тратить токены.
-    if looks_like_not_my_feature_question(text):
+    if looks_like_not_my_feature_question(
+        text
+    ):
+
         return False
+
+    # DIRECT MESSAGE TO BOT
 
     if platform == "telegram":
 
@@ -2967,25 +3415,57 @@ def should_answer(
     if len(text) <= 1:
         return False
 
-    if looks_like_question(text):
+    # QUESTION
+
+    if looks_like_question(
+        text
+    ):
+
         return True
 
     words = len(
         text.split()
     )
 
-    if words <= 2:
-        return random.random() < 0.10
+    # Более живой бот.
+    #
+    # Раньше:
+    # 2 слова -> 10%
+    # 6 слов -> 25%
+    # 15 слов -> 45%
+    # остальное -> 60%
+    #
+    # Теперь:
+    # 2 слова -> 20%
+    # 6 слов -> 40%
+    # 15 слов -> 60%
+    # длинные -> 72%
 
-    roll = random.random()
+    if words <= 2:
+
+        return (
+            random.random()
+            < 0.20
+        )
 
     if words <= 6:
-        return roll < 0.25
+
+        return (
+            random.random()
+            < 0.40
+        )
 
     if words <= 15:
-        return roll < 0.45
 
-    return roll < 0.60
+        return (
+            random.random()
+            < 0.60
+        )
+
+    return (
+        random.random()
+        < 0.72
+    )
 
 
 # =========================================================
@@ -3002,6 +3482,7 @@ def ask_ai(
     global openrouter_blocked_until
 
     try:
+
         return ask_groq(
             chat_id,
             text,
@@ -3012,22 +3493,23 @@ def ask_ai(
     except Exception as groq_error:
 
         print(
-            "Groq final error, trying OpenRouter FREE:",
+            "Groq final error -> OpenRouter:",
             groq_error,
             flush=True
         )
 
-        if time.time() < openrouter_blocked_until:
-            print(
-                f"OpenRouter blocked | retry in ~"
-                f"{max(0, int(openrouter_blocked_until-time.time()))} sec",
-                flush=True
-            )
+        if (
+            time.time()
+            < openrouter_blocked_until
+        ):
+
             raise RuntimeError(
-                "Все текстовые AI временно недоступны."
+                "Все текстовые AI "
+                "временно недоступны."
             )
 
         try:
+
             return ask_openrouter(
                 chat_id,
                 text,
@@ -3037,10 +3519,14 @@ def ask_ai(
 
         except Exception as openrouter_error:
 
-            if is_rate_limit_error(openrouter_error):
+            if is_rate_limit_error(
+                openrouter_error
+            ):
+
                 openrouter_blocked_until = (
                     time.time()
-                    + get_retry_seconds(
+                    +
+                    get_retry_seconds(
                         openrouter_error,
                         24 * 60 * 60
                     )
@@ -3053,7 +3539,8 @@ def ask_ai(
             )
 
             raise RuntimeError(
-                "Все текстовые AI временно недоступны."
+                "Все текстовые AI "
+                "временно недоступны."
             )
 
 
@@ -3080,9 +3567,7 @@ def ask_groq(
 
     now = time.time()
 
-    # =========================================
     # 120B
-    # =========================================
 
     if now >= main_blocked_until:
 
@@ -3105,7 +3590,8 @@ def ask_groq(
 
                 main_blocked_until = (
                     time.time()
-                    + get_retry_seconds(
+                    +
+                    get_retry_seconds(
                         e,
                         3600
                     )
@@ -3126,9 +3612,7 @@ def ask_groq(
             flush=True
         )
 
-    # =========================================
     # 20B
-    # =========================================
 
     if time.time() >= backup_blocked_until:
 
@@ -3151,7 +3635,8 @@ def ask_groq(
 
                 backup_blocked_until = (
                     time.time()
-                    + get_retry_seconds(
+                    +
+                    get_retry_seconds(
                         e,
                         600
                     )
@@ -3173,7 +3658,8 @@ def ask_groq(
         )
 
     raise RuntimeError(
-        "Обе модели Groq временно недоступны."
+        "Обе модели Groq "
+        "временно недоступны."
     )
 
 
@@ -3192,6 +3678,7 @@ def send_message(
     response = requests.post(
         f"{VK_API}/messages.send",
         data={
+
             "access_token":
                 VK_TOKEN,
 
@@ -3206,6 +3693,7 @@ def send_message(
 
             "random_id":
                 0
+
         },
         timeout=15
     )
@@ -3224,7 +3712,7 @@ def send_message(
 
 
 # =========================================================
-# TELEGRAM API
+# TELEGRAM
 # =========================================================
 
 def telegram_call(
@@ -3235,7 +3723,8 @@ def telegram_call(
     if not TELEGRAM_API:
 
         raise RuntimeError(
-            "TELEGRAM_BOT_TOKEN не установлен"
+            "TELEGRAM_BOT_TOKEN "
+            "не установлен"
         )
 
     response = requests.post(
@@ -3249,7 +3738,8 @@ def telegram_call(
     if not data.get("ok"):
 
         raise RuntimeError(
-            f"Telegram {method}: {data}"
+            f"Telegram {method}: "
+            f"{data}"
         )
 
     return data.get(
@@ -3267,6 +3757,7 @@ def send_telegram_message(
         return
 
     payload = {
+
         "chat_id":
             int(chat_id),
 
@@ -3275,13 +3766,20 @@ def send_telegram_message(
 
         "disable_web_page_preview":
             True
+
     }
 
     if reply_to_message_id:
 
-        payload["reply_parameters"] = {
+        payload[
+            "reply_parameters"
+        ] = {
+
             "message_id":
-                int(reply_to_message_id)
+                int(
+                    reply_to_message_id
+                )
+
         }
 
     return telegram_call(
@@ -3306,6 +3804,7 @@ def register_active_chat(
     with activity_lock:
 
         active_chats[key] = {
+
             "platform":
                 platform,
 
@@ -3314,6 +3813,7 @@ def register_active_chat(
 
             "last":
                 time.time()
+
         }
 
 
@@ -3357,7 +3857,8 @@ def activity_loop():
             for key, item in chats.items():
 
                 if (
-                    now - item["last"]
+                    now
+                    - item["last"]
                     < 20 * 60
                 ):
 
@@ -3371,29 +3872,38 @@ def activity_loop():
                             "last"
                         ] = now
 
-                if random.random() > 0.25:
+                # 35% шанс оживить чат
+
+                if random.random() > 0.35:
                     continue
 
                 prompt = random.choice([
-                    (
-                        "В чате давно тихо. "
-                        "Если действительно есть что сказать, "
-                        "придумай одну короткую естественную реплику. "
-                        "Не упоминай игру без причины."
-                    ),
 
                     (
-                        "Народ давно молчит. "
-                        "Придумай короткую живую фразу, "
-                        "которая могла бы естественно появиться "
-                        "от обычного участника."
+                        "В чате давно тихо. "
+                        "Если есть естественная причина "
+                        "оживить разговор, напиши одну "
+                        "короткую живую реплику. "
+                        "Можно пошутить или слегка "
+                        "подъебнуть ситуацию. "
+                        "Не говори, что ты бот."
                     ),
 
                     (
                         "В чате тишина. "
-                        "Если можешь органично оживить разговор "
-                        "одной короткой репликой — сделай это."
+                        "Придумай короткую естественную "
+                        "реплику обычного участника. "
+                        "Можно использовать немного "
+                        "разговорного мата, если подходит."
+                    ),
+
+                    (
+                        "Народ молчит. "
+                        "Оживи чат одной короткой "
+                        "эмоциональной фразой. "
+                        "Без официальщины."
                     )
+
                 ])
 
                 try:
@@ -3454,7 +3964,7 @@ def activity_loop():
 
 
 # =========================================================
-# RENDER HEALTH CHECK
+# HEALTH
 # =========================================================
 
 @app.route(
@@ -3464,6 +3974,7 @@ def activity_loop():
 def home():
 
     return {
+
         "status":
             "ok",
 
@@ -3479,6 +3990,12 @@ def home():
         "self_learning":
             True,
 
+        "personality":
+            "alive",
+
+        "profanity":
+            True,
+
         "openrouter":
             bool(
                 OPENROUTER_API_KEY
@@ -3489,6 +4006,7 @@ def home():
 
         "voice":
             False
+
     }, 200
 
 
@@ -3510,7 +4028,8 @@ def callback():
 
         if (
             VK_GROUP_SECRET
-            and data.get("secret")
+            and
+            data.get("secret")
             != VK_GROUP_SECRET
         ):
 
@@ -3521,9 +4040,13 @@ def callback():
         )
 
         if event_type == "confirmation":
-            return VK_CONFIRMATION_CODE
+
+            return (
+                VK_CONFIRMATION_CODE
+            )
 
         if event_type != "message_new":
+
             return "ok"
 
         event_id = data.get(
@@ -3547,12 +4070,14 @@ def callback():
 
         sender_id = (
             message.get("from_id")
-            or message.get("user_id")
+            or
+            message.get("user_id")
         )
 
         if (
             sender_id
-            and int(peer_id)
+            and
+            int(peer_id)
             == int(sender_id)
         ):
 
@@ -3561,14 +4086,8 @@ def callback():
         if not sender_id:
             return "ok"
 
-        # ВК: у сообществ (в т.ч. других ботов, приветствующих
-        # новичков от имени клуба) sender_id ОТРИЦАТЕЛЬНЫЙ.
-        # Реальные пользователи всегда имеют положительный id.
-        # Раньше наш бот воспринимал автоматические приветствия
-        # /ответы другого бота как обычные сообщения в чате и
-        # мог отвечать на них (в том числе по несколько раз на
-        # одно и то же событие вступления). Полностью
-        # игнорируем всё, что прислал не живой человек.
+        # Игнорируем сообщения других сообществ/ботов.
+
         if int(sender_id) < 0:
             return "ok"
 
@@ -3586,27 +4105,16 @@ def callback():
             or ""
         ).strip()
 
-        user_name = get_vk_user_name(
-            sender_id
+        user_name = (
+            get_vk_user_name(
+                sender_id
+            )
         )
 
-        # =========================================
-        # MEDIA
-        # =========================================
-        # Изображения и голосовые сообщения
-        # полностью игнорируются.
-        #
-        # Если у изображения есть подпись,
-        # VK передаст её как обычный text,
-        # и бот обработает только текст.
-        # Само изображение не загружается.
+        # Только текст.
 
         if not text:
             return "ok"
-
-        # =========================================
-        # NORMAL MESSAGE
-        # =========================================
 
         save_chat_message(
             chat_id,
@@ -3616,8 +4124,6 @@ def callback():
             text
         )
 
-        # Явно сказанные пользователем факты
-        # сохраняются сразу, не дожидаясь обучения.
         save_explicit_user_memory(
             chat_id,
             sender_id,
@@ -3686,7 +4192,9 @@ def callback():
     "/telegram/webhook/<secret>",
     methods=["POST"]
 )
-def telegram_webhook(secret):
+def telegram_webhook(
+    secret
+):
 
     if not TELEGRAM_BOT_TOKEN:
         return "ok"
@@ -3696,6 +4204,7 @@ def telegram_webhook(secret):
     ).hexdigest()[:32]
 
     if secret != expected:
+
         return "forbidden", 403
 
     try:
@@ -3750,7 +4259,8 @@ def telegram_webhook(secret):
 
         if (
             raw_chat_id is None
-            or sender_id is None
+            or
+            sender_id is None
         ):
 
             return "ok"
@@ -3770,24 +4280,16 @@ def telegram_webhook(secret):
             )
         )
 
-        # Только текст.
-        #
-        # Если у фотографии есть подпись,
-        # подпись может быть обработана как текст.
-        # Само изображение полностью игнорируется.
-
         text = (
             message.get("text")
-            or message.get("caption")
-            or ""
+            or
+            message.get("caption")
+            or
+            ""
         ).strip()
 
         if not text:
             return "ok"
-
-        # =========================================
-        # NORMAL TELEGRAM MESSAGE
-        # =========================================
 
         save_chat_message(
             chat_id,
@@ -3919,9 +4421,9 @@ def setup_telegram():
         if not external:
 
             print(
-                "Telegram: "
-                "Render URL не найден — "
-                "webhook не установлен.",
+                "Telegram: Render URL "
+                "не найден — webhook "
+                "не установлен.",
                 flush=True
             )
 
@@ -3984,7 +4486,22 @@ if __name__ == "__main__":
     )
 
     print(
-        "📚 Self-learning: ENABLED",
+        "🔥 Personality: ALIVE",
+        flush=True
+    )
+
+    print(
+        "🤬 Profanity: ENABLED",
+        flush=True
+    )
+
+    print(
+        "😂 Humor: ENABLED",
+        flush=True
+    )
+
+    print(
+        "🧠 Self-learning: ENABLED",
         flush=True
     )
 
@@ -4056,6 +4573,7 @@ if __name__ == "__main__":
     )
 
     if TELEGRAM_BOT_TOKEN:
+
         setup_telegram()
 
     threading.Thread(
