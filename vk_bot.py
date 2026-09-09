@@ -16,8 +16,8 @@ from supabase import create_client
 # CONFIG
 # =========================================================
 
-BOT_VERSION = "V1.3.2"
-BOT_BUILD = "Исправления памяти + оптимизация контекста"
+BOT_VERSION = "V1.3"
+BOT_BUILD = "Начальное самообучение + Telegram + OpenRouter"
 
 VK_TOKEN = os.environ.get("VK_TOKEN", "").strip()
 VK_CONFIRMATION_CODE = os.environ.get(
@@ -95,74 +95,19 @@ OPENROUTER_MODEL = "openrouter/free"
 # LIMITS
 # =========================================================
 
-GROQ_MAX_TOKENS = 320
-OPENROUTER_MAX_TOKENS = 320
-LEARNING_MAX_TOKENS = 300
+GROQ_MAX_TOKENS = 190
+OPENROUTER_MAX_TOKENS = 190
+LEARNING_MAX_TOKENS = 190
 
-CHAT_MEMORY_LIMIT = 25
-LEARNING_HISTORY_LIMIT = 35
+CHAT_MEMORY_LIMIT = 18
+LEARNING_HISTORY_LIMIT = 60
 
 LEARNING_EVERY_MESSAGES = 40
 
-KNOWLEDGE_LIMIT = 30
-USER_MEMORY_LIMIT = 20
+KNOWLEDGE_LIMIT = 8
+USER_MEMORY_LIMIT = 10
 
 NAME_CACHE_TIME = 24 * 60 * 60
-
-# =========================================================
-# TANKS BLITZ KNOWLEDGE
-# =========================================================
-
-TANK_DB_CACHE = {"rows": [], "loaded_at": 0}
-TANK_DB_CACHE_TIME = 10 * 60
-
-def normalize_tank_text(text):
-    return re.sub(r"[^a-zа-яё0-9]+", " ", (text or "").lower()).strip()
-
-def get_tank_knowledge_for_text(text, limit=5):
-    query = normalize_tank_text(text)
-    if not query:
-        return []
-
-    now = time.time()
-    if (
-        not TANK_DB_CACHE["rows"]
-        or now - TANK_DB_CACHE["loaded_at"] > TANK_DB_CACHE_TIME
-    ):
-        try:
-            result = (
-                supabase.table("tanks_blitz_knowledge")
-                .select("name, nation, tier, game, game_version, source")
-                .limit(200)
-                .execute()
-            )
-            TANK_DB_CACHE["rows"] = result.data or []
-            TANK_DB_CACHE["loaded_at"] = now
-        except Exception:
-            return []
-
-    scored = []
-    query_tokens = set(query.split())
-
-    for row in TANK_DB_CACHE["rows"]:
-        name = normalize_tank_text(row.get("name") or "")
-        if not name:
-            continue
-
-        score = 0
-        if name in query:
-            score = 100 + len(name)
-        else:
-            name_tokens = set(name.split())
-            overlap = len(query_tokens & name_tokens)
-            if overlap:
-                score = overlap * 10
-
-        if score > 0:
-            scored.append((score, row))
-
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return [row for _, row in scored[:limit]]
 
 EVENT_CACHE_TIME = 30 * 60
 EVENT_CACHE_LIMIT = 2000
@@ -190,9 +135,6 @@ learning_retry_until = {}
 
 main_blocked_until = 0
 backup_blocked_until = 0
-learning_main_blocked_until = 0
-learning_backup_blocked_until = 0
-openrouter_blocked_until = 0
 
 TELEGRAM_BOT_ID = None
 TELEGRAM_BOT_USERNAME = ""
@@ -319,36 +261,6 @@ Tanks Blitz — одна из тем сообщества, но не единс�
 
 Не придумывай факты о людях.
 
-Нашивки, статусы активности и рейтинг сообщений в этом чате
-считает ДРУГОЙ бот, не ты. У тебя нет доступа к этим данным.
-Если тебя спрашивают про нашивки, рейтинг активности или
-«сколько у меня сообщений» — честно скажи, что это не твоя
-функция, и не называй никаких имён, цифр или статусов
-(даже как пример).
-
-Никогда не составляй таблицы или списки вида
-«участник — число» (места в рейтинге, количество матчей,
-статистика арены, количество побед и т.п.), если эти
-конкретные цифры не были явно переданы тебе в этом же
-запросе как реальные данные. Если тебя просят показать
-такую статистику, а данных у тебя нет — прямо скажи, что
-не располагаешь этими данными, и не подставляй вместо них
-правдоподобные на вид числа ни для одного человека.
-
-Короткие сообщения из одного-трёх слов с эмодзи (например,
-"🏆 Общий", "⚔️ Арена", "🔥 Активные") — это, скорее всего,
-нажатие кнопки чужого меню, а не осмысленный вопрос к тебе.
-На такие сообщения не пытайся угадать, что должен был бы
-ответить другой бот — честно и коротко скажи, что это не
-твоя функция.
-
-Даже если в "долговременной памяти этого чата" встретится
-что-то похожее на рейтинг, нашивки, статистику арены или
-другие цифры по участникам — НЕ используй это и не повторяй.
-Это могла быть твоя же старая ошибка, случайно попавшая в
-память. Правило "это не моя функция" сильнее любой памяти
-на эту тему.
-
 Не сохраняй пароли, адреса, документы, банковские данные
 и чувствительную личную информацию.
 
@@ -396,58 +308,42 @@ def normalize_text(text):
 # EVENT PROTECTION
 # =========================================================
 
-# ВАЖНО: раньше проверка "event_id уже обработан?" и его запись
-# в processed_events были двумя отдельными не атомарными шагами
-# без блокировки. Если два запроса на один и тот же event_id
-# приходили почти одновременно (VK/Telegram ретраят вебхук, если
-# не получают ответ достаточно быстро), оба потока успевали
-# пройти проверку "if event_id in processed_events" ДО того, как
-# любой из них успевал его записать — и оба уходили в LLM
-# параллельно. Отсюда дубли ответов с разной формулировкой.
-#
-# events_lock делает "проверить + записать" одной атомарной
-# операцией.
-events_lock = threading.Lock()
-
-
 def already_processed(event_id):
 
     if not event_id:
         return False
 
-    with events_lock:
+    now = time.time()
 
-        now = time.time()
+    for key in list(processed_events):
 
-        for key in list(processed_events):
-
-            if (
-                now - processed_events[key]
-                > EVENT_CACHE_TIME
-            ):
-                processed_events.pop(
-                    key,
-                    None
-                )
-
-        if event_id in processed_events:
-            return True
-
-        processed_events[event_id] = now
-
-        if len(processed_events) > EVENT_CACHE_LIMIT:
-
-            oldest = min(
-                processed_events,
-                key=processed_events.get
-            )
-
+        if (
+            now - processed_events[key]
+            > EVENT_CACHE_TIME
+        ):
             processed_events.pop(
-                oldest,
+                key,
                 None
             )
 
-        return False
+    if event_id in processed_events:
+        return True
+
+    processed_events[event_id] = now
+
+    if len(processed_events) > EVENT_CACHE_LIMIT:
+
+        oldest = min(
+            processed_events,
+            key=processed_events.get
+        )
+
+        processed_events.pop(
+            oldest,
+            None
+        )
+
+    return False
 
 
 # =========================================================
@@ -474,41 +370,28 @@ def is_rate_limit_error(error):
 
 def get_retry_seconds(error, default):
 
-    text = str(error)
-
     match = re.search(
         r"try again in\s+"
         r"(?:(\d+)h)?"
         r"(?:(\d+)m)?"
         r"(?:(\d+(?:\.\d+)?)s)?",
-        text,
+        str(error),
         re.I
     )
 
-    if match:
-        total = (
-            int(match.group(1) or 0) * 3600
-            + int(match.group(2) or 0) * 60
-            + float(match.group(3) or 0)
-        )
-        if total > 0:
-            return int(total) + 10
+    if not match:
+        return default
 
-    # OpenRouter may expose the reset moment as a Unix timestamp in ms.
-    reset_match = re.search(
-        r"(?:X-RateLimit-Reset|x-ratelimit-reset)[^0-9]{0,20}(\d{13})",
-        text,
-        re.I
+    total = (
+        int(match.group(1) or 0) * 3600
+        + int(match.group(2) or 0) * 60
+        + float(match.group(3) or 0)
     )
-    if reset_match:
-        try:
-            seconds = int(int(reset_match.group(1)) / 1000 - time.time())
-            if seconds > 0:
-                return seconds + 10
-        except Exception:
-            pass
 
-    return default
+    if total <= 0:
+        return default
+
+    return int(total) + 10
 
 
 # =========================================================
@@ -735,89 +618,6 @@ def get_chat_memory(
         )
 
         return []
-
-
-# =========================================================
-# ACTIVITY / BADGES / ЛЮБАЯ "СТАТИСТИКА УЧАСТНИКОВ" —
-# ЭТО НЕ ФУНКЦИЯ ЭТОГО БОТА
-# =========================================================
-#
-# Нашивки, рейтинг активности, "статистика арены" и подобное
-# считает ДРУГОЙ бот/система в этом чате. У этого бота нет и не
-# может быть таких данных — раньше он на такие вопросы просто
-# ПРИДУМЫВАЛ имена и цифры через LLM, причём выяснилось, что он
-# способен выдумать вообще ЛЮБУЮ новую категорию (например,
-# "статистику арены" по матчам — то, чего не было даже в списке
-# ключевых слов). Значит фильтровать нужно не только по конкретным
-# словам, но и по общему ПАТТЕРНУ: короткие "кнопочные" команды
-# (часто это нажатия кнопок VK-клавиатуры, приходящие как обычное
-# сообщение с упоминанием клуба) — почти никогда не настоящий
-# осмысленный вопрос, значит для них тоже надо честно отказаться,
-# а не гадать по смыслу.
-
-NOT_MY_FEATURE_KEYWORDS = (
-    "рейтинг",
-    "топ активны",
-    "топ-10",
-    "топ 10",
-    "нашивк",
-    "мой статус",
-    "какой у меня статус",
-    "статистика",
-    "активност",
-    "активные",
-    "общий список",
-    "матч",
-    "турнир",
-)
-
-# Префиксы для коротких "кнопочных" сообщений типа "🏆 Общий",
-# "🔥 Активные", "⚔️ Арена" — если в сообщении 1-3 слова и одно
-# из них начинается с такого префикса, это почти наверняка не
-# живой вопрос, а нажатие кнопки чужого меню.
-MENU_BUTTON_PREFIXES = (
-    "общ",
-    "нашивк",
-    "актив",
-    "арен",
-    "рейтинг",
-    "топ",
-    "статист",
-    "статус",
-    "матч",
-    "турнир",
-)
-
-
-def looks_like_not_my_feature_question(text):
-
-    low = (text or "").lower()
-
-    if any(
-        word in low
-        for word in NOT_MY_FEATURE_KEYWORDS
-    ):
-        return True
-
-    stripped = re.sub(
-        r"[^a-zа-яё\s]",
-        " ",
-        low
-    ).strip()
-
-    words = [
-        w for w in stripped.split()
-        if w
-    ]
-
-    if not words or len(words) > 3:
-        return False
-
-    return any(
-        word.startswith(prefix)
-        for word in words
-        for prefix in MENU_BUTTON_PREFIXES
-    )
 
 
 def get_chat_message_count(chat_id):
@@ -1607,80 +1407,14 @@ def clean_model_text(text):
         flags=re.DOTALL | re.IGNORECASE
     )
 
-    # Убираем возможные служебные блоки reasoning/CoT,
-    # если провайдер всё же вернул их в текстовом поле.
-    for tag in ("think", "analysis", "reasoning"):
-        text = re.sub(
-            rf"<{tag}>.*?</{tag}>",
-            "",
-            text,
-            flags=re.DOTALL | re.IGNORECASE
-        )
-        text = re.sub(
-            rf"<{tag}>.*$",
-            "",
-            text,
-            flags=re.DOTALL | re.IGNORECASE
-        )
-
-    # Не выпускаем в пользовательский ответ служебные обёртки.
     text = re.sub(
-        r"^\s*(?:assistant|final)\s*:\s*",
+        r"<think>.*$",
         "",
         text,
-        flags=re.IGNORECASE
+        flags=re.DOTALL | re.IGNORECASE
     )
 
     return text.strip()
-
-
-# Признаки "сырого" рассуждения модели, которое пришло вообще
-# БЕЗ каких-либо тегов <think> и поэтому не отлавливается
-# clean_model_text выше. Такое видели от бесплатных/авто-
-# маршрутизируемых моделей (например, "openrouter/free"),
-# которые просто пишут ход мыслей как обычный текст ответа.
-# Если находим — считаем ответ непригодным и не отправляем
-# его пользователю вообще.
-LEAKED_REASONING_MARKERS = (
-    "here's a thinking process",
-    "here is a thinking process",
-    "let me think",
-    "let me analyze",
-    "the user is asking",
-    "the current speaker is",
-    "i need to check",
-    "looking at the personal memory",
-    "identify key elements",
-    "analyze user input",
-    "possibility 1",
-)
-
-
-def looks_like_leaked_reasoning(text):
-
-    if not text:
-        return False
-
-    low = text.lower()
-
-    if any(
-        marker in low
-        for marker in LEAKED_REASONING_MARKERS
-    ):
-        return True
-
-    # Пронумерованный список из жирных заголовков ("1. **...**",
-    # "2. **...**") — типичный признак чернового рассуждения,
-    # а не финального ответа живому человеку в чате.
-    numbered_bold_steps = re.findall(
-        r"(?:^|\n)\s*\d+\.\s*\*\*",
-        text
-    )
-
-    if len(numbered_bold_steps) >= 2:
-        return True
-
-    return False
 
 
 # =========================================================
@@ -1765,20 +1499,6 @@ def ask_model(
         ) or ""
     )
 
-    if reply and looks_like_leaked_reasoning(reply):
-
-        print(
-            "Groq LEAKED REASONING, "
-            "rejecting reply:",
-            reply[:200],
-            flush=True
-        )
-
-        raise RuntimeError(
-            "Groq returned raw reasoning "
-            "instead of a final answer."
-        )
-
     if reply:
         return reply
 
@@ -1831,19 +1551,7 @@ def ask_openrouter_messages(
                     max_tokens,
 
                 "stream":
-                    False,
-
-                # Просим провайдера не возвращать содержимое
-                # reasoning/CoT в ответе вообще (даже если модель
-                # рассуждает внутри себя). Раньше без этого
-                # некоторые модели через "openrouter/free"
-                # (автомаршрутизатор — может подставить любую
-                # свободную модель) присылали своё рассуждение
-                # прямо как обычный текст, без тегов <think>,
-                # и оно уходило пользователю как ответ бота.
-                "reasoning": {
-                    "exclude": True
-                }
+                    False
             },
             timeout=60
         )
@@ -1969,20 +1677,6 @@ def ask_openrouter_messages(
             f"{label} returned empty response."
         )
 
-    if looks_like_leaked_reasoning(reply):
-
-        print(
-            f"{label} LEAKED REASONING, "
-            f"rejecting reply:",
-            reply[:200],
-            flush=True
-        )
-
-        raise RuntimeError(
-            f"{label} returned raw reasoning "
-            f"instead of a final answer."
-        )
-
     return reply
 
 
@@ -2013,9 +1707,8 @@ def ask_openrouter(
 
 def ask_learning_model(messages):
 
-    global learning_main_blocked_until
-    global learning_backup_blocked_until
-    global openrouter_blocked_until
+    global main_blocked_until
+    global backup_blocked_until
 
     now = time.time()
 
@@ -2023,7 +1716,7 @@ def ask_learning_model(messages):
     # Groq 20B
     # -----------------------------------------
 
-    if now >= learning_backup_blocked_until:
+    if now >= backup_blocked_until:
 
         try:
 
@@ -2042,7 +1735,7 @@ def ask_learning_model(messages):
 
             if is_rate_limit_error(e):
 
-                learning_backup_blocked_until = (
+                backup_blocked_until = (
                     time.time()
                     + get_retry_seconds(
                         e,
@@ -2060,7 +1753,7 @@ def ask_learning_model(messages):
     # Groq 120B
     # -----------------------------------------
 
-    if time.time() >= learning_main_blocked_until:
+    if time.time() >= main_blocked_until:
 
         try:
 
@@ -2079,7 +1772,7 @@ def ask_learning_model(messages):
 
             if is_rate_limit_error(e):
 
-                learning_main_blocked_until = (
+                main_blocked_until = (
                     time.time()
                     + get_retry_seconds(
                         e,
@@ -2097,7 +1790,7 @@ def ask_learning_model(messages):
     # OpenRouter FREE
     # -----------------------------------------
 
-    if OPENROUTER_API_KEY and time.time() >= openrouter_blocked_until:
+    if OPENROUTER_API_KEY:
 
         try:
 
@@ -2113,12 +1806,6 @@ def ask_learning_model(messages):
             )
 
         except Exception as e:
-
-            if is_rate_limit_error(e):
-                openrouter_blocked_until = (
-                    time.time()
-                    + get_retry_seconds(e, 24 * 60 * 60)
-                )
 
             print(
                 "OpenRouter learning error:",
@@ -2167,18 +1854,6 @@ def perform_learning(chat_id):
         known_names = {}
 
         for item in history:
-
-            # ВАЖНО: раньше сюда попадали и сообщения самого
-            # бота (role == "assistant"), включая его прошлые
-            # выдуманные ответы (например, фейковые таблицы
-            # рейтинга/нашивок). Модуль самообучения не отличал
-            # их от реальных сообщений участников и мог сохранить
-            # выдумку бота как постоянный "факт" в базу знаний —
-            # а дальше бот эту память сам себе цитировал как
-            # правду. Поэтому в обучение идут ТОЛЬКО реальные
-            # сообщения пользователей.
-            if item.get("role") != "user":
-                continue
 
             name = (
                 item.get(
@@ -2627,30 +2302,6 @@ def build_chat_context(
             })
 
     # =========================================
-    # TANKS BLITZ DATABASE
-    # =========================================
-
-    tank_rows = get_tank_knowledge_for_text(text)
-
-    if tank_rows:
-        tank_lines = []
-        for tank in tank_rows:
-            tank_lines.append(
-                f"- {tank.get('name', '')} | нация: {tank.get('nation', '')} | "
-                f"уровень: {tank.get('tier', '')}"
-            )
-
-        messages.append({
-            "role": "system",
-            "content": (
-                "Данные из базы Tanks Blitz. Используй их как источник фактов. "
-                "В базе указаны только название танка, нация и уровень. "
-                "Не придумывай ТТХ или другие характеристики, которых здесь нет.\n"
-                + "\n".join(tank_lines)
-            )
-        })
-
-    # =========================================
     # RECENT CHAT
     # =========================================
 
@@ -2938,14 +2589,6 @@ def should_answer(
     if not text:
         return False
 
-    # Кнопки чужого меню/бота ("🏆 Общий", "🔥 Активные",
-    # "🏅 Нашивки", "⚔️ Арена" и т.п.) — полностью игнорируем,
-    # даже если сообщение адресовано боту через упоминание клуба.
-    # Это не наша функция, отвечать нечего, а звать LLM ради
-    # этого — просто тратить токены.
-    if looks_like_not_my_feature_question(text):
-        return False
-
     if platform == "telegram":
 
         if is_directed_to_bot_telegram(
@@ -2999,9 +2642,8 @@ def ask_ai(
     user_name
 ):
 
-    global openrouter_blocked_until
-
     try:
+
         return ask_groq(
             chat_id,
             text,
@@ -3012,22 +2654,14 @@ def ask_ai(
     except Exception as groq_error:
 
         print(
-            "Groq final error, trying OpenRouter FREE:",
+            "Groq final error, "
+            "trying OpenRouter FREE:",
             groq_error,
             flush=True
         )
 
-        if time.time() < openrouter_blocked_until:
-            print(
-                f"OpenRouter blocked | retry in ~"
-                f"{max(0, int(openrouter_blocked_until-time.time()))} sec",
-                flush=True
-            )
-            raise RuntimeError(
-                "Все текстовые AI временно недоступны."
-            )
-
         try:
+
             return ask_openrouter(
                 chat_id,
                 text,
@@ -3037,15 +2671,6 @@ def ask_ai(
 
         except Exception as openrouter_error:
 
-            if is_rate_limit_error(openrouter_error):
-                openrouter_blocked_until = (
-                    time.time()
-                    + get_retry_seconds(
-                        openrouter_error,
-                        24 * 60 * 60
-                    )
-                )
-
             print(
                 "OpenRouter final error:",
                 openrouter_error,
@@ -3053,7 +2678,8 @@ def ask_ai(
             )
 
             raise RuntimeError(
-                "Все текстовые AI временно недоступны."
+                "Все текстовые AI "
+                "временно недоступны."
             )
 
 
@@ -3559,17 +3185,6 @@ def callback():
             return "ok"
 
         if not sender_id:
-            return "ok"
-
-        # ВК: у сообществ (в т.ч. других ботов, приветствующих
-        # новичков от имени клуба) sender_id ОТРИЦАТЕЛЬНЫЙ.
-        # Реальные пользователи всегда имеют положительный id.
-        # Раньше наш бот воспринимал автоматические приветствия
-        # /ответы другого бота как обычные сообщения в чате и
-        # мог отвечать на них (в том числе по несколько раз на
-        # одно и то же событие вступления). Полностью
-        # игнорируем всё, что прислал не живой человек.
-        if int(sender_id) < 0:
             return "ok"
 
         chat_id = int(
