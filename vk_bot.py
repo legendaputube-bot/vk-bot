@@ -16,14 +16,14 @@ from supabase import create_client
 # CONFIG
 # =========================================================
 
-BOT_VERSION = "V1.6.0"
+BOT_VERSION = "V1.7.0"
 
 BOT_BUILD = (
     "Живой характер + мат + эмоции + обида "
     "+ активность + память + обучение "
     "+ устойчивый AI fallback "
     "+ automatic LOCAL MODE "
-    "+ AI cooldown/recovery"
+    "+ умный OpenRouter fallback + AI cooldown/recovery"
 )
 
 VK_TOKEN = os.environ.get("VK_TOKEN", "").strip()
@@ -90,15 +90,15 @@ OPENROUTER_MODELS_API = (
 MAIN_MODEL = "openai/gpt-oss-120b"
 BACKUP_MODEL = "openai/gpt-oss-20b"
 
+# В Render можно задать OPENROUTER_MODELS вручную.
+# Если переменная не задана, используем только универсальный
+# free-router и не хардкодим старые :free slug'и, которые
+# OpenRouter может удалить или переименовать.
 OPENROUTER_MODELS = [
     x.strip()
     for x in os.environ.get(
         "OPENROUTER_MODELS",
-        (
-            "openrouter/free,"
-            "meta-llama/llama-3.3-70b-instruct:free,"
-            "qwen/qwen3-30b-a3b:free"
-        ),
+        "openrouter/free",
     ).replace(";", ",").split(",")
     if x.strip()
 ]
@@ -109,14 +109,26 @@ CUSTOM_OPENROUTER_MODEL = os.environ.get(
 ).strip()
 
 if CUSTOM_OPENROUTER_MODEL:
-    OPENROUTER_MODELS.insert(
-        0,
-        CUSTOM_OPENROUTER_MODEL,
-    )
+    OPENROUTER_MODELS.insert(0, CUSTOM_OPENROUTER_MODEL)
 
-OPENROUTER_MODELS = list(
-    dict.fromkeys(OPENROUTER_MODELS)
-)
+OPENROUTER_MODELS = list(dict.fromkeys(OPENROUTER_MODELS))
+
+# Модели, которые уже точно отдавали 404 в текущей конфигурации.
+# Они не должны снова забивать fallback-запросами. При ручной
+# настройке через ENV код всё равно умеет автоматически блокировать
+# любой новый 404.
+KNOWN_DEAD_OPENROUTER_MODELS = {
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "qwen/qwen3-30b-a3b:free",
+}
+
+OPENROUTER_DISCOVERY_CACHE_TIME = 30 * 60
+OPENROUTER_MODEL_UNAVAILABLE_BLOCK = 24 * 60 * 60
+OPENROUTER_DAILY_LIMIT_BLOCK = 24 * 60 * 60
+OPENROUTER_DISCOVERY_TIMEOUT = 15
+openrouter_discovered_models = []
+openrouter_discovered_at = 0
+openrouter_discovery_lock = threading.Lock()
 
 
 # =========================================================
@@ -3295,6 +3307,170 @@ def extract_openrouter_text(data):
 
 
 # =========================================================
+# OPENROUTER MODEL DISCOVERY / CLASSIFICATION
+# =========================================================
+
+def openrouter_error_status(error):
+    match = re.search(r"HTTP\s+(\d{3})", str(error), re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
+def is_openrouter_not_found_error(error):
+    text = str(error).lower()
+    status = openrouter_error_status(error)
+    return status in (400, 404) and any(
+        marker in text
+        for marker in (
+            "model not found",
+            "not found",
+            "unavailable",
+            "free version is no longer available",
+            "free version unavailable",
+        )
+    )
+
+
+def is_openrouter_daily_limit_error(error):
+    text = str(error).lower()
+    return (
+        "free-models-per-day" in text
+        or "free models per day" in text
+        or "free-models" in text and "per day" in text
+    )
+
+
+def mark_openrouter_model_unavailable(model, seconds=None, reason="unavailable"):
+    if seconds is None:
+        seconds = OPENROUTER_MODEL_UNAVAILABLE_BLOCK
+
+    mark_openrouter_model_blocked(model, seconds)
+
+    print(
+        f"OPENROUTER MODEL UNAVAILABLE | {model} | "
+        f"{reason} | {int(seconds)} sec",
+        flush=True,
+    )
+
+
+def discover_openrouter_free_models(force=False):
+    """
+    Получает актуальный список моделей OpenRouter и оставляет
+    бесплатные модели. Это запасной механизм: основной fallback
+    остаётся openrouter/free.
+    """
+    global openrouter_discovered_models
+    global openrouter_discovered_at
+
+    if not OPENROUTER_API_KEY:
+        return []
+
+    now = time.time()
+
+    with openrouter_discovery_lock:
+        if (
+            not force
+            and openrouter_discovered_models
+            and now - openrouter_discovered_at < OPENROUTER_DISCOVERY_CACHE_TIME
+        ):
+            return list(openrouter_discovered_models)
+
+    try:
+        response = requests.get(
+            OPENROUTER_MODELS_API,
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            },
+            timeout=OPENROUTER_DISCOVERY_TIMEOUT,
+        )
+
+        if response.status_code != 200:
+            print(
+                "OpenRouter model discovery failed:",
+                response.status_code,
+                response.text[:500],
+                flush=True,
+            )
+            return []
+
+        data = response.json()
+        rows = data.get("data") or []
+        found = []
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+
+            model_id = str(row.get("id") or "").strip()
+            if not model_id:
+                continue
+
+            # OpenRouter обычно помечает бесплатную модель suffix'ом :free.
+            # Также учитываем pricing=0 на случай изменения формата.
+            pricing = row.get("pricing") or {}
+            prompt_price = str(pricing.get("prompt", ""))
+            completion_price = str(pricing.get("completion", ""))
+            is_free = (
+                model_id.endswith(":free")
+                or (prompt_price in ("0", "0.0", "0.000000")
+                    and completion_price in ("0", "0.0", "0.000000"))
+            )
+
+            if not is_free:
+                continue
+
+            if model_id in KNOWN_DEAD_OPENROUTER_MODELS:
+                continue
+
+            if model_id not in found:
+                found.append(model_id)
+
+        with openrouter_discovery_lock:
+            openrouter_discovered_models = found[:30]
+            openrouter_discovered_at = time.time()
+
+        print(
+            f"OpenRouter discovery: found {len(found)} free models",
+            flush=True,
+        )
+
+        return list(found[:30])
+
+    except Exception as e:
+        print(
+            "OpenRouter model discovery error:",
+            e,
+            flush=True,
+        )
+        return []
+
+
+def get_openrouter_candidate_models():
+    cleanup_openrouter_model_cooldowns()
+
+    candidates = []
+
+    # Сначала пользовательская конфигурация.
+    for model in OPENROUTER_MODELS:
+        if model in KNOWN_DEAD_OPENROUTER_MODELS:
+            continue
+        if model not in candidates:
+            candidates.append(model)
+
+    # Потом актуальные free-модели из каталога.
+    # Не добавляем их, если провайдер уже заблокирован из-за дневного лимита.
+    if provider_available("openrouter"):
+        for model in discover_openrouter_free_models():
+            if model not in candidates:
+                candidates.append(model)
+
+    return [
+        model
+        for model in candidates
+        if is_openrouter_model_available(model)
+    ]
+
+
+# =========================================================
 # OPENROUTER SINGLE MODEL
 # =========================================================
 
@@ -3420,12 +3596,12 @@ def ask_openrouter(
             "Нет моделей OpenRouter."
         )
 
-    cleanup_openrouter_model_cooldowns()
-
     last_error = None
     attempted = False
 
-    for model in OPENROUTER_MODELS:
+    candidate_models = get_openrouter_candidate_models()
+
+    for model in candidate_models:
 
         if not is_openrouter_model_available(
             model
@@ -3461,7 +3637,25 @@ def ask_openrouter(
                 flush=True,
             )
 
-            if is_rate_limit_error(e):
+            if is_openrouter_daily_limit_error(e):
+                # Это лимит всего free-каталога, а не одной модели.
+                # Не долбим OpenRouter каждым новым сообщением.
+                mark_provider_blocked(
+                    "openrouter",
+                    OPENROUTER_DAILY_LIMIT_BLOCK,
+                )
+                break
+
+            if is_openrouter_not_found_error(e):
+                # 404 не является временным rate-limit. Модель исключаем
+                # надолго, чтобы fallback не тратил запросы на мёртвый slug.
+                mark_openrouter_model_unavailable(
+                    model,
+                    OPENROUTER_MODEL_UNAVAILABLE_BLOCK,
+                    "HTTP 404/invalid model",
+                )
+
+            elif is_rate_limit_error(e):
                 seconds = get_retry_seconds(
                     e,
                     DEFAULT_OPENROUTER_BLOCK,
@@ -3471,6 +3665,14 @@ def ask_openrouter(
                     model,
                     seconds,
                 )
+
+                # Если это дневной лимит free-моделей, блокируем весь OR.
+                if is_openrouter_daily_limit_error(e):
+                    mark_provider_blocked(
+                        "openrouter",
+                        OPENROUTER_DAILY_LIMIT_BLOCK,
+                    )
+                    break
 
             elif is_temporary_ai_error(e):
                 mark_openrouter_model_blocked(
@@ -3584,9 +3786,7 @@ def ask_learning_model(messages):
     ):
         last_error = None
 
-        cleanup_openrouter_model_cooldowns()
-
-        for model in OPENROUTER_MODELS:
+        for model in get_openrouter_candidate_models():
 
             if not is_openrouter_model_available(
                 model
@@ -3616,7 +3816,21 @@ def ask_learning_model(messages):
                     flush=True,
                 )
 
-                if is_rate_limit_error(e):
+                if is_openrouter_daily_limit_error(e):
+                    mark_provider_blocked(
+                        "openrouter",
+                        OPENROUTER_DAILY_LIMIT_BLOCK,
+                    )
+                    break
+
+                if is_openrouter_not_found_error(e):
+                    mark_openrouter_model_unavailable(
+                        model,
+                        OPENROUTER_MODEL_UNAVAILABLE_BLOCK,
+                        "HTTP 404/invalid model",
+                    )
+
+                elif is_rate_limit_error(e):
                     seconds = get_retry_seconds(
                         e,
                         DEFAULT_OPENROUTER_BLOCK,
@@ -3633,7 +3847,13 @@ def ask_learning_model(messages):
                         TEMP_OPENROUTER_BLOCK,
                     )
 
-        if (
+        if last_error and is_openrouter_daily_limit_error(last_error):
+            mark_provider_blocked(
+                "openrouter",
+                OPENROUTER_DAILY_LIMIT_BLOCK,
+            )
+
+        elif (
             last_error
             and is_rate_limit_error(
                 last_error
