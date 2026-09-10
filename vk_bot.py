@@ -3537,6 +3537,12 @@ def callback():
         if not sender_id:
             return "ok"
 
+        # Сообщения от сообществ (других ботов) приходят
+        # с отрицательным from_id — это не живой пользователь,
+        # такие сообщения полностью игнорируются.
+        if int(sender_id) < 0:
+            return "ok"
+
         chat_id = int(
             peer_id
         )
