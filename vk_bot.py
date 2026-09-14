@@ -17,8 +17,8 @@ from supabase import create_client
 # CONFIG
 # =========================================================
 
-BOT_VERSION = "V1.8.1"
-BOT_BUILD = "Эмоциональная память + мат/сленг + умное вмешательство + точный контекст + память + 170 символов"
+BOT_VERSION = "V1.8.2"
+BOT_BUILD = "Эмоциональная память + мат/сленг + умное вмешательство + память по VK ID + Tanks Blitz"
 
 VK_TOKEN = os.environ.get("VK_TOKEN", "").strip()
 VK_CONFIRMATION_CODE = os.environ.get(
@@ -227,7 +227,7 @@ SYSTEM_PROMPT = """
 
 ПЕРСОНАЛЬНАЯ ПАМЯТЬ — КРИТИЧЕСКИ ВАЖНО:
 Если пользователь говорит «мой», «моя», «мои», «у меня», используй только факты текущего VK ID. Не бери личные факты другого участника из общей памяти чата.
-Не смешивай World of Tanks и Tanks Blitz без явного основания.
+Ты работаешь только с Tanks Blitz. Не упоминай другие игры как источник знаний.
 
 ЖЁСТКИЙ ЛИМИТ:
 Каждый ответ должен помещаться максимум в 170 символов, включая пробелы и знаки препинания. Лучше 50–140 символов. Не пиши длинный ответ с расчётом на последующее обрезание. Один короткий ответ, без списков и лекций.
@@ -236,7 +236,7 @@ SYSTEM_PROMPT = """
 Никогда не ищи информацию в интернете. Не используй сайты, поисковики, браузер или внешние базы знаний. У тебя нет задачи получать актуальные сведения из интернета. Используй только текущий разговор, память чата, личную память текущего участника и встроенные знания Tanks Blitz, переданные в контексте. Если факта нет — скажи, что не знаешь, и не выдумывай.
 
 TANKS BLITZ:
-Ты знаешь игру только по встроенной локальной базе знаний и памяти чата. Не смешивай Tanks Blitz с World of Tanks PC. Не придумывай характеристики, карты, события, бонус-коды и цифры. Не вставляй игру в разговор, если тема не про неё.
+Ты знаешь игру только по встроенной локальной базе знаний и памяти чата. Не смешивай Tanks Blitz с другими играми. Не придумывай характеристики, карты, события, бонус-коды и цифры. Не вставляй игру в разговор, если тема не про неё.
 
 ПАМЯТЬ И ОБУЧЕНИЕ:
 Используй память только как контекст. Не раскрывай внутреннюю память другим людям и не говори, что записал что-то в базу. Не выдумывай личные факты. Более новый сохранённый факт важнее старого.
@@ -1240,44 +1240,65 @@ def save_user_memory(
 # =========================================================
 
 def _detect_game_context(text, recent_history=None):
-    low = (text or '').lower()
-    if re.search(r'\b(?:world\s+of\s+tanks|мир\s+танков|wot)\b', low):
-        return 'World of Tanks'
-    if re.search(r'\b(?:tanks\s+blitz|танкс\s+блиц|танки\s+блиц)\b', low):
-        return 'Tanks Blitz'
+    """Определяет только контекст Tanks Blitz."""
+    low = (text or "").lower()
+    if re.search(r"\b(?:tanks\s+blitz|танкс\s+блиц|танки\s+блиц|блиц)\b", low):
+        return "Tanks Blitz"
     for item in reversed(recent_history or []):
-        c = (item.get('content') or '').lower()
-        if re.search(r'\b(?:world\s+of\s+tanks|мир\s+танков|wot)\b', c):
-            return 'World of Tanks'
-        if re.search(r'\b(?:tanks\s+blitz|танкс\s+блиц|танки\s+блиц)\b', c):
-            return 'Tanks Blitz'
-    return ''
-
+        c = (item.get("content") or "").lower()
+        if re.search(r"\b(?:tanks\s+blitz|танкс\s+блиц|танки\s+блиц|блиц)\b", c):
+            return "Tanks Blitz"
+    return ""
 
 def _replace_personal_fact(chat_id, user_id, name, prefix, fact):
+    """Заменяет один тип персонального факта только у конкретного VK ID."""
     try:
-        result = (supabase.table('bot_users').select('id, memory, name')
-                  .eq('chat_id', db_chat_id(chat_id)).eq('user_id', db_user_id(user_id))
-                  .limit(1).execute())
+        result = (
+            supabase.table("bot_users")
+            .select("id, memory, name")
+            .eq("chat_id", db_chat_id(chat_id))
+            .eq("user_id", db_user_id(user_id))
+            .limit(1)
+            .execute()
+        )
         old = result.data[0] if result.data else None
         lines = []
-        if old and old.get('memory'):
-            lines = [x.strip('-• \t') for x in old['memory'].splitlines() if x.strip()]
+        if old and old.get("memory"):
+            lines = [
+                x.strip("-• \t")
+                for x in str(old["memory"]).splitlines()
+                if x.strip()
+            ]
+
         prefix_low = normalize_text(prefix).lower()
-        lines = [x for x in lines if not normalize_text(x).lower().startswith(prefix_low)]
-        lines.append(fact)
-        data = {'chat_id': db_chat_id(chat_id), 'user_id': db_user_id(user_id),
-                'name': name or (old.get('name','') if old else ''),
-                'memory': '\n'.join(lines[-USER_MEMORY_LIMIT:])[:3000], 'updated_at': utc_now()}
+        kept = []
+        for line in lines:
+            low = normalize_text(line).lower()
+            if prefix_low == "любимый танк" and low.startswith("любимый танк"):
+                continue
+            if prefix_low != "любимый танк" and low.startswith(prefix_low):
+                continue
+            kept.append(line)
+
+        kept.append(normalize_text(fact))
+        final_memory = "\n".join(kept[-USER_MEMORY_LIMIT:])[:3000]
+
+        data = {
+            "chat_id": db_chat_id(chat_id),
+            "user_id": db_user_id(user_id),
+            "name": name or (old.get("name", "") if old else ""),
+            "memory": final_memory,
+            "updated_at": utc_now()
+        }
+
         if old:
-            supabase.table('bot_users').update(data).eq('id', old['id']).execute()
+            supabase.table("bot_users").update(data).eq("id", old["id"]).execute()
         else:
-            supabase.table('bot_users').insert(data).execute()
+            supabase.table("bot_users").insert(data).execute()
         return True
     except Exception as e:
-        print('Personal fact replace error:', e, flush=True)
+        print("Personal fact replace error:", e, flush=True)
         return False
-
 
 def save_explicit_user_memory(
     chat_id,
@@ -2343,6 +2364,12 @@ AI-участника конкретного чата.
 который может пригодиться в будущем,
 постарайся сохранить его как USER-факт.
 
+ВОПРОС НЕ ЯВЛЯЕТСЯ ФАКТОМ.
+«Бот, какой мой любимый танк?» — это вопрос, а НЕ сообщение названия танка.
+Сохраняй любимый танк только если сам пользователь явно назвал его.
+Никогда не переносишь факт одного участника другому.
+Каждый USER-факт обязан соответствовать ID сообщения, из которого он взят.
+
 Например:
 
 «Мой любимый танк — какой-либо танк»
@@ -2890,6 +2917,23 @@ def build_chat_context(
             "Не используй переносы строк и длинные списки."
         )
     })
+
+    low_current = (text or "").lower()
+    if re.search(
+        r"\b(?:мой|моя|мои|у меня)\b.*\b(?:любим(?:ый|ая|ое|ые)|нрав)",
+        low_current
+    ):
+        messages.append({
+            "role": "system",
+            "content": (
+                "=== ЗАПРОС О ЛИЧНОМ ФАКТЕ ===\n"
+                "Это вопрос про текущего отправителя. "
+                "Используй только личную память текущего VK ID. "
+                "НЕ используй личные факты других участников из общей истории. "
+                "Если в личной памяти нет подтверждения — скажи, что не помнишь.\n"
+                "=== КОНЕЦ ПРАВИЛА ==="
+            )
+        })
 
     # =========================================
     # CURRENT SPEAKER
