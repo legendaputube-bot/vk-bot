@@ -17,7 +17,7 @@ from supabase import create_client
 # CONFIG
 # =========================================================
 
-BOT_VERSION = "V1.8.0"
+BOT_VERSION = "V1.8.1"
 BOT_BUILD = "Эмоциональная память + мат/сленг + умное вмешательство + точный контекст + память + 170 символов"
 
 VK_TOKEN = os.environ.get("VK_TOKEN", "").strip()
@@ -224,6 +224,10 @@ SYSTEM_PROMPT = """
 
 ЕСЛИ НЕЯСНО:
 Если смысл последней реплики действительно неясен, лучше коротко уточни, чем уверенно выдумай смысл.
+
+ПЕРСОНАЛЬНАЯ ПАМЯТЬ — КРИТИЧЕСКИ ВАЖНО:
+Если пользователь говорит «мой», «моя», «мои», «у меня», используй только факты текущего VK ID. Не бери личные факты другого участника из общей памяти чата.
+Не смешивай World of Tanks и Tanks Blitz без явного основания.
 
 ЖЁСТКИЙ ЛИМИТ:
 Каждый ответ должен помещаться максимум в 170 символов, включая пробелы и знаки препинания. Лучше 50–140 символов. Не пиши длинный ответ с расчётом на последующее обрезание. Один короткий ответ, без списков и лекций.
@@ -1235,6 +1239,46 @@ def save_user_memory(
 # EXPLICIT USER MEMORY
 # =========================================================
 
+def _detect_game_context(text, recent_history=None):
+    low = (text or '').lower()
+    if re.search(r'\b(?:world\s+of\s+tanks|мир\s+танков|wot)\b', low):
+        return 'World of Tanks'
+    if re.search(r'\b(?:tanks\s+blitz|танкс\s+блиц|танки\s+блиц)\b', low):
+        return 'Tanks Blitz'
+    for item in reversed(recent_history or []):
+        c = (item.get('content') or '').lower()
+        if re.search(r'\b(?:world\s+of\s+tanks|мир\s+танков|wot)\b', c):
+            return 'World of Tanks'
+        if re.search(r'\b(?:tanks\s+blitz|танкс\s+блиц|танки\s+блиц)\b', c):
+            return 'Tanks Blitz'
+    return ''
+
+
+def _replace_personal_fact(chat_id, user_id, name, prefix, fact):
+    try:
+        result = (supabase.table('bot_users').select('id, memory, name')
+                  .eq('chat_id', db_chat_id(chat_id)).eq('user_id', db_user_id(user_id))
+                  .limit(1).execute())
+        old = result.data[0] if result.data else None
+        lines = []
+        if old and old.get('memory'):
+            lines = [x.strip('-• \t') for x in old['memory'].splitlines() if x.strip()]
+        prefix_low = normalize_text(prefix).lower()
+        lines = [x for x in lines if not normalize_text(x).lower().startswith(prefix_low)]
+        lines.append(fact)
+        data = {'chat_id': db_chat_id(chat_id), 'user_id': db_user_id(user_id),
+                'name': name or (old.get('name','') if old else ''),
+                'memory': '\n'.join(lines[-USER_MEMORY_LIMIT:])[:3000], 'updated_at': utc_now()}
+        if old:
+            supabase.table('bot_users').update(data).eq('id', old['id']).execute()
+        else:
+            supabase.table('bot_users').insert(data).execute()
+        return True
+    except Exception as e:
+        print('Personal fact replace error:', e, flush=True)
+        return False
+
+
 def save_explicit_user_memory(
     chat_id,
     user_id,
@@ -1357,6 +1401,10 @@ def save_explicit_user_memory(
     if not fact:
         return False
 
+    game_context = _detect_game_context(text, get_chat_memory(chat_id, 12))
+    if fact.startswith('Любимый танк — ') and game_context:
+        fact = 'Любимый танк (' + game_context + ') — ' + fact[len('Любимый танк — '):].strip()
+
     # -----------------------------------------
     # Защита от чувствительных данных
     # -----------------------------------------
@@ -1381,12 +1429,10 @@ def save_explicit_user_memory(
     ):
         return False
 
-    save_user_memory(
-        chat_id,
-        user_id,
-        user_name,
-        fact
-    )
+    if fact.startswith('Любимый танк'):
+        _replace_personal_fact(chat_id, user_id, user_name, 'Любимый танк', fact)
+    else:
+        save_user_memory(chat_id, user_id, user_name, fact)
 
     print(
         f"EXPLICIT MEMORY SAVED | "
@@ -2413,16 +2459,25 @@ NONE
                     if not fact:
                         continue
 
-                    name = known_names.get(
-                        str(numeric_uid)
-                    )
+                    name = known_names.get(str(numeric_uid))
 
-                    save_user_memory(
-                        chat_id,
-                        numeric_uid,
-                        name,
-                        fact
-                    )
+                    if re.match(r'^Любимый танк', fact, re.IGNORECASE):
+                        candidate = re.sub(r'^Любимый танк(?:\s*\([^)]*\))?\s*[—:-]\s*', '', fact, flags=re.IGNORECASE).strip()
+                        verified = False
+                        for h in history:
+                            if str(h.get('speaker_id') or '') != str(numeric_uid):
+                                continue
+                            hc = h.get('content') or ''
+                            hm = re.search(r'мой\s+любим(?:ый|ая|ое|ые)\s+танк(?:а|ов)?\s*(?:—|-|:|=|это|есть)?\s*(.+)$', hc, re.IGNORECASE)
+                            if hm and normalize_text(hm.group(1)).strip(' .,!?').lower() == normalize_text(candidate).strip(' .,!?').lower():
+                                verified = True
+                                break
+                        if not verified:
+                            print('LEARNING REJECTED PERSONAL TANK | uid=' + str(numeric_uid) + ' | fact=' + fact, flush=True)
+                            continue
+                        _replace_personal_fact(chat_id, numeric_uid, name, 'Любимый танк', fact)
+                    else:
+                        save_user_memory(chat_id, numeric_uid, name, fact)
 
                 # =========================================
                 # CHAT KNOWLEDGE
@@ -2697,8 +2752,9 @@ def build_chat_context(
 
                 "content":
                     (
-                        "Полезная долговременная "
-                        "память этого конкретного чата:\n"
+                        "ОБЩАЯ ПАМЯТЬ ЧАТА — НЕ ПЕРСОНАЛЬНАЯ.\n"
+                        "Не используй её для ответа на «мой/мои/у меня», если нет подтверждения в личной памяти текущего ID.\n"
+                        "Полезная долговременная память этого конкретного чата:\n"
                         + "\n".join(lines)
                     )
             })
