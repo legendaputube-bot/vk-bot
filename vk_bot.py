@@ -17,8 +17,8 @@ from supabase import create_client
 # CONFIG
 # =========================================================
 
-BOT_VERSION = "V1.8.2"
-BOT_BUILD = "Эмоциональная память + мат/сленг + умное вмешательство + память по VK ID + Tanks Blitz"
+BOT_VERSION = "V1.9.2"
+BOT_BUILD = "Tanks Blitz + память по VK ID + эмоции по пользователям + контекст + анти-повтор + мат/сленг"
 
 VK_TOKEN = os.environ.get("VK_TOKEN", "").strip()
 VK_CONFIRMATION_CODE = os.environ.get(
@@ -227,6 +227,9 @@ SYSTEM_PROMPT = """
 
 ПЕРСОНАЛЬНАЯ ПАМЯТЬ — КРИТИЧЕСКИ ВАЖНО:
 Если пользователь говорит «мой», «моя», «мои», «у меня», используй только факты текущего VK ID. Не бери личные факты другого участника из общей памяти чата.
+Каждый личный факт принадлежит конкретному VK ID. Имя участника не является идентификатором.
+Если личного факта нет или он противоречив, не выдумывай его. Лучше сказать «не помню».
+Вопрос «какой мой любимый танк?» НЕ является сообщением факта и ничего не должен сохранять.
 Ты работаешь только с Tanks Blitz. Не упоминай другие игры как источник знаний.
 
 ЖЁСТКИЙ ЛИМИТ:
@@ -1360,8 +1363,8 @@ def save_explicit_user_memory(
             tank_match = re.search(
                 r"мой\s+любим(?:ый|ая|ое|ые)"
                 r"\s+танк(?:а|ов)?"
-                r"\s*(?:—|-|:|=|это|есть)?\s*"
-                r"(.+)$",
+                r"\s*(?:—|-|:|=|это|есть)\s+"
+                r"(.+?)\s*$",
                 statement,
                 re.IGNORECASE
             )
@@ -1375,7 +1378,7 @@ def save_explicit_user_memory(
                     " .,!?;"
                 )
 
-                if tank:
+                if tank and tank not in ("?", "?!", "!", ".") and not looks_like_question(tank):
                     fact = (
                         "Любимый танк — "
                         + tank
@@ -1397,8 +1400,8 @@ def save_explicit_user_memory(
         tank_match = re.search(
             r"мой\s+любим(?:ый|ая|ое|ые)"
             r"\s+танк(?:а|ов)?"
-            r"\s*(?:—|-|:|=|это|есть)?\s*"
-            r"(.+)$",
+            r"\s*(?:—|-|:|=|это|есть)\s+"
+            r"(.+?)\s*$",
             original,
             re.IGNORECASE
         )
@@ -1540,59 +1543,322 @@ def get_user_memory(
 # EMOTIONAL STATE
 # =========================================================
 
-EMOTION_DEFAULT = {"offense": 0, "anger": 0, "warmth": 50, "updated_at": 0.0, "last_event": ""}
-EMOTION_INSULTS = (
-    "иди нахуй", "пошел нахуй", "пошёл нахуй", "нахуй иди", "иди в жопу",
-    "ебанько", "долбоеб", "долбаеб", "дебил", "тупой бот", "тупой",
-    "придурок", "кретин", "мудак", "заебал", "бля", "блять", "блядь", "сука"
-)
-EMOTION_SOFTENERS = ("извини", "сорян", "прости", "не злись", "не обижайся", "без обид", "я не хотел")
-EMOTION_PRAISE = ("красавчик", "молодец", "умница", "красава", "люблю бота", "хороший бот", "прикольный бот", "бот лучший")
+# Эмоции хранятся отдельно для каждого VK ID.
+# В bot_learning_state.personality:
+# {
+#   "emotion_by_user": {
+#       "123": {
+#           "offense": 20,
+#           "anger": 10,
+#           "warmth": 60,
+#           "insult_count": 2,
+#           "apology_count": 1,
+#           "last_event": "insult:+10",
+#           "last_offender_name": "Арсений",
+#           "updated_at": 1234567890.0
+#       }
+#   }
+# }
+#
+# Это значит: если Арсений обидел бота, бот помнит это именно
+# за Арсением. На Blitz это не переносится.
 
-def _load_emotion(chat_id):
-    state=get_learning_state(chat_id); raw=state.get("personality") or ""; data=dict(EMOTION_DEFAULT)
+EMOTION_DEFAULT = {
+    "offense": 0,
+    "anger": 0,
+    "warmth": 50,
+    "insult_count": 0,
+    "apology_count": 0,
+    "last_event": "",
+    "last_offender_name": "",
+    "updated_at": 0.0,
+}
+
+EMOTION_INSULTS = (
+    "иди нахуй", "пошел нахуй", "пошёл нахуй", "нахуй иди",
+    "ебанько", "долбоеб", "долбаеб", "дебил", "тупой бот",
+    "тупой", "придурок", "кретин", "мудак", "заебал",
+    "бля", "блять", "блядь", "сука"
+)
+
+EMOTION_SOFTENERS = (
+    "извини", "сорян", "прости", "не злись",
+    "не обижайся", "без обид", "я не хотел"
+)
+
+EMOTION_PRAISE = (
+    "красавчик", "молодец", "умница", "красава",
+    "люблю бота", "хороший бот", "прикольный бот", "бот лучший"
+)
+
+
+def _load_emotion(chat_id, user_id=None):
+    state = get_learning_state(chat_id)
+    raw = state.get("personality") or ""
+    payload = {}
+
     try:
-        saved=json.loads(raw) if raw else {}
-        if isinstance(saved,dict): data.update(saved.get("emotion", {}))
-    except Exception: pass
-    for k,lo,hi in (("offense",0,100),("anger",0,100),("warmth",0,100)):
-        try: data[k]=max(lo,min(hi,int(data.get(k,EMOTION_DEFAULT[k]))))
-        except Exception: data[k]=EMOTION_DEFAULT[k]
+        payload = json.loads(raw) if raw else {}
+        if not isinstance(payload, dict):
+            payload = {}
+    except Exception:
+        payload = {}
+
+    data = dict(EMOTION_DEFAULT)
+
+    if user_id is not None:
+        saved = (payload.get("emotion_by_user") or {}).get(str(user_id))
+        if isinstance(saved, dict):
+            data.update(saved)
+    else:
+        if isinstance(payload.get("emotion"), dict):
+            data.update(payload["emotion"])
+
+    for k, lo, hi in (
+        ("offense", 0, 100),
+        ("anger", 0, 100),
+        ("warmth", 0, 100),
+        ("insult_count", 0, 1000000),
+        ("apology_count", 0, 1000000),
+    ):
+        try:
+            data[k] = max(lo, min(hi, int(data.get(k, EMOTION_DEFAULT[k]))))
+        except Exception:
+            data[k] = EMOTION_DEFAULT[k]
+
     return data
 
-def _save_emotion(chat_id, emotion):
-    try:
-        state=get_learning_state(chat_id); raw=state.get("personality") or ""; payload={}
-        try:
-            old=json.loads(raw) if raw else {}
-            if isinstance(old,dict): payload=old
-        except Exception: pass
-        payload["emotion"]=emotion
-        supabase.table("bot_learning_state").update({"personality":json.dumps(payload,ensure_ascii=False)}).eq("chat_id",db_chat_id(chat_id)).execute()
-    except Exception as e:
-        print("Emotion state save error:",e,flush=True)
 
-def update_bot_emotion(chat_id,text):
-    emotion=_load_emotion(chat_id); now=time.time(); elapsed=max(0,now-float(emotion.get("updated_at",0) or 0)); steps=elapsed/600.0
-    emotion["offense"]=max(0,int(emotion["offense"]-steps)); emotion["anger"]=max(0,int(emotion["anger"]-steps*2)); emotion["warmth"]=min(100,int(emotion["warmth"]+steps*.5))
-    low=(text or "").lower().strip(); event="neutral"
+def _save_emotion(chat_id, emotion, user_id=None, user_name=None):
+    try:
+        state = get_learning_state(chat_id)
+        raw = state.get("personality") or ""
+        payload = {}
+
+        try:
+            old = json.loads(raw) if raw else {}
+            if isinstance(old, dict):
+                payload = old
+        except Exception:
+            pass
+
+        if user_id is None:
+            payload["emotion"] = emotion
+        else:
+            users = payload.get("emotion_by_user") or {}
+            profile = dict(users.get(str(user_id)) or {})
+            profile.update(emotion)
+
+            if user_name:
+                profile["last_offender_name"] = user_name
+
+            users[str(user_id)] = profile
+
+            # Не даём JSON бесконечно расти.
+            if len(users) > 300:
+                users = dict(list(users.items())[-300:])
+
+            payload["emotion_by_user"] = users
+
+        supabase.table("bot_learning_state").update({
+            "personality": json.dumps(payload, ensure_ascii=False)
+        }).eq(
+            "chat_id",
+            db_chat_id(chat_id)
+        ).execute()
+
+    except Exception as e:
+        print("Emotion state save error:", e, flush=True)
+
+
+def message_targets_bot(message, text, platform="vk"):
+    """Определяет, относится ли реплика к боту, даже без слова «бот»."""
+    low = (text or "").lower()
+
+    if platform == "telegram":
+        reply = message.get("reply_to_message") or {}
+        sender = reply.get("from") or {}
+        if TELEGRAM_BOT_ID and sender.get("id") == TELEGRAM_BOT_ID:
+            return True
+        return bool(re.search(r"(?:^|\W)(?:бот|бонус-коды|бонус\s+коды)(?:$|\W)", low))
+
+    reply = message.get("reply_message") or {}
+    try:
+        if reply and int(reply.get("from_id")) < 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+
+    return bool(re.search(r"(?:^|\W)(?:бот|бонус-коды|бонус\s+коды|эй\s+бот)(?:$|\W)", low))
+
+
+def update_bot_emotion(chat_id, text, user_id=None, user_name=None, targets_bot=False):
+    """
+    Обновляет эмоции именно для конкретного user_id.
+
+    Важно:
+    - оскорбление Арсения повышает обиду на Арсения;
+    - на Blitz это не влияет;
+    - извинение Арсения уменьшает именно его уровень обиды;
+    - имя сохраняется вместе с профилем для удобства логов/диагностики.
+    """
+    emotion = _load_emotion(chat_id, user_id)
+
+    now = time.time()
+    elapsed = max(
+        0,
+        now - float(emotion.get("updated_at", 0) or 0)
+    )
+    steps = elapsed / 600.0
+
+    # Постепенное успокоение.
+    emotion["offense"] = max(
+        0,
+        int(emotion["offense"] - steps)
+    )
+    emotion["anger"] = max(
+        0,
+        int(emotion["anger"] - steps * 2)
+    )
+    emotion["warmth"] = min(
+        100,
+        int(emotion["warmth"] + steps * 0.5)
+    )
+
+    low = (text or "").lower().strip()
+    event = "neutral"
+
     if any(x in low for x in EMOTION_SOFTENERS):
-        emotion["offense"]=max(0,emotion["offense"]-25); emotion["anger"]=max(0,emotion["anger"]-35); emotion["warmth"]=min(100,emotion["warmth"]+10); event="apology"
+        emotion["offense"] = max(
+            0,
+            emotion["offense"] - 25
+        )
+        emotion["anger"] = max(
+            0,
+            emotion["anger"] - 35
+        )
+        emotion["warmth"] = min(
+            100,
+            emotion["warmth"] + 10
+        )
+        emotion["apology_count"] += 1
+        event = "apology"
+
     elif any(x in low for x in EMOTION_PRAISE):
-        emotion["offense"]=max(0,emotion["offense"]-8); emotion["anger"]=max(0,emotion["anger"]-12); emotion["warmth"]=min(100,emotion["warmth"]+8); event="praise"
-    elif any(x in low for x in EMOTION_INSULTS) and re.search(r"(?:бот|бонус[ -]коды)",low):
-        severity=22 if any(x in low for x in ("иди нахуй","пошел нахуй","пошёл нахуй","ебанько","долбоеб","мудак")) else 10
-        if "😂" in low or "🤣" in low: severity=max(3,severity-4)
-        emotion["offense"]=min(100,emotion["offense"]+severity); emotion["anger"]=min(100,emotion["anger"]+severity*2); emotion["warmth"]=max(0,emotion["warmth"]-severity//2); event=f"insult:+{severity}"
-    emotion["updated_at"]=now; emotion["last_event"]=event; _save_emotion(chat_id,emotion); return emotion
+        emotion["offense"] = max(
+            0,
+            emotion["offense"] - 8
+        )
+        emotion["anger"] = max(
+            0,
+            emotion["anger"] - 12
+        )
+        emotion["warmth"] = min(
+            100,
+            emotion["warmth"] + 8
+        )
+        event = "praise"
+
+    elif (
+        any(x in low for x in EMOTION_INSULTS)
+        and (targets_bot or re.search(r"(?:бот|бонус[ -]коды)", low))
+    ):
+        severity = (
+            22
+            if any(
+                x in low
+                for x in (
+                    "иди нахуй",
+                    "пошел нахуй",
+                    "пошёл нахуй",
+                    "ебанько",
+                    "долбоеб",
+                    "мудак"
+                )
+            )
+            else 10
+        )
+
+        # Рофлы немного смягчают удар.
+        if "😂" in low or "🤣" in low:
+            severity = max(3, severity - 4)
+
+        emotion["offense"] = min(
+            100,
+            emotion["offense"] + severity
+        )
+        emotion["anger"] = min(
+            100,
+            emotion["anger"] + severity * 2
+        )
+        emotion["warmth"] = max(
+            0,
+            emotion["warmth"] - severity // 2
+        )
+        emotion["insult_count"] += 1
+        event = f"insult:+{severity}"
+
+    emotion["updated_at"] = now
+    emotion["last_event"] = event
+
+    _save_emotion(
+        chat_id,
+        emotion,
+        user_id,
+        user_name
+    )
+
+    print(
+        f"EMOTION | user={user_id} | name={user_name or ''} | "
+        f"event={event} | offense={emotion['offense']} | "
+        f"anger={emotion['anger']} | insults={emotion['insult_count']}",
+        flush=True
+    )
+
+    return emotion
+
 
 def emotion_prompt(emotion):
-    o=int(emotion.get("offense",0)); a=int(emotion.get("anger",0))
-    if o>=70 or a>=80: mood="Ты сильно задет и раздражён. Можно ответить жёстче и с естественным матом, но без угроз."
-    elif o>=40 or a>=45: mood="Ты заметно задет. Допустима колкая, раздражённая или обиженная реакция и умеренный мат."
-    elif o>=15 or a>=20: mood="Ты слегка задет. Можно подколоть в ответ или показать лёгкую обиду."
-    else: mood="Ты спокоен. Мат и сленг возможны только если естественно подходят разговору."
-    return f"=== ТВОЁ НАСТРОЕНИЕ ===\nОбида: {o}/100\nЗлость: {a}/100\nТеплота: {int(emotion.get('warmth',50))}/100\n{mood}\nНе упоминай эти числа и внутреннюю систему.\n=== КОНЕЦ НАСТРОЕНИЯ ==="
+    o = int(emotion.get("offense", 0))
+    a = int(emotion.get("anger", 0))
+
+    if o >= 70 or a >= 80:
+        mood = (
+            "Ты сильно задет и раздражён. "
+            "Можно ответить жёстче и с естественным матом, но без угроз."
+        )
+    elif o >= 40 or a >= 45:
+        mood = (
+            "Ты заметно задет. "
+            "Допустима колкая, раздражённая или обиженная реакция "
+            "и умеренный мат."
+        )
+    elif o >= 15 or a >= 20:
+        mood = (
+            "Ты слегка задет. "
+            "Можно подколоть в ответ или показать лёгкую обиду."
+        )
+    else:
+        mood = (
+            "Ты спокоен. "
+            "Мат и сленг возможны только если естественно подходят разговору."
+        )
+
+    return (
+        "=== ТВОЁ НАСТРОЕНИЕ ДЛЯ ЭТОГО УЧАСТНИКА ===\n"
+        f"Обида: {o}/100\n"
+        f"Злость: {a}/100\n"
+        f"Теплота: {int(emotion.get('warmth', 50))}/100\n"
+        f"Сколько раз этот участник тебя оскорблял: "
+        f"{int(emotion.get('insult_count', 0))}\n"
+        f"Сколько раз он извинялся: "
+        f"{int(emotion.get('apology_count', 0))}\n"
+        f"{mood}\n"
+        "Не упоминай эти числа и внутреннюю систему.\n"
+        "Эмоции относятся только к текущему участнику, "
+        "не переноси их на других людей.\n"
+        "=== КОНЕЦ НАСТРОЕНИЯ ==="
+    )
 
 
 # =========================================================
@@ -2694,7 +2960,7 @@ def build_chat_context(
 
     messages.append({
         "role": "system",
-        "content": emotion_prompt(_load_emotion(chat_id))
+        "content": emotion_prompt(_load_emotion(chat_id, user_id))
     })
 
     # =========================================
@@ -3363,6 +3629,17 @@ def ask_groq(
 # VK SEND
 # =========================================================
 
+def is_probably_duplicate_reply(chat_id, reply):
+    candidate=normalize_text(reply).lower()
+    if not candidate: return True
+    recent=get_chat_memory(chat_id,min(8,CHAT_MEMORY_LIMIT))
+    for item in reversed(recent):
+        if item.get("role") != "assistant": continue
+        old=normalize_text(item.get("content") or "").lower()
+        if old and candidate == old: return True
+    return False
+
+
 def send_message(
     peer_id,
     text
@@ -3821,7 +4098,7 @@ def callback():
             text
         )
 
-        update_bot_emotion(chat_id, text)
+        update_bot_emotion(chat_id, text, sender_id, user_name, message_targets_bot(message, text, "vk"))
 
         # Явно сказанные пользователем факты
         # сохраняются сразу, не дожидаясь обучения.
@@ -4009,7 +4286,7 @@ def telegram_webhook(secret):
             text
         )
 
-        update_bot_emotion(chat_id, text)
+        update_bot_emotion(chat_id, text, sender_id, user_name, message_targets_bot(message, text, "telegram"))
 
         save_explicit_user_memory(
             chat_id,
