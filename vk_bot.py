@@ -74,6 +74,16 @@ if SUPABASE_URL and not SUPABASE_URL.startswith(
 ):
     SUPABASE_URL = "https://" + SUPABASE_URL
 
+# Wargaming Blitz API — публичные данные по танкам (характеристики),
+# не требует привязки чьего-либо игрового аккаунта.
+WGBLITZ_APPLICATION_ID = os.environ.get(
+    "WGBLITZ_APPLICATION_ID", ""
+).strip()
+
+WGBLITZ_REGION = os.environ.get(
+    "WGBLITZ_REGION", "eu"
+).strip().lower()
+
 
 # =========================================================
 # SUPABASE
@@ -100,6 +110,12 @@ TELEGRAM_API = (
 
 OPENROUTER_API = (
     "https://openrouter.ai/api/v1/chat/completions"
+)
+
+WGBLITZ_API = (
+    f"https://api.wotblitz.{WGBLITZ_REGION}/wotb"
+    if WGBLITZ_APPLICATION_ID
+    else ""
 )
 
 
@@ -313,6 +329,185 @@ LOCAL_GAME_KNOWLEDGE = {
     "rule": "Если точного игрового факта нет в локальных знаниях или памяти чата, не выдумывать его и не искать в интернете."
 }
 
+
+# =========================================================
+# WG BLITZ TANK ENCYCLOPEDIA — реальные характеристики танков
+# (публичные данные, не требуют игрового аккаунта пользователя)
+# =========================================================
+
+TANK_ENCYCLOPEDIA_CACHE = {}
+TANK_ENCYCLOPEDIA_CACHE_TIME = 0
+TANK_ENCYCLOPEDIA_TTL = 24 * 60 * 60  # обновляем раз в сутки
+TANK_ENCYCLOPEDIA_LOCK = threading.Lock()
+
+
+def _load_tank_encyclopedia():
+    """Скачивает и кэширует список танков с характеристиками с WG API."""
+
+    global TANK_ENCYCLOPEDIA_CACHE
+    global TANK_ENCYCLOPEDIA_CACHE_TIME
+
+    if not WGBLITZ_APPLICATION_ID:
+        return {}
+
+    now = time.time()
+
+    with TANK_ENCYCLOPEDIA_LOCK:
+
+        if (
+            TANK_ENCYCLOPEDIA_CACHE
+            and (now - TANK_ENCYCLOPEDIA_CACHE_TIME) < TANK_ENCYCLOPEDIA_TTL
+        ):
+            return TANK_ENCYCLOPEDIA_CACHE
+
+        try:
+            resp = requests.get(
+                f"{WGBLITZ_API}/encyclopedia/vehicles/",
+                params={
+                    "application_id": WGBLITZ_APPLICATION_ID,
+                    "language": "ru"
+                },
+                timeout=15
+            ).json()
+
+            if resp.get("status") != "ok":
+                print("WGBLITZ encyclopedia error:", resp, flush=True)
+                return TANK_ENCYCLOPEDIA_CACHE
+
+            data = resp.get("data") or {}
+
+            new_cache = {}
+
+            for tank_id, tank in data.items():
+                name = (tank.get("name") or "").strip()
+                if name:
+                    new_cache[name.lower()] = tank
+
+            TANK_ENCYCLOPEDIA_CACHE = new_cache
+            TANK_ENCYCLOPEDIA_CACHE_TIME = now
+
+            print(
+                f"WGBLITZ encyclopedia loaded: "
+                f"{len(new_cache)} tanks",
+                flush=True
+            )
+
+        except Exception as e:
+            print("WGBLITZ encyclopedia fetch error:", e, flush=True)
+
+        return TANK_ENCYCLOPEDIA_CACHE
+
+
+def find_tank(name_query):
+    """Ищет танк по (частичному) названию среди реальных данных WG."""
+
+    cache = _load_tank_encyclopedia()
+
+    if not cache:
+        return None
+
+    q = (name_query or "").strip().lower()
+
+    if not q:
+        return None
+
+    if q in cache:
+        return cache[q]
+
+    matches = [
+        t for key, t in cache.items() if q and q in key
+    ]
+
+    if len(matches) == 1:
+        return matches[0]
+
+    if len(matches) > 1:
+        matches.sort(key=lambda t: len(t.get("name", "")))
+        return matches[0]
+
+    return None
+
+
+TANK_QUESTION_RE = re.compile(
+    r"(характеристик|сколько\s+альф|альфа\b|пробит|урон\b|"
+    r"броня\b|бронирован|хп\s+у|\bхп\b|запас\s+хода|скорость\s+у|"
+    r"обзор\s+у|дпм\b|dpm\b)",
+    re.IGNORECASE
+)
+
+
+def looks_like_tank_question(text):
+    return bool(TANK_QUESTION_RE.search(text or ""))
+
+
+TANK_STOPWORDS_RE = re.compile(
+    r"(характеристик[аи]?|характеристики|сколько|альфа|альфы|"
+    r"пробитие|пробит\w*|урон\w*|броня|бронирован\w*|запас\s+хода|"
+    r"скорость|обзор|дпм|dpm|у\s+танка|танка|танк[ае]?|какие|какой|"
+    r"это|бот|у)",
+    re.IGNORECASE
+)
+
+
+def extract_tank_name_guess(text):
+    """Грубо вырезает служебные слова, оставляя предполагаемое имя танка.
+    Финальное сопоставление всё равно идёт по реальному списку в find_tank()."""
+
+    cleaned = TANK_STOPWORDS_RE.sub(" ", text or "")
+    cleaned = normalize_text(cleaned).strip(" ?!.,:;")
+    return cleaned
+
+
+def format_tank_answer(tank):
+    """Короткий ответ из реальных данных WG API (без ИИ и без выдумывания)."""
+
+    name = tank.get("name", "Танк")
+    tier = tank.get("tier", "?")
+
+    parts = [f"{name} (ур. {tier})"]
+
+    profile = tank.get("default_profile") or {}
+
+    hp = profile.get("hp")
+    if hp:
+        parts.append(f"ХП: {hp}")
+
+    ammo = profile.get("ammo") or []
+
+    if ammo:
+        first_shell = ammo[0]
+        dmg = first_shell.get("damage")
+        pen = first_shell.get("penetration")
+
+        if isinstance(dmg, dict):
+            dmg = dmg.get("armor_piercing") or next(iter(dmg.values()), None)
+        if isinstance(pen, dict):
+            pen = pen.get("armor_piercing") or next(iter(pen.values()), None)
+
+        if dmg:
+            parts.append(f"Альфа: {dmg}")
+        if pen:
+            parts.append(f"Пробитие: {pen}")
+
+    armor = profile.get("armor") or {}
+    hull = armor.get("hull") or {}
+    front = hull.get("front")
+    if front:
+        parts.append(f"Броня лоб корпуса: {front} мм")
+
+    speed = profile.get("speed_forward")
+    if speed:
+        parts.append(f"Скорость: {speed} км/ч")
+
+    # Печатаем сырые данные в лог Render — по ним можно уточнить
+    # названия полей, если что-то не подхватилось выше.
+    print(
+        "TANK RAW DATA:",
+        json.dumps(tank, ensure_ascii=False)[:1500],
+        flush=True
+    )
+
+    return limit_text(" | ".join(parts))
 
 
 # =========================================================
@@ -3791,6 +3986,20 @@ def ask_ai(chat_id, text, user_id, user_name):
 
     if not SYSTEM_ENABLED:
         raise RuntimeError("Система временно отключена.")
+
+    # Вопрос про характеристики танка — отвечаем реальными данными
+    # WG API напрямую, без ИИ (чтобы бот не выдумывал цифры).
+    if WGBLITZ_APPLICATION_ID and looks_like_tank_question(text):
+
+        tank_name_guess = extract_tank_name_guess(text)
+
+        tank = (
+            find_tank(tank_name_guess)
+            or find_tank(text)
+        )
+
+        if tank:
+            return format_tank_answer(tank)
 
     try:
         return ask_groq(chat_id, text, user_id, user_name)
