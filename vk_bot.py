@@ -5,6 +5,7 @@ import hashlib
 import json
 import random
 import threading
+import difflib
 from datetime import datetime, timezone
 
 import requests
@@ -399,31 +400,86 @@ def _load_tank_encyclopedia():
 
 
 def find_tank(name_query):
-    """Ищет танк по (частичному) названию среди реальных данных WG."""
+    """Ищет танк по (частичному) названию среди реальных данных WG.
+
+    Пробует: как есть -> транслит кириллицы в похожую латиницу
+    (частая опечатка вида 'т 100 лт' вместо 'T100 LT') -> нечёткое
+    совпадение (опечатки, падежные окончания вроде 'объекта' вместо
+    'объект')."""
 
     cache = _load_tank_encyclopedia()
 
     if not cache:
         return None
 
-    q = (name_query or "").strip().lower()
+    candidates = _tank_query_candidates(name_query)
 
-    if not q:
+    hit = _lookup_exact_or_substring(candidates, cache)
+    if hit:
+        return hit
+
+    for q in candidates:
+        close = difflib.get_close_matches(
+            q, cache.keys(), n=1, cutoff=0.72
+        )
+        if close:
+            return cache[close[0]]
+
+    return None
+
+
+def find_tank_strict(name_query):
+    """Тот же поиск, но БЕЗ нечёткого совпадения — используется для общих
+    вопросов ('расскажи про X'), чтобы случайно не перехватить вопрос,
+    который вообще не про танк."""
+
+    cache = _load_tank_encyclopedia()
+
+    if not cache:
         return None
 
-    if q in cache:
-        return cache[q]
+    candidates = _tank_query_candidates(name_query)
 
-    matches = [
-        t for key, t in cache.items() if q and q in key
-    ]
+    return _lookup_exact_or_substring(candidates, cache)
 
-    if len(matches) == 1:
-        return matches[0]
 
-    if len(matches) > 1:
-        matches.sort(key=lambda t: len(t.get("name", "")))
-        return matches[0]
+_CYR_TO_LAT_LOOKALIKE = str.maketrans({
+    "а": "a", "в": "b", "е": "e", "з": "3", "и": "i", "к": "k",
+    "м": "m", "н": "h", "о": "o", "р": "p", "с": "c", "т": "t",
+    "у": "y", "х": "x",
+    "А": "A", "В": "B", "Е": "E", "З": "3", "И": "I", "К": "K",
+    "М": "M", "Н": "H", "О": "O", "Р": "P", "С": "C", "Т": "T",
+    "У": "Y", "Х": "X",
+})
+
+
+def _translit_guess(text):
+    """Меняет кириллицу, похожую на латиницу, на настоящую латиницу
+    ('т 100 лт' -> 't 100 лt'), чтобы совпасть с латинскими именами
+    танков вроде 'T100 LT'."""
+    return (text or "").translate(_CYR_TO_LAT_LOOKALIKE)
+
+
+def _tank_query_candidates(name_query):
+    q1 = (name_query or "").strip().lower()
+    q2 = _translit_guess(name_query or "").strip().lower()
+    return [q for q in dict.fromkeys([q1, q2]) if q]
+
+
+def _lookup_exact_or_substring(candidates, cache):
+    for q in candidates:
+        if q in cache:
+            return cache[q]
+
+    for q in candidates:
+        matches = [
+            t for key, t in cache.items() if q and q in key
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            matches.sort(key=lambda t: len(t.get("name", "")))
+            return matches[0]
 
     return None
 
@@ -443,7 +499,9 @@ def looks_like_tank_question(text):
 TANK_STOPWORDS_RE = re.compile(
     r"(характеристик[аи]?|характеристики|сколько|альфа|альфы|"
     r"пробитие|пробит\w*|урон\w*|броня|бронирован\w*|запас\s+хода|"
-    r"скорость|обзор|дпм|dpm|у\s+танка|танка|танк[ае]?|какие|какой|"
+    r"скорость|обзор|дпм|dpm|у\s+танка|танка|танк[ае]?|как[а-я]*|"
+    r"расскаж\w*|информац\w*|инфо|что\s+за|про|о\b|"
+    r"стоит|ли|качать|подробност\w*|"
     r"это|бот|у)",
     re.IGNORECASE
 )
@@ -508,6 +566,192 @@ def format_tank_answer(tank):
     )
 
     return limit_text(" | ".join(parts))
+
+
+# =========================================================
+# WG BLITZ MAPS (arenas) — список карт
+# =========================================================
+
+MAP_ENCYCLOPEDIA_CACHE = []
+MAP_ENCYCLOPEDIA_CACHE_TIME = 0
+MAP_ENCYCLOPEDIA_LOCK = threading.Lock()
+
+
+def _load_map_encyclopedia():
+    """Скачивает и кэширует список карт с WG API."""
+
+    global MAP_ENCYCLOPEDIA_CACHE
+    global MAP_ENCYCLOPEDIA_CACHE_TIME
+
+    if not WGBLITZ_APPLICATION_ID:
+        return []
+
+    now = time.time()
+
+    with MAP_ENCYCLOPEDIA_LOCK:
+
+        if (
+            MAP_ENCYCLOPEDIA_CACHE
+            and (now - MAP_ENCYCLOPEDIA_CACHE_TIME) < TANK_ENCYCLOPEDIA_TTL
+        ):
+            return MAP_ENCYCLOPEDIA_CACHE
+
+        try:
+            resp = requests.get(
+                f"{WGBLITZ_API}/encyclopedia/arenas/",
+                params={
+                    "application_id": WGBLITZ_APPLICATION_ID,
+                    "language": "ru"
+                },
+                timeout=15
+            ).json()
+
+            if resp.get("status") != "ok":
+                print("WGBLITZ arenas error:", resp, flush=True)
+                return MAP_ENCYCLOPEDIA_CACHE
+
+            data = resp.get("data") or {}
+
+            names = sorted(
+                {
+                    (arena.get("name") or "").strip()
+                    for arena in data.values()
+                    if (arena.get("name") or "").strip()
+                }
+            )
+
+            MAP_ENCYCLOPEDIA_CACHE = names
+            MAP_ENCYCLOPEDIA_CACHE_TIME = now
+
+            print(
+                f"WGBLITZ arenas loaded: {len(names)} maps",
+                flush=True
+            )
+
+        except Exception as e:
+            print("WGBLITZ arenas fetch error:", e, flush=True)
+
+        return MAP_ENCYCLOPEDIA_CACHE
+
+
+MAP_QUESTION_RE = re.compile(
+    r"(какие\s+карт|список\s+карт|расскаж\w*\s+(про|о)\s+карт|"
+    r"\bкарты\s+(есть|в\s+игре)|карт\s+в\s+игре)",
+    re.IGNORECASE
+)
+
+
+def looks_like_map_question(text):
+    return bool(MAP_QUESTION_RE.search(text or ""))
+
+
+def format_maps_answer():
+    """Короткий список карт из реальных данных WG API."""
+
+    names = _load_map_encyclopedia()
+
+    if not names:
+        return None
+
+    joined = ", ".join(names)
+
+    return limit_text("Карты: " + joined)
+
+
+# Общий вопрос про танк ("расскажи про ИС-4", "что за танк ИС-4"),
+# не обязательно с упоминанием конкретной характеристики.
+GENERAL_TANK_QUESTION_RE = re.compile(
+    r"(расскаж\w*\s+(про|о|за)\s+|что\s+за\s+танк|"
+    r"информац\w*\s+(про|о)\s+|подробност\w*\s+(о|про)\s+|"
+    r"стоит\s+ли\s+качать|инфо\s+(по|про|о)\s+)",
+    re.IGNORECASE
+)
+
+
+def looks_like_general_tank_question(text):
+    return bool(GENERAL_TANK_QUESTION_RE.search(text or ""))
+
+
+def format_tank_not_found_answer():
+    return "Не нашёл такой танк в базе Blitz — напиши название точнее, как в игре."
+
+
+# =========================================================
+# СКОЛЬКО ТАНКОВ В ИГРЕ — реальное число из кэша WG API
+# =========================================================
+
+TANK_COUNT_RE = re.compile(
+    r"сколько\s+(всего\s+)?танков\s+(в\s+игре|есть)",
+    re.IGNORECASE
+)
+
+
+def looks_like_tank_count_question(text):
+    return bool(TANK_COUNT_RE.search(text or ""))
+
+
+def format_tank_count_answer():
+    cache = _load_tank_encyclopedia()
+    if not cache:
+        return None
+    return limit_text(
+        f"В Tanks Blitz сейчас {len(cache)} танков "
+        f"в техническом дереве (данные WG API)."
+    )
+
+
+# =========================================================
+# СПИСОК ТАНКОВ ПО НАЦИИ — реальные данные из кэша WG API
+# =========================================================
+
+NATION_ALIASES = {
+    "ссср": "ussr", "советск": "ussr", "советский союз": "ussr",
+    "германия": "germany", "немецк": "germany",
+    "сша": "usa", "америк": "usa",
+    "великобритания": "uk", "британ": "uk", "англ": "uk",
+    "франция": "france", "франц": "france",
+    "китай": "china", "китайск": "china",
+    "япония": "japan", "японск": "japan",
+    "швеция": "sweden", "швед": "sweden",
+    "чехословак": "czech", "чех": "czech",
+    "польша": "poland", "польск": "poland",
+    "италия": "italy", "итальян": "italy",
+}
+
+NATION_QUESTION_RE = re.compile(
+    r"(какие\s+танки\s+(у|есть\s+у)|танки\s+наци|"
+    r"список\s+танков\s+(у|для))",
+    re.IGNORECASE
+)
+
+
+def looks_like_nation_question(text):
+    return bool(NATION_QUESTION_RE.search(text or ""))
+
+
+def detect_nation(text):
+    low = (text or "").lower()
+    for alias, code in NATION_ALIASES.items():
+        if alias in low:
+            return code
+    return None
+
+
+def format_nation_answer(nation_code):
+    cache = _load_tank_encyclopedia()
+    if not cache:
+        return None
+
+    names = sorted({
+        t.get("name")
+        for t in cache.values()
+        if t.get("nation") == nation_code and t.get("name")
+    })
+
+    if not names:
+        return None
+
+    return limit_text("Танки: " + ", ".join(names))
 
 
 # =========================================================
@@ -3987,19 +4231,62 @@ def ask_ai(chat_id, text, user_id, user_name):
     if not SYSTEM_ENABLED:
         raise RuntimeError("Система временно отключена.")
 
-    # Вопрос про характеристики танка — отвечаем реальными данными
-    # WG API напрямую, без ИИ (чтобы бот не выдумывал цифры).
-    if WGBLITZ_APPLICATION_ID and looks_like_tank_question(text):
+    # Вопрос про карты — реальный список из WG API.
+    if WGBLITZ_APPLICATION_ID and looks_like_map_question(text):
+        maps_reply = format_maps_answer()
+        if maps_reply:
+            return maps_reply
 
-        tank_name_guess = extract_tank_name_guess(text)
+    if WGBLITZ_APPLICATION_ID:
 
-        tank = (
-            find_tank(tank_name_guess)
-            or find_tank(text)
-        )
+        # Сколько всего танков в игре — реальное число.
+        if looks_like_tank_count_question(text):
+            count_reply = format_tank_count_answer()
+            if count_reply:
+                return count_reply
 
-        if tank:
-            return format_tank_answer(tank)
+        # Список танков конкретной нации.
+        if looks_like_nation_question(text):
+            nation_code = detect_nation(text)
+            if nation_code:
+                nation_reply = format_nation_answer(nation_code)
+                if nation_reply:
+                    return nation_reply
+
+        # Явный вопрос про конкретную характеристику ("альфа у X",
+        # "пробитие у X" и т.п.) — ищем с нечётким совпадением
+        # (падежи, опечатки, кириллица вместо латиницы). Если танк
+        # всё равно не нашли — честно говорим об этом, а не отдаём
+        # вопрос ИИ (он начнёт гадать числа).
+        if looks_like_tank_question(text):
+
+            tank_name_guess = extract_tank_name_guess(text)
+
+            tank = (
+                find_tank(tank_name_guess)
+                or find_tank(text)
+            )
+
+            if tank:
+                return format_tank_answer(tank)
+
+            return format_tank_not_found_answer()
+
+        # Общий вопрос ("расскажи про X", "что за танк X") — только
+        # точное/частичное совпадение, БЕЗ нечёткого поиска, чтобы не
+        # перехватывать вопросы, которые вообще не про танк. Если не
+        # нашли — как раньше, вопрос уходит к ИИ.
+        if looks_like_general_tank_question(text):
+
+            tank_name_guess = extract_tank_name_guess(text)
+
+            tank = (
+                find_tank_strict(tank_name_guess)
+                or find_tank_strict(text)
+            )
+
+            if tank:
+                return format_tank_answer(tank)
 
     try:
         return ask_groq(chat_id, text, user_id, user_name)
