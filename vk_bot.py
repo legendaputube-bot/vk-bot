@@ -5344,6 +5344,12 @@ if __name__ == "__main__":
     )
 
     print(
+        "🎯 WGBLITZ_APPLICATION_ID: "
+        f"{'YES (' + WGBLITZ_APPLICATION_ID[:6] + '...)' if WGBLITZ_APPLICATION_ID else 'НЕТ — танки/карты через API работать НЕ будут!'}",
+        flush=True
+    )
+
+    print(
         f"🧠 Learning every: "
         f"{LEARNING_EVERY_MESSAGES} messages",
         flush=True
