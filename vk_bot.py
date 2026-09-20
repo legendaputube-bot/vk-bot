@@ -341,6 +341,11 @@ TANK_ENCYCLOPEDIA_CACHE_TIME = 0
 TANK_ENCYCLOPEDIA_TTL = 24 * 60 * 60  # обновляем раз в сутки
 TANK_ENCYCLOPEDIA_LOCK = threading.Lock()
 
+# Последний танк, про который спрашивали в этом чате — чтобы уточняющие
+# вопросы вроде "а альфа какая?" (без повтора названия) относились к
+# нему, а не пытались нечётко угадать танк из мусорного текста.
+LAST_TANK_PER_CHAT = {}
+
 
 def _load_tank_encyclopedia():
     """Скачивает и кэширует список танков с характеристиками с WG API."""
@@ -418,7 +423,16 @@ def find_tank(name_query):
     if hit:
         return hit
 
+    # Нечёткое совпадение включаем только если в запросе реально
+    # что-то похожее на название (минимум 3 буквенно-цифровых
+    # символа) — иначе короткие обрывки вроде "а" после вырезания
+    # вопросительных слов могут случайно совпасть с посторонним
+    # танком.
     for q in candidates:
+        significant = re.sub(r"[^0-9a-zа-яё]", "", q)
+        if len(significant) < 3:
+            continue
+
         close = difflib.get_close_matches(
             q, cache.keys(), n=1, cutoff=0.72
         )
@@ -530,12 +544,20 @@ def format_tank_answer(tank):
     if hp:
         parts.append(f"ХП: {hp}")
 
-    ammo = profile.get("ammo") or []
+    # Реальное поле в ответе WG API называется "shells" (не "ammo"),
+    # damage/penetration в нём — обычные числа, не словари. Берём
+    # бронебойный снаряд (ARMOR_PIERCING) как основной — это и есть
+    # "альфа", которую обычно имеют в виду.
+    shells = profile.get("shells") or []
 
-    if ammo:
-        first_shell = ammo[0]
-        dmg = first_shell.get("damage")
-        pen = first_shell.get("penetration")
+    if shells:
+        standard_shell = next(
+            (s for s in shells if s.get("type") == "ARMOR_PIERCING"),
+            shells[0]
+        )
+
+        dmg = standard_shell.get("damage")
+        pen = standard_shell.get("penetration")
 
         if isinstance(dmg, dict):
             dmg = dmg.get("armor_piercing") or next(iter(dmg.values()), None)
@@ -4255,9 +4277,11 @@ def ask_ai(chat_id, text, user_id, user_name):
 
         # Явный вопрос про конкретную характеристику ("альфа у X",
         # "пробитие у X" и т.п.) — ищем с нечётким совпадением
-        # (падежи, опечатки, кириллица вместо латиницы). Если танк
-        # всё равно не нашли — честно говорим об этом, а не отдаём
-        # вопрос ИИ (он начнёт гадать числа).
+        # (падежи, опечатки, кириллица вместо латиницы). Если в
+        # вопросе не было названия танка (уточняющий вопрос вроде
+        # "а альфа какая?"), берём последний танк, который обсуждали
+        # в этом чате. Если танк всё равно не нашли — честно говорим
+        # об этом, а не отдаём вопрос ИИ (он начнёт гадать числа).
         if looks_like_tank_question(text):
 
             tank_name_guess = extract_tank_name_guess(text)
@@ -4267,7 +4291,15 @@ def ask_ai(chat_id, text, user_id, user_name):
                 or find_tank(text)
             )
 
+            if not tank:
+                significant = re.sub(
+                    r"[^0-9a-zа-яё]", "", tank_name_guess.lower()
+                )
+                if len(significant) < 3:
+                    tank = LAST_TANK_PER_CHAT.get(chat_id)
+
             if tank:
+                LAST_TANK_PER_CHAT[chat_id] = tank
                 return format_tank_answer(tank)
 
             return format_tank_not_found_answer()
@@ -4286,6 +4318,7 @@ def ask_ai(chat_id, text, user_id, user_name):
             )
 
             if tank:
+                LAST_TANK_PER_CHAT[chat_id] = tank
                 return format_tank_answer(tank)
 
     try:
