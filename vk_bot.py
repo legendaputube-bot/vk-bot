@@ -36,6 +36,27 @@ GROQ_API_KEY = os.environ.get(
     "GROQ_API_KEY", ""
 ).strip()
 
+# Несколько Groq-аккаунтов "по очереди", чтобы не упираться в лимит
+# токенов одного аккаунта. Указывай ключи через запятую в одной
+# переменной окружения GROQ_API_KEYS, например:
+# GROQ_API_KEYS=gsk_ключ_от_первого_аккаунта,gsk_ключ_от_второго_аккаунта
+GROQ_API_KEYS_RAW = os.environ.get(
+    "GROQ_API_KEYS", ""
+).strip()
+
+if GROQ_API_KEYS_RAW:
+    GROQ_API_KEYS = [
+        k.strip()
+        for k in GROQ_API_KEYS_RAW.split(",")
+        if k.strip()
+    ]
+elif GROQ_API_KEY:
+    # Обратная совместимость: если GROQ_API_KEYS не задан,
+    # используем старый одиночный GROQ_API_KEY.
+    GROQ_API_KEYS = [GROQ_API_KEY]
+else:
+    GROQ_API_KEYS = []
+
 OPENROUTER_API_KEY = os.environ.get(
     "OPENROUTER_API_KEY", ""
 ).strip()
@@ -143,8 +164,10 @@ learning_lock = threading.Lock()
 
 learning_retry_until = {}
 
-main_blocked_until = 0
-backup_blocked_until = 0
+# Блокировки теперь ПО КАЖДОМУ Groq-аккаунту отдельно:
+# main_blocked_until[0] — когда освободится 120B на 1-м аккаунте, и т.д.
+main_blocked_until = {i: 0 for i in range(len(GROQ_API_KEYS))}
+backup_blocked_until = {i: 0 for i in range(len(GROQ_API_KEYS))}
 
 # Управление ботом. Состояния независимы.
 SYSTEM_ENABLED = True
@@ -172,9 +195,15 @@ TELEGRAM_BOT_USERNAME = ""
 
 app = Flask(__name__)
 
-groq = Groq(
-    api_key=GROQ_API_KEY
-)
+# Один клиент Groq на каждый аккаунт из GROQ_API_KEYS.
+groq_clients = [
+    Groq(api_key=key)
+    for key in GROQ_API_KEYS
+]
+
+# groq оставлен для обратной совместимости со старым кодом ниже
+# (если он где-то ещё используется напрямую) — это просто первый аккаунт.
+groq = groq_clients[0] if groq_clients else None
 
 
 # =========================================================
@@ -1469,6 +1498,78 @@ def save_explicit_user_memory(
     return True
 
 
+# =========================================================
+# МЕМНЫЕ ФРАЗЫ (реакция смехом на чужое сообщение)
+# =========================================================
+
+LAUGH_MARKERS = (
+    "😂", "🤣", "💀", "ржу", "ржач", "ржака",
+    "орал", "умираю", "угар", "кек"
+)
+
+
+def maybe_save_funny_reaction(chat_id, sender_id, sender_name, text):
+    """
+    Если текущее короткое сообщение — явная реакция смехом
+    (эмодзи/смех) на предыдущую реплику ДРУГОГО участника,
+    сохраняет ту предыдущую реплику как «мемную фразу» её автора.
+    Бот сможет иногда вспоминать её позже (см. build_chat_context).
+    """
+
+    if not LEARNING_ENABLED or not text:
+        return
+
+    low = text.lower()
+
+    if not any(marker in low for marker in LAUGH_MARKERS):
+        return
+
+    # Реакция смехом обычно короткая; длинное сообщение — не реакция.
+    if len(text) > 40:
+        return
+
+    try:
+        prev_rows = get_chat_memory(chat_id, 1)
+    except Exception:
+        return
+
+    if not prev_rows:
+        return
+
+    last = prev_rows[-1]
+
+    if last.get("role") != "user":
+        return
+
+    prev_id = last.get("speaker_id")
+
+    if prev_id is None or str(prev_id) == str(sender_id):
+        return
+
+    prev_text = (last.get("content") or "").strip()
+
+    if not prev_text or len(prev_text) > 150:
+        return
+
+    prev_name = last.get("speaker_name") or ""
+
+    fact = f'Мемная фраза чата: "{prev_text}"'
+
+    _replace_personal_fact(
+        chat_id,
+        prev_id,
+        prev_name,
+        "Мемная фраза чата",
+        fact
+    )
+
+    print(
+        f"FUNNY QUOTE SAVED | chat={chat_id} | "
+        f"owner={prev_id} | {prev_text[:80]}",
+        flush=True
+    )
+
+
 def get_user_memory(
     chat_id,
     user_id
@@ -1709,7 +1810,9 @@ def update_bot_emotion(chat_id, text, user_id=None, user_name=None, targets_bot=
         0,
         now - float(emotion.get("updated_at", 0) or 0)
     )
-    steps = elapsed / 600.0
+    # Один "шаг" остывания — 30 минут (было 10). Обида и злость
+    # теперь держатся заметно дольше после конфликта.
+    steps = elapsed / 1800.0
 
     # Постепенное успокоение.
     emotion["offense"] = max(
@@ -1764,7 +1867,7 @@ def update_bot_emotion(chat_id, text, user_id=None, user_name=None, targets_bot=
         and (targets_bot or re.search(r"(?:бот|бонус[ -]коды)", low))
     ):
         severity = (
-            22
+            30
             if any(
                 x in low
                 for x in (
@@ -1776,7 +1879,7 @@ def update_bot_emotion(chat_id, text, user_id=None, user_name=None, targets_bot=
                     "мудак"
                 )
             )
-            else 10
+            else 14
         )
 
         # Рофлы немного смягчают удар.
@@ -1859,6 +1962,93 @@ def emotion_prompt(emotion):
         "не переноси их на других людей.\n"
         "=== КОНЕЦ НАСТРОЕНИЯ ==="
     )
+
+
+# =========================================================
+# ТИТУЛЫ УЧАСТНИКОВ
+# =========================================================
+
+TITLE_POOLS = {
+    "troll": (
+        "Тролль чата", "Главный провокатор", "Легенда срачей",
+        "Смутьян недели"
+    ),
+    "peace": (
+        "Миротворец", "Дипломат чата", "Голубь мира",
+        "Совесть чата"
+    ),
+    "warm": (
+        "Душа чата", "Любимчик бота", "Свой в доску",
+        "Народный любимец"
+    ),
+    "quiet": (
+        "Тихий наблюдатель", "Загадка чата", "Молчаливый танкист"
+    ),
+    "default": (
+        "Ветеран чата", "Обычный танкист", "Душа компании",
+        "Проверенный боец"
+    ),
+}
+
+
+def _pick_user_title(chat_id, user_id):
+    """Подбирает титул по накопленной статистике эмоций этого VK ID."""
+    emotion = _load_emotion(chat_id, user_id)
+
+    insults = int(emotion.get("insult_count", 0))
+    apologies = int(emotion.get("apology_count", 0))
+    warmth = int(emotion.get("warmth", 50))
+
+    if insults >= 3 and insults > apologies * 2:
+        pool = TITLE_POOLS["troll"]
+    elif apologies >= 2 and apologies >= insults:
+        pool = TITLE_POOLS["peace"]
+    elif warmth >= 80:
+        pool = TITLE_POOLS["warm"]
+    elif insults == 0 and apologies == 0 and warmth == 50:
+        pool = TITLE_POOLS["quiet"]
+    else:
+        pool = TITLE_POOLS["default"]
+
+    return random.choice(pool)
+
+
+def get_or_create_user_title(chat_id, user_id, user_name):
+    """
+    Титул выдаётся один раз и дальше хранится как обычный личный факт
+    (через _replace_personal_fact, префикс «Титул»), чтобы при
+    повторном запросе бот не выдумывал новый, а называл тот же самый.
+    """
+    if chat_id is None or user_id is None:
+        return None
+
+    personal = get_user_memory(chat_id, user_id)
+    memory_text = (personal or {}).get("memory") or ""
+
+    for line in memory_text.splitlines():
+        clean = line.strip("-• \t")
+        if clean.lower().startswith("титул"):
+            existing = clean.split("—", 1)
+            if len(existing) == 2:
+                return existing[1].strip()
+
+    title = _pick_user_title(chat_id, user_id)
+    _replace_personal_fact(
+        chat_id,
+        user_id,
+        user_name,
+        "Титул",
+        f"Титул — {title}"
+    )
+    return title
+
+
+TITLE_REQUEST_PATTERN = re.compile(
+    r"(?:мо[йёя]\s+титул|дай\s+мне?\s+титул|какой\s+у\s+меня\s+титул|"
+    r"мо[её]\s+погоняло|дай\s+мне?\s+погоняло|как(?:ая|ое)?\s+у\s+меня\s+"
+    r"кличк[ауи]|дай\s+мне?\s+кличк[ауи])",
+    re.IGNORECASE
+)
 
 
 # =========================================================
@@ -2063,13 +2253,21 @@ def clean_model_text(text):
 def ask_model(
     model,
     messages,
-    max_tokens=GROQ_MAX_TOKENS
+    max_tokens=GROQ_MAX_TOKENS,
+    client=None
 ):
+
+    # Если конкретный клиент (аккаунт) не передан — берём первый по умолчанию
+    # (старое поведение, для обратной совместимости).
+    active_client = client if client is not None else groq
+
+    if active_client is None:
+        raise RuntimeError("Нет доступных Groq-аккаунтов (GROQ_API_KEYS пуст).")
 
     try:
 
         completion = (
-            groq.chat.completions.create(
+            active_client.chat.completions.create(
                 model=model,
                 messages=messages,
                 max_completion_tokens=max_tokens,
@@ -2081,7 +2279,7 @@ def ask_model(
     except Exception:
 
         completion = (
-            groq.chat.completions.create(
+            active_client.chat.completions.create(
                 model=model,
                 messages=messages,
                 max_tokens=max_tokens,
@@ -2415,81 +2613,88 @@ def ask_learning_model(messages):
     global main_blocked_until
     global backup_blocked_until
 
-    now = time.time()
+    if not groq_clients:
+        return None
 
-    # -----------------------------------------
-    # Groq 20B
-    # -----------------------------------------
+    for idx, client in enumerate(groq_clients):
 
-    if now >= backup_blocked_until:
+        now = time.time()
 
-        try:
+        # -----------------------------------------
+        # Groq 20B на аккаунте idx
+        # -----------------------------------------
 
-            print(
-                "Learning Groq -> 20B",
-                flush=True
-            )
+        if now >= backup_blocked_until.get(idx, 0):
 
-            return ask_model(
-                BACKUP_MODEL,
-                messages,
-                LEARNING_MAX_TOKENS
-            )
+            try:
 
-        except Exception as e:
-
-            if is_rate_limit_error(e):
-
-                backup_blocked_until = (
-                    time.time()
-                    + get_retry_seconds(
-                        e,
-                        600
-                    )
+                print(
+                    f"Learning Groq[аккаунт {idx+1}] -> 20B",
+                    flush=True
                 )
 
-            print(
-                "Learning 20B error:",
-                e,
-                flush=True
-            )
-
-    # -----------------------------------------
-    # Groq 120B
-    # -----------------------------------------
-
-    if time.time() >= main_blocked_until:
-
-        try:
-
-            print(
-                "Learning Groq -> 120B",
-                flush=True
-            )
-
-            return ask_model(
-                MAIN_MODEL,
-                messages,
-                LEARNING_MAX_TOKENS
-            )
-
-        except Exception as e:
-
-            if is_rate_limit_error(e):
-
-                main_blocked_until = (
-                    time.time()
-                    + get_retry_seconds(
-                        e,
-                        3600
-                    )
+                return ask_model(
+                    BACKUP_MODEL,
+                    messages,
+                    LEARNING_MAX_TOKENS,
+                    client=client
                 )
 
-            print(
-                "Learning 120B error:",
-                e,
-                flush=True
-            )
+            except Exception as e:
+
+                if is_rate_limit_error(e):
+
+                    backup_blocked_until[idx] = (
+                        time.time()
+                        + get_retry_seconds(
+                            e,
+                            600
+                        )
+                    )
+
+                print(
+                    f"Learning[аккаунт {idx+1}] 20B error:",
+                    e,
+                    flush=True
+                )
+
+        # -----------------------------------------
+        # Groq 120B на аккаунте idx
+        # -----------------------------------------
+
+        if time.time() >= main_blocked_until.get(idx, 0):
+
+            try:
+
+                print(
+                    f"Learning Groq[аккаунт {idx+1}] -> 120B",
+                    flush=True
+                )
+
+                return ask_model(
+                    MAIN_MODEL,
+                    messages,
+                    LEARNING_MAX_TOKENS,
+                    client=client
+                )
+
+            except Exception as e:
+
+                if is_rate_limit_error(e):
+
+                    main_blocked_until[idx] = (
+                        time.time()
+                        + get_retry_seconds(
+                            e,
+                            3600
+                        )
+                    )
+
+                print(
+                    f"Learning[аккаунт {idx+1}] 120B error:",
+                    e,
+                    flush=True
+                )
 
     # -----------------------------------------
     # OpenRouter FREE
@@ -3152,10 +3357,13 @@ def build_chat_context(
                     (
                         "=== КРИТИЧЕСКИ ВАЖНАЯ "
                         "ЛИЧНАЯ ПАМЯТЬ ТЕКУЩЕГО "
-                        "УЧАСТНИКА ===\n"
-                        "Эта память относится "
-                        "ИМЕННО к человеку, "
-                        "который сейчас пишет сообщение.\n\n"
+                        f"УЧАСТНИКА (VK ID: {user_id}) ===\n"
+                        f"Эта память относится ТОЛЬКО "
+                        f"к участнику с ID {user_id} — "
+                        "к человеку, который сейчас "
+                        "пишет сообщение. Ни к какому "
+                        "другому ID из истории чата "
+                        "она не относится.\n\n"
                         "Используй её напрямую, "
                         "если вопрос относится "
                         "к сохранённому факту.\n\n"
@@ -3174,6 +3382,48 @@ def build_chat_context(
                         "=== КОНЕЦ ЛИЧНОЙ ПАМЯТИ ==="
                     )
             })
+
+        else:
+
+            messages.append({
+                "role": "system",
+                "content": (
+                    "=== ЛИЧНАЯ ПАМЯТЬ ТЕКУЩЕГО "
+                    f"УЧАСТНИКА (VK ID: {user_id}) ===\n"
+                    f"У участника с ID {user_id} НЕТ "
+                    "сохранённых личных фактов "
+                    "(например, про его танк, ник и т.п.).\n"
+                    "Если он спрашивает про что-то "
+                    "«моё» (мой танк, мой ник и т.д.), "
+                    "НЕ бери ответ другого участника "
+                    "из истории чата выше, даже если "
+                    "вопрос звучит похоже. "
+                    "Честно скажи, что не помнишь "
+                    "или что он не говорил тебе об этом.\n"
+                    "=== КОНЕЦ ==="
+                )
+            })
+
+    else:
+
+        messages.append({
+            "role": "system",
+            "content": (
+                "=== ЛИЧНАЯ ПАМЯТЬ ТЕКУЩЕГО "
+                f"УЧАСТНИКА (VK ID: {user_id}) ===\n"
+                f"У участника с ID {user_id} НЕТ "
+                "сохранённых личных фактов "
+                "(например, про его танк, ник и т.п.).\n"
+                "Если он спрашивает про что-то "
+                "«моё» (мой танк, мой ник и т.д.), "
+                "НЕ бери ответ другого участника "
+                "из истории чата выше, даже если "
+                "вопрос звучит похоже. "
+                "Честно скажи, что не помнишь "
+                "или что он не говорил тебе об этом.\n"
+                "=== КОНЕЦ ==="
+            )
+        })
 
     messages.append({
         "role": "system",
@@ -3198,6 +3448,51 @@ def build_chat_context(
                 "НЕ используй личные факты других участников из общей истории. "
                 "Если в личной памяти нет подтверждения — скажи, что не помнишь.\n"
                 "=== КОНЕЦ ПРАВИЛА ==="
+            )
+        })
+
+    # =========================================
+    # ЗАПРОС ТИТУЛА
+    # =========================================
+
+    if user_id is not None and TITLE_REQUEST_PATTERN.search(low_current):
+
+        title = get_or_create_user_title(
+            chat_id,
+            user_id,
+            user_name
+        )
+
+        if title:
+
+            messages.append({
+                "role": "system",
+                "content": (
+                    "=== ТИТУЛ УЧАСТНИКА ===\n"
+                    f"Официальный титул этого участника в чате: «{title}». "
+                    "Объяви его коротко, с характером, в рамках лимита символов. "
+                    "Не объясняй, откуда взялся титул, и не упоминай баллы/цифры.\n"
+                    "=== КОНЕЦ ==="
+                )
+            })
+
+    # =========================================
+    # МЕМНАЯ ФРАЗА (если сохранена)
+    # =========================================
+
+    if (
+        personal
+        and personal.get("memory")
+        and "мемная фраза чата" in personal["memory"].lower()
+    ):
+
+        messages.append({
+            "role": "system",
+            "content": (
+                "В личной памяти есть старая смешная фраза этого участника. "
+                "Очень редко и только если это правда в тему разговора — "
+                "можешь припомнить её с юмором. Не делай это через сообщение "
+                "и не превращай в привычку.\n"
             )
         })
 
@@ -3448,10 +3743,17 @@ def should_answer(message, text, platform="vk"):
 def all_ai_exhausted():
     """True только если все доступные AI реально заблокированы/исчерпаны."""
     now = time.time()
-    groq_exhausted = (
-        main_blocked_until > now
-        and backup_blocked_until > now
-    )
+
+    if not groq_clients:
+        groq_exhausted = True
+    else:
+        # Исчерпаны только если ВСЕ аккаунты и ОБЕ модели на каждом заблокированы.
+        groq_exhausted = all(
+            main_blocked_until.get(idx, 0) > now
+            and backup_blocked_until.get(idx, 0) > now
+            for idx in range(len(groq_clients))
+        )
+
     if not groq_exhausted:
         return False
 
@@ -3526,102 +3828,111 @@ def ask_groq(
         text
     )
 
-    now = time.time()
+    if not groq_clients:
+        raise RuntimeError("Нет ни одного Groq-аккаунта (GROQ_API_KEYS пуст).")
 
-    # =========================================
-    # 120B
-    # =========================================
+    # Перебираем ВСЕ аккаунты по очереди (round-robin по порядку в
+    # GROQ_API_KEYS). Как только один ответил — сразу возвращаем ответ.
+    for idx, client in enumerate(groq_clients):
 
-    if now >= main_blocked_until:
+        now = time.time()
 
-        try:
+        # =========================================
+        # 120B на аккаунте idx
+        # =========================================
 
-            print(
-                "Groq -> 120B",
-                flush=True
-            )
+        if now >= main_blocked_until.get(idx, 0):
 
-            return ask_model(
-                MAIN_MODEL,
-                messages,
-                GROQ_MAX_TOKENS
-            )
+            try:
 
-        except Exception as e:
-
-            if is_rate_limit_error(e):
-
-                main_blocked_until = (
-                    time.time()
-                    + get_retry_seconds(
-                        e,
-                        3600
-                    )
+                print(
+                    f"Groq[аккаунт {idx+1}] -> 120B",
+                    flush=True
                 )
 
-            print(
-                "120B error:",
-                e,
-                flush=True
-            )
-
-    else:
-
-        print(
-            f"120B blocked | "
-            f"retry in ~"
-            f"{max(0, int(main_blocked_until-time.time()))} sec",
-            flush=True
-        )
-
-    # =========================================
-    # 20B
-    # =========================================
-
-    if time.time() >= backup_blocked_until:
-
-        try:
-
-            print(
-                "Groq -> 20B",
-                flush=True
-            )
-
-            return ask_model(
-                BACKUP_MODEL,
-                messages,
-                GROQ_MAX_TOKENS
-            )
-
-        except Exception as e:
-
-            if is_rate_limit_error(e):
-
-                backup_blocked_until = (
-                    time.time()
-                    + get_retry_seconds(
-                        e,
-                        600
-                    )
+                return ask_model(
+                    MAIN_MODEL,
+                    messages,
+                    GROQ_MAX_TOKENS,
+                    client=client
                 )
 
+            except Exception as e:
+
+                if is_rate_limit_error(e):
+
+                    main_blocked_until[idx] = (
+                        time.time()
+                        + get_retry_seconds(
+                            e,
+                            3600
+                        )
+                    )
+
+                print(
+                    f"Groq[аккаунт {idx+1}] 120B error:",
+                    e,
+                    flush=True
+                )
+
+        else:
+
             print(
-                "20B error:",
-                e,
+                f"Groq[аккаунт {idx+1}] 120B blocked | "
+                f"retry in ~"
+                f"{max(0, int(main_blocked_until[idx]-time.time()))} sec",
                 flush=True
             )
 
-    else:
+        # =========================================
+        # 20B на аккаунте idx
+        # =========================================
 
-        print(
-            f"20B blocked | "
-            f"retry in ~"
-            f"{max(0, int(backup_blocked_until-time.time()))} sec",
-            flush=True
-        )
+        if time.time() >= backup_blocked_until.get(idx, 0):
+
+            try:
+
+                print(
+                    f"Groq[аккаунт {idx+1}] -> 20B",
+                    flush=True
+                )
+
+                return ask_model(
+                    BACKUP_MODEL,
+                    messages,
+                    GROQ_MAX_TOKENS,
+                    client=client
+                )
+
+            except Exception as e:
+
+                if is_rate_limit_error(e):
+
+                    backup_blocked_until[idx] = (
+                        time.time()
+                        + get_retry_seconds(
+                            e,
+                            600
+                        )
+                    )
+
+                print(
+                    f"Groq[аккаунт {idx+1}] 20B error:",
+                    e,
+                    flush=True
+                )
+
+        else:
+
+            print(
+                f"Groq[аккаунт {idx+1}] 20B blocked | "
+                f"retry in ~"
+                f"{max(0, int(backup_blocked_until[idx]-time.time()))} sec",
+                flush=True
+            )
 
     raise RuntimeError(
-        "Обе модели Groq временно недоступны."
+        "Все Groq-аккаунты временно недоступны."
     )
 
 
@@ -4090,6 +4401,13 @@ def callback():
         # NORMAL MESSAGE
         # =========================================
 
+        maybe_save_funny_reaction(
+            chat_id,
+            sender_id,
+            user_name,
+            text
+        )
+
         save_chat_message(
             chat_id,
             sender_id,
@@ -4277,6 +4595,13 @@ def telegram_webhook(secret):
         # =========================================
         # NORMAL TELEGRAM MESSAGE
         # =========================================
+
+        maybe_save_funny_reaction(
+            chat_id,
+            sender_id,
+            user_name,
+            text
+        )
 
         save_chat_message(
             chat_id,
@@ -4486,6 +4811,11 @@ if __name__ == "__main__":
 
     print(
         f"🔄 BACKUP MODEL: {BACKUP_MODEL}",
+        flush=True
+    )
+
+    print(
+        f"🔑 Groq-аккаунтов подключено: {len(groq_clients)}",
         flush=True
     )
 
