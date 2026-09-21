@@ -231,6 +231,44 @@ DEVELOPMENT_STAGES = {
         "Ты давно в чате. Хорошо понимаешь людей, "
         "локальные приколы, историю разговоров "
         "и атмосферу."
+    ),
+
+    5: (
+        "Ты — прокачанный экипаж этого чата. Знаешь "
+        "локальные приколы наизусть и всё чаще сам "
+        "вставляешь игровой сленг в разговор, а не "
+        "просто понимаешь его."
+    ),
+
+    6: (
+        "Ты укатанный ветеран чата. Реагируешь быстро "
+        "и в тему, помнишь характер активных участников, "
+        "можешь тонко подколоть без напряга."
+    ),
+
+    7: (
+        "Ты — элитный экипаж чата. Свободно ведёшь "
+        "беседу, можешь сам задать тон разговору, "
+        "твои шутки бьют точно в цель."
+    ),
+
+    8: (
+        "Ты один из старожилов чата, почти легенда. "
+        "Знаешь историю почти каждого разговора и "
+        "умеешь вовремя вставить нужную фразу."
+    ),
+
+    9: (
+        "Ты полностью свой в этом чате — как ас с "
+        "максимальным опытом. Чувствуешь настроение "
+        "чата с полуслова, реагируешь естественно "
+        "и уверенно."
+    ),
+
+    10: (
+        "Ты — душа чата. Полностью укатан, знаешь всех "
+        "и всё, твои шутки и реакции воспринимаются как "
+        "часть атмосферы этого места."
     )
 }
 
@@ -2295,14 +2333,45 @@ def ask_model(
 
     if usage:
 
+        prompt_tokens_details = getattr(
+            usage,
+            "prompt_tokens_details",
+            None
+        )
+
+        cached_tokens = getattr(
+            prompt_tokens_details,
+            "cached_tokens",
+            None
+        ) if prompt_tokens_details else None
+
+        prompt_tokens = getattr(
+            usage,
+            "prompt_tokens",
+            None
+        )
+
+        cache_hit_percent = None
+
+        if (
+            cached_tokens is not None
+            and prompt_tokens
+        ):
+
+            cache_hit_percent = round(
+                cached_tokens
+                / prompt_tokens
+                * 100,
+                1
+            )
+
         print(
             "Groq:",
             "prompt=",
-            getattr(
-                usage,
-                "prompt_tokens",
-                None
-            ),
+            prompt_tokens,
+            "cached=",
+            cached_tokens,
+            f"({cache_hit_percent}%)" if cache_hit_percent is not None else "",
             "completion=",
             getattr(
                 usage,
@@ -3040,6 +3109,24 @@ NONE
         if stage < 4 and total >= 3000:
             stage = 4
 
+        if stage < 5 and total >= 6000:
+            stage = 5
+
+        if stage < 6 and total >= 10000:
+            stage = 6
+
+        if stage < 7 and total >= 16000:
+            stage = 7
+
+        if stage < 8 and total >= 25000:
+            stage = 8
+
+        if stage < 9 and total >= 40000:
+            stage = 9
+
+        if stage < 10 and total >= 60000:
+            stage = 10
+
         database_chat_id = db_chat_id(
             chat_id
         )
@@ -3163,11 +3250,6 @@ def build_chat_context(
         }
     ]
 
-    messages.append({
-        "role": "system",
-        "content": emotion_prompt(_load_emotion(chat_id, user_id))
-    })
-
     # =========================================
     # LOCAL GAME KNOWLEDGE — NO WEB
     # =========================================
@@ -3255,77 +3337,6 @@ def build_chat_context(
                         "Полезная долговременная память этого конкретного чата:\n"
                         + "\n".join(lines)
                     )
-            })
-
-    # =========================================
-    # RECENT CHAT
-    # =========================================
-
-    history = get_chat_memory(
-        chat_id,
-        CHAT_MEMORY_LIMIT
-    )
-
-    current_saved = False
-
-    for item in history:
-
-        role = item.get(
-            "role"
-        )
-
-        content = (
-            item.get(
-                "content"
-            )
-            or ""
-        )
-
-        if not content:
-            continue
-
-        name = (
-            item.get(
-                "speaker_name"
-            )
-            or "Участник"
-        )
-
-        sid = str(
-            item.get(
-                "speaker_id"
-            )
-            or ""
-        )
-
-        if (
-            role == "user"
-            and sid == str(user_id)
-            and content == text
-        ):
-
-            current_saved = True
-
-        if role == "user":
-
-            messages.append({
-                "role":
-                    "user",
-
-                "content":
-                    (
-                        f"[ID:{sid}] {name}: {content}"
-                    )
-            })
-
-        elif role == "assistant":
-
-            messages.append({
-                "role":
-                    "assistant",
-
-                "content":
-                    content
             })
 
     # =========================================
@@ -3450,6 +3461,82 @@ def build_chat_context(
                 "=== КОНЕЦ ПРАВИЛА ==="
             )
         })
+
+    # =========================================
+    # RECENT CHAT
+    # =========================================
+
+    history = get_chat_memory(
+        chat_id,
+        CHAT_MEMORY_LIMIT
+    )
+
+    current_saved = False
+
+    for item in history:
+
+        role = item.get(
+            "role"
+        )
+
+        content = (
+            item.get(
+                "content"
+            )
+            or ""
+        )
+
+        if not content:
+            continue
+
+        name = (
+            item.get(
+                "speaker_name"
+            )
+            or "Участник"
+        )
+
+        sid = str(
+            item.get(
+                "speaker_id"
+            )
+            or ""
+        )
+
+        if (
+            role == "user"
+            and sid == str(user_id)
+            and content == text
+        ):
+
+            current_saved = True
+
+        if role == "user":
+
+            messages.append({
+                "role":
+                    "user",
+
+                "content":
+                    (
+                        f"[ID:{sid}] {name}: {content}"
+                    )
+            })
+
+        elif role == "assistant":
+
+            messages.append({
+                "role":
+                    "assistant",
+
+                "content":
+                    content
+            })
+
+    messages.append({
+        "role": "system",
+        "content": emotion_prompt(_load_emotion(chat_id, user_id))
+    })
 
     # =========================================
     # ЗАПРОС ТИТУЛА
