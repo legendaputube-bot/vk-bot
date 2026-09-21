@@ -205,6 +205,9 @@ def _wotb_normalize_tank(tank_id, raw):
     profile = raw.get("default_profile") or {}
     gun = profile.get("gun") or {}
     shells = profile.get("shells") or {}
+    if isinstance(shells, list):
+        # В WoTB API shells — список снарядов; берём первый (обычно бронебойный).
+        shells = next((s for s in shells if isinstance(s, dict)), {})
     armor = profile.get("armor") or {}
     hull = armor.get("hull") or {}
     turret = armor.get("turret") or {}
@@ -251,6 +254,9 @@ def _wotb_fetch(url, params=None, headers=None):
         headers=headers or {},
         timeout=WOTB_API_TIMEOUT,
     )
+    if response.status_code == 304:
+        # Tankopedia не менялась (ETag) — отдаём пустой ok-ответ с пометкой.
+        return {"status": "ok", "data": {}, "_not_modified": True}, response
     response.raise_for_status()
     data = response.json()
     if data.get("status") != "ok":
@@ -302,7 +308,8 @@ def load_wotb_tanks(force=False):
             WOTB_LAST_REFRESH = time.time()
             return True
 
-        headers = {"If-None-Match": WOTB_ETAG} if WOTB_ETAG else {}
+        # ETag шлём только если в RAM уже есть танки, иначе 304 оставит кэш пустым.
+        headers = {"If-None-Match": WOTB_ETAG} if (WOTB_ETAG and current_count) else {}
         all_raw = {}
         page = 1
 
@@ -321,10 +328,24 @@ def load_wotb_tanks(force=False):
             if response.headers.get("ETag"):
                 WOTB_ETAG = response.headers.get("ETag")
 
+            if data.get("_not_modified"):
+                WOTB_LAST_REFRESH = time.time()
+                return True
+
             rows = data.get("data") or {}
             if not rows:
                 break
+
+            before = len(all_raw)
             all_raw.update(rows)
+
+            # /wotb/encyclopedia/vehicles/ отдаёт весь список сразу и не знает
+            # page_no. Раньше из-за этого цикл крутился до 100-й страницы и
+            # падал с «слишком много страниц Tankopedia» — кэш оставался пустым.
+            if len(rows) > WOTB_PAGE_LIMIT:
+                break  # вернулось больше лимита -> пагинации нет
+            if len(all_raw) == before:
+                break  # новых танков нет -> страницы закончились
 
             meta = data.get("meta") or {}
             total = meta.get("total")
@@ -618,19 +639,25 @@ def handle_wotb_tank_message(chat_id, peer_id, text):
         answer = _wotb_ask_recommendation(text, candidates)
         if answer:
             send_message(peer_id, "🎮 World of Tanks Blitz (ВГ)\n" + answer.strip())
+        elif _wotb_recommend_without_ai(text):
+            # ИИ недоступен — считаем сами по данным Tankopedia.
+            send_message(peer_id, _wotb_recommend_without_ai(text))
         else:
             send_message(peer_id, "Скажи, например: «посоветуй тяжёлый 10 уровня» или «каким танком играть с большой альфой»." )
         return True
 
-    matches = _wotb_find_tanks(text, limit=5)
+    matches = _wotb_find_tanks(text, limit=5) if is_tank else _wotb_strict_matches(text, 5)
     if not matches:
+        if not is_tank:
+            # Обычная болтовня в чате — не отвечаем «не нашёл танк».
+            return False
         send_message(peer_id, "Не нашёл этот танк в Tankopedia World of Tanks Blitz. Напиши название точнее.")
         return True
 
     # Если вопрос конкретный — отдаём факты напрямую из API, без выдумок ИИ.
     if len(matches) == 1 or any(word in _wotb_norm(text) for word in ("альфа", "урон", "пробит", "ттх", "характерист")):
         if len(matches) == 1:
-            send_message(peer_id, _wotb_format_tank(matches[0]))
+            send_message(peer_id, _wotb_format_tank(matches[0]), raw=True)
         else:
             preview = "\n".join(f"• {t.get('name')}" for t in matches[:5])
             send_message(peer_id, "Нашёл несколько вариантов, уточни танк:\n" + preview)
@@ -640,8 +667,137 @@ def handle_wotb_tank_message(chat_id, peer_id, text):
     if answer:
         send_message(peer_id, "🎮 World of Tanks Blitz (ВГ)\n" + answer.strip())
     else:
-        send_message(peer_id, _wotb_format_tank(matches[0]))
+        send_message(peer_id, _wotb_format_tank(matches[0]), raw=True)
     return True
+
+
+
+def _wotb_num(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _wotb_strict_matches(text, limit=5):
+    """Танки, чьё название целиком встречается в тексте (без нечёткого поиска)."""
+    padded = f" {_wotb_norm(text)} "
+    with WOTB_CACHE_LOCK:
+        tanks = list(WOTB_CACHE.values())
+    hits = []
+    for tank in tanks:
+        for key in (tank.get("name"), tank.get("short_name")):
+            n = _wotb_norm(key)
+            if len(n) >= 3 and f" {n} " in padded:
+                hits.append((len(n), tank))
+                break
+    hits.sort(key=lambda x: -x[0])
+    return [t for _, t in hits[:limit]]
+
+
+def _wotb_format_tank_short(tank):
+    """Одна короткая строка (влезает в лимит сообщения бота)."""
+    parts = []
+    if tank.get("tier") is not None:
+        parts.append(f"{tank.get('tier')} ур.")
+    if tank.get("type"):
+        parts.append(str(tank.get("type")))
+    head = f"{tank.get('name') or 'Танк'}" + (f" ({', '.join(parts)})" if parts else "")
+    stats = []
+    if tank.get("damage") is not None:
+        stats.append(f"альфа {tank.get('damage')}")
+    if tank.get("penetration") is not None:
+        stats.append(f"проб. {tank.get('penetration')}")
+    if tank.get("hp") is not None:
+        stats.append(f"HP {tank.get('hp')}")
+    if tank.get("speed_forward") is not None:
+        stats.append(f"{tank.get('speed_forward')} км/ч")
+    if tank.get("reload") is not None:
+        stats.append(f"перезарядка {tank.get('reload')} с")
+    return "🎮 ВГ: " + head + (" — " + ", ".join(stats) if stats else "")
+
+
+def _wotb_recommend_without_ai(text):
+    """Рекомендация по реальным данным Tankopedia, без ИИ."""
+    low = _wotb_norm(text)
+    candidates = _wotb_recommendation_candidates(text, limit=100000)
+    if not candidates:
+        return None
+
+    # Если уровень не назван — берём максимальный из доступных.
+    if not re.search(r"\b(1[0-1]|[1-9])\b", low):
+        tiers = [_wotb_num(t.get("tier")) for t in candidates]
+        tiers = [x for x in tiers if x is not None]
+        if tiers:
+            top = max(tiers)
+            candidates = [t for t in candidates if _wotb_num(t.get("tier")) == top]
+
+    # (regex, поле, по убыванию?, подпись, единица)
+    criteria = [
+        (r"(?:альф|урон|дамаг)", "damage", True, "по альфе", ""),
+        (r"(?:скорост|быстр|шустр)", "speed_forward", True, "по скорости", " км/ч"),
+        (r"(?:пробит)", "penetration", True, "по пробитию", " мм"),
+        (r"(?:хп|прочн|живуч|танков)", "hp", True, "по прочности", " HP"),
+        (r"(?:перезаряд|скорострел)", "reload", False, "по перезарядке", " с"),
+    ]
+    field, desc, label, unit = "damage", True, "по альфе", ""
+    for pattern, f, d, lb, un in criteria:
+        if re.search(pattern, low):
+            field, desc, label, unit = f, d, lb, un
+            break
+
+    scored = [(t, _wotb_num(t.get(field))) for t in candidates]
+    scored = [(t, v) for t, v in scored if v is not None]
+    if not scored:
+        return None
+    scored.sort(key=lambda x: x[1], reverse=desc)
+
+    def fmt(v):
+        return str(int(v)) if float(v).is_integer() else str(round(v, 2))
+
+    top3 = "; ".join(f"{t.get('name')} {fmt(v)}{unit}" for t, v in scored[:3])
+    tier = candidates[0].get("tier")
+    return f"🎮 ВГ, топ {label} ({tier} ур.): {top3}"
+
+
+def wotb_api_only_reply(chat_id, text):
+    """Ответ БЕЗ ИИ — только из Tankopedia Wargaming. None, если ответить нечем.
+    Отвечаем только в контексте World of Tanks Blitz (ВГ), чтобы не смешивать
+    ТТХ с Tanks Blitz от Lesta."""
+    try:
+        text = normalize_text(text)
+        if not text or not WOTB_APP_ID:
+            return None
+        if _wotb_get_context(chat_id) != "wotb" and not _wotb_is_marker(text):
+            return None
+        if not WOTB_CACHE:
+            load_wotb_tanks(force=True)
+        if not WOTB_CACHE:
+            return None
+
+        low = _wotb_norm(text)
+        asks_advice = re.search(
+            r"(?:каким|на каком|на чем|посоветуй|выбрать|поиграть|играть на)", low
+        )
+        asks_stats = re.search(
+            r"(?:какая|какой|сколько|альфа|урон|пробит|характерист|ттх)", low
+        )
+        if asks_advice and not asks_stats:
+            return _wotb_recommend_without_ai(text)
+
+        matches = _wotb_strict_matches(text, 5)
+        if not matches and _wotb_tank_query(text):
+            matches = _wotb_find_tanks(text, limit=5)
+        if not matches:
+            return None
+        if len(matches) == 1:
+            return _wotb_format_tank_short(matches[0])
+        return "Нашёл несколько танков, уточни: " + ", ".join(
+            str(t.get("name")) for t in matches[:4]
+        )
+    except Exception as e:
+        print("WOTB API-only reply error:", e, flush=True)
+        return None
 
 
 # =========================================================
@@ -4345,6 +4501,13 @@ def ask_ai(chat_id, text, user_id, user_name):
             # закрыли все доступные AI, а не из-за случайной сетевой ошибки.
             if all_ai_exhausted():
                 set_all_ai_pause("лимиты всех AI исчерпаны")
+
+            # Все ИИ легли: про танки ВГ отвечаем сами, из API Wargaming.
+            api_reply = wotb_api_only_reply(chat_id, text)
+            if api_reply:
+                print("AI DOWN -> answered from WOTB API", flush=True)
+                return api_reply
+
             raise RuntimeError("Все текстовые AI временно недоступны.")
 
 
@@ -4494,11 +4657,19 @@ def is_probably_duplicate_reply(chat_id, reply):
 
 def send_message(
     peer_id,
-    text
+    text,
+    raw=False
 ):
 
     if not text:
         return
+
+    # raw=True: карточки с ТТХ — сохраняем переводы строк и не режем до 170.
+    outgoing = (
+        str(text).strip()[:900]
+        if raw
+        else limit_text(text)
+    )
 
     response = requests.post(
         f"{VK_API}/messages.send",
@@ -4513,7 +4684,7 @@ def send_message(
                 int(peer_id),
 
             "message":
-                limit_text(text),
+                outgoing,
 
             "random_id":
                 random.randint(1, 2_147_483_647)
@@ -4916,6 +5087,15 @@ def callback():
         # Полностью выключенная система не читает память, AI, обучение
         # и не выполняет лишних API-запросов.
         if not SYSTEM_ENABLED:
+            # Пауза из-за лимитов всех ИИ (а не ручное выключение владельцем):
+            # если обращаются к боту и речь о танках ВГ — отвечаем из API.
+            if (
+                all_ai_blocked_until > time.time()
+                and message_targets_bot(message, text, "vk")
+            ):
+                api_reply = wotb_api_only_reply(chat_id, text)
+                if api_reply:
+                    send_message(peer_id, api_reply)
             return "ok"
 
         register_active_chat(
