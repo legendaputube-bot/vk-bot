@@ -815,7 +815,10 @@ OPENROUTER_MODEL = "openrouter/free"
 # =========================================================
 
 GROQ_MAX_TOKENS = 190
-OPENROUTER_MAX_TOKENS = 190
+# У бесплатных reasoning-моделей OpenRouter «мысли» съедают лимит токенов,
+# и ответ приходит пустым (finish=length). 190 было мало; длину ответа
+# всё равно режет limit_text() до MAX_MESSAGE_CHARS.
+OPENROUTER_MAX_TOKENS = 800
 LEARNING_MAX_TOKENS = 190
 
 # Жёсткий лимит одного входящего/исходящего сообщения.
@@ -3144,6 +3147,10 @@ def ask_openrouter_messages(
 
                 "max_tokens":
                     max_tokens,
+
+                # Просим не «думать» долго — иначе токены уходят в reasoning.
+                "reasoning":
+                    {"effort": "low"},
 
                 "stream":
                     False
@@ -5610,7 +5617,8 @@ if __name__ == "__main__":
     )
 
     if WOTB_APP_ID:
-        load_wotb_tanks(force=True)
+        # Первая загрузка Tankopedia идёт в фоне (внутри _wotb_refresh_loop),
+        # чтобы порт открылся сразу и Render не ждал API Wargaming при деплое.
         threading.Thread(
             target=_wotb_refresh_loop,
             daemon=True
