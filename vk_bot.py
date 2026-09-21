@@ -18,7 +18,7 @@ from supabase import create_client
 # =========================================================
 
 BOT_VERSION = "V1.9.2"
-BOT_BUILD = "Tanks Blitz + память по VK ID + эмоции по пользователям + контекст + анти-повтор + мат/сленг"
+BOT_BUILD = "Tanks Blitz + World of Tanks Blitz (Wargaming) + память по VK ID + эмоции по пользователям + контекст + анти-повтор + мат/сленг"
 
 VK_TOKEN = os.environ.get("VK_TOKEN", "").strip()
 VK_CONFIRMATION_CODE = os.environ.get(
@@ -101,6 +101,547 @@ TELEGRAM_API = (
 OPENROUTER_API = (
     "https://openrouter.ai/api/v1/chat/completions"
 )
+
+
+# =========================================================
+# WORLD OF TANKS BLITZ (WARGAMING) TANKOPEDIA
+# =========================================================
+# Это отдельная ветка только для World of Tanks Blitz от Wargaming.
+# Существующая логика Tanks Blitz (Lesta) выше/ниже не удаляется и
+# продолжает работать как раньше.
+
+WOTB_APP_ID = (
+    os.environ.get("WOTB_APP_ID", "").strip()
+    or os.environ.get("WG_APP_ID", "").strip()
+)
+WOTB_REALM = os.environ.get("WOTB_REALM", "eu").strip().lower() or "eu"
+WOTB_API_TIMEOUT = int(os.environ.get("WOTB_API_TIMEOUT", "20") or "20")
+WOTB_REFRESH_SECONDS = int(
+    os.environ.get("WOTB_REFRESH_SECONDS", str(6 * 60 * 60))
+    or str(6 * 60 * 60)
+)
+WOTB_PAGE_LIMIT = 100
+WOTB_CONTEXT_TTL = 10 * 60
+WOTB_CACHE = {}
+WOTB_CACHE_LOCK = threading.Lock()
+WOTB_GAME_CONTEXT = {}
+WOTB_GAME_CONTEXT_LOCK = threading.Lock()
+WOTB_ETAG = ""
+WOTB_LAST_REFRESH = 0.0
+WOTB_TANKS_UPDATED_AT = None
+
+
+def _wotb_api_base():
+    hosts = {
+        "eu": "https://api.wotblitz.eu",
+        "na": "https://api.wotblitz.com",
+        "asia": "https://api.wotblitz.asia",
+    }
+    return hosts.get(WOTB_REALM, hosts["eu"])
+
+
+def _wotb_norm(value):
+    value = str(value or "").lower().replace("ё", "е")
+    value = re.sub(r"[^a-zа-я0-9]+", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _wotb_is_marker(text):
+    low = _wotb_norm(text)
+    return bool(re.search(
+        r"(?:world of tanks blitz|world tanks blitz|wot blitz|вот блиц|вг блиц|вг|wg)",
+        low
+    ))
+
+
+def _lesta_is_marker(text):
+    low = _wotb_norm(text)
+    # Важно: одного слова «блиц» недостаточно — обе игры содержат Blitz.
+    return bool(re.search(
+        r"(?:tanks blitz|танкс блиц|танки блиц|леста|lesta)",
+        low
+    )) and not _wotb_is_marker(text)
+
+
+def _wotb_tank_query(text):
+    low = _wotb_norm(text)
+    markers = (
+        "танк", "танка", "танков", "альфа", "урон", "пробит", "брон",
+        "характерист", "ттх", "оруд", "пушка", "дамаг", "калибр",
+        "перезаряд", "скорость", "хп", "живуч", "каким танком",
+        "на чем играть", "на чем поиграть", "посоветуй танк", "выбрать танк",
+        "играть на танке"
+    )
+    return any(x in low for x in markers)
+
+
+def _wotb_set_context(chat_id, game):
+    with WOTB_GAME_CONTEXT_LOCK:
+        WOTB_GAME_CONTEXT[int(chat_id)] = (game, time.time() + WOTB_CONTEXT_TTL)
+
+
+def _wotb_get_context(chat_id):
+    with WOTB_GAME_CONTEXT_LOCK:
+        item = WOTB_GAME_CONTEXT.get(int(chat_id))
+        if not item:
+            return ""
+        game, expires_at = item
+        if time.time() >= expires_at:
+            WOTB_GAME_CONTEXT.pop(int(chat_id), None)
+            return ""
+        return game
+
+
+def _wotb_value(obj, *path, default=None):
+    cur = obj
+    for key in path:
+        if not isinstance(cur, dict):
+            return default
+        cur = cur.get(key)
+    return default if cur is None else cur
+
+
+def _wotb_normalize_tank(tank_id, raw):
+    profile = raw.get("default_profile") or {}
+    gun = profile.get("gun") or {}
+    shells = profile.get("shells") or {}
+    armor = profile.get("armor") or {}
+    hull = armor.get("hull") or {}
+    turret = armor.get("turret") or {}
+
+    # API иногда возвращает числовые поля строками — сохраняем исходное значение,
+    # а для поиска/сравнения приводим только там, где это безопасно.
+    return {
+        "tank_id": str(tank_id),
+        "name": raw.get("name") or "",
+        "short_name": raw.get("short_name_i18n") or raw.get("short_name") or "",
+        "tier": raw.get("tier") or profile.get("tier"),
+        "type": raw.get("type_i18n") or raw.get("type") or "",
+        "nation": raw.get("nation_i18n") or raw.get("nation") or "",
+        "is_premium": bool(raw.get("is_premium")),
+        "description": raw.get("description") or "",
+        "hp": profile.get("hp") or profile.get("hull_hp"),
+        "damage": shells.get("damage"),
+        "penetration": shells.get("penetration"),
+        "shell_type": shells.get("type") or "",
+        "gun": gun.get("name") or "",
+        "caliber": gun.get("caliber"),
+        "reload": gun.get("reload_time") or gun.get("clip_reload_time"),
+        "fire_rate": gun.get("fire_rate"),
+        "aim_time": gun.get("aim_time"),
+        "dispersion": gun.get("dispersion"),
+        "clip_capacity": gun.get("clip_capacity"),
+        "speed_forward": profile.get("speed_forward"),
+        "speed_backward": profile.get("speed_backward"),
+        "view_range": _wotb_value(profile, "turret", "view_range"),
+        "armor_hull_front": hull.get("front"),
+        "armor_hull_sides": hull.get("sides"),
+        "armor_hull_rear": hull.get("rear"),
+        "armor_turret_front": turret.get("front"),
+        "armor_turret_sides": turret.get("sides"),
+        "armor_turret_rear": turret.get("rear"),
+        "raw": raw,
+    }
+
+
+def _wotb_fetch(url, params=None, headers=None):
+    response = requests.get(
+        url,
+        params=params or {},
+        headers=headers or {},
+        timeout=WOTB_API_TIMEOUT,
+    )
+    response.raise_for_status()
+    data = response.json()
+    if data.get("status") != "ok":
+        error = data.get("error") or {}
+        raise RuntimeError(
+            f"WOTB API: {error.get('code', 'unknown')} {error.get('message', '')}".strip()
+        )
+    return data, response
+
+
+def load_wotb_tanks(force=False):
+    """Загружает только World of Tanks Blitz (Wargaming) и держит данные в RAM.
+    При неизменённой Tankopedia используется ETag/304; при изменении полный
+    список сравнивается с предыдущим и в RAM заменяются только изменившиеся записи.
+    """
+    global WOTB_ETAG, WOTB_LAST_REFRESH, WOTB_TANKS_UPDATED_AT
+
+    if not WOTB_APP_ID:
+        return False
+
+    base = _wotb_api_base()
+    info_url = f"{base}/wotb/encyclopedia/info/"
+    vehicles_url = f"{base}/wotb/encyclopedia/vehicles/"
+
+    try:
+        # Сначала узнаём служебную дату Tankopedia. Это дешёвый запрос и
+        # позволяет не перекачивать технику без изменения источника.
+        info, _ = _wotb_fetch(
+            info_url,
+            params={
+                "application_id": WOTB_APP_ID,
+                "language": "ru",
+                "fields": "tanks_updated_at,game_version",
+            },
+        )
+        info_data = info.get("data") or {}
+        updated_at = info_data.get("tanks_updated_at")
+
+        with WOTB_CACHE_LOCK:
+            current_count = len(WOTB_CACHE)
+            known_updated_at = WOTB_TANKS_UPDATED_AT
+
+        if (
+            not force
+            and current_count
+            and updated_at is not None
+            and known_updated_at == updated_at
+        ):
+            WOTB_LAST_REFRESH = time.time()
+            return True
+
+        headers = {"If-None-Match": WOTB_ETAG} if WOTB_ETAG else {}
+        all_raw = {}
+        page = 1
+
+        while True:
+            params = {
+                "application_id": WOTB_APP_ID,
+                "language": "ru",
+                "page_no": page,
+                "limit": WOTB_PAGE_LIMIT,
+            }
+            data, response = _wotb_fetch(
+                vehicles_url,
+                params=params,
+                headers=headers if page == 1 else {},
+            )
+            if response.headers.get("ETag"):
+                WOTB_ETAG = response.headers.get("ETag")
+
+            rows = data.get("data") or {}
+            if not rows:
+                break
+            all_raw.update(rows)
+
+            meta = data.get("meta") or {}
+            total = meta.get("total")
+            if total is not None and len(all_raw) >= int(total):
+                break
+            if len(rows) < WOTB_PAGE_LIMIT:
+                break
+            page += 1
+            if page > 100:
+                raise RuntimeError("WOTB API: слишком много страниц Tankopedia")
+
+        normalized = {
+            str(tank_id): _wotb_normalize_tank(tank_id, raw)
+            for tank_id, raw in all_raw.items()
+            if isinstance(raw, dict)
+        }
+
+        with WOTB_CACHE_LOCK:
+            old = WOTB_CACHE
+            changed = 0
+            for tank_id, tank in normalized.items():
+                if old.get(tank_id) != tank:
+                    changed += 1
+            removed = set(old) - set(normalized)
+            WOTB_CACHE.clear()
+            WOTB_CACHE.update(normalized)
+
+        WOTB_TANKS_UPDATED_AT = updated_at
+        WOTB_LAST_REFRESH = time.time()
+        print(
+            f"WOTB Tankopedia loaded: {len(normalized)} tanks | changed={changed} removed={len(removed)} | realm={WOTB_REALM}",
+            flush=True,
+        )
+        return True
+
+    except requests.HTTPError as e:
+        # 304 обычно не попадёт сюда из-за raise_for_status(), но оставляем
+        # безопасный лог без ключа приложения.
+        print("WOTB Tankopedia HTTP error:", e, flush=True)
+        return False
+    except Exception as e:
+        print("WOTB Tankopedia load error:", e, flush=True)
+        return False
+
+
+def _wotb_refresh_loop():
+    while True:
+        try:
+            if WOTB_APP_ID:
+                load_wotb_tanks(force=False)
+        except Exception as e:
+            print("WOTB refresh loop error:", e, flush=True)
+        time.sleep(max(300, WOTB_REFRESH_SECONDS))
+
+
+def _wotb_alias_candidates(text):
+    low = _wotb_norm(text)
+    aliases = {
+        "бабаха": ("fv4005", "fv 4005"),
+        "бабка": ("fv4005", "fv 4005"),
+    }
+    wanted = []
+    for alias, needles in aliases.items():
+        if alias in low:
+            wanted.extend(needles)
+    return wanted
+
+
+def _wotb_find_tanks(text, limit=8):
+    low = _wotb_norm(text)
+    with WOTB_CACHE_LOCK:
+        tanks = list(WOTB_CACHE.values())
+
+    if not tanks:
+        return []
+
+    aliases = _wotb_alias_candidates(text)
+    if aliases:
+        alias_hits = []
+        for tank in tanks:
+            hay = _wotb_norm(tank.get("name")) + " " + _wotb_norm(tank.get("short_name"))
+            if any(x in hay for x in aliases):
+                alias_hits.append(tank)
+        if alias_hits:
+            return alias_hits[:limit]
+
+    # Сначала точное/частичное совпадение названия.
+    direct = []
+    for tank in tanks:
+        name = _wotb_norm(tank.get("name"))
+        short_name = _wotb_norm(tank.get("short_name"))
+        if name and (name in low or low in name) or short_name and (short_name in low or low in short_name):
+            direct.append(tank)
+    if direct:
+        return direct[:limit]
+
+    # Затем совпадение отдельных значимых токенов (ИС-7, Е 100, T110E5 и т.п.).
+    tokens = [x for x in low.split() if len(x) >= 2]
+    scored = []
+    for tank in tanks:
+        hay = _wotb_norm(tank.get("name")) + " " + _wotb_norm(tank.get("short_name"))
+        score = sum(1 for token in tokens if token in hay)
+        if score:
+            scored.append((score, tank))
+    scored.sort(key=lambda x: (-x[0], _wotb_norm(x[1].get("name"))))
+    return [tank for _, tank in scored[:limit]]
+
+
+def _wotb_type_match(tank, text):
+    low = _wotb_norm(text)
+    typ = _wotb_norm(tank.get("type"))
+    markers = {
+        "тт": ("heavy", "тяж"),
+        "тяж": ("heavy", "тяж"),
+        "тяжелый": ("heavy", "тяж"),
+        "ст": ("medium", "сред"),
+        "средний": ("medium", "сред"),
+        "лт": ("light", "лег"),
+        "легкий": ("light", "лег"),
+        "пт": ("destroy", "пт"),
+        "птсау": ("destroy", "пт"),
+    }
+    wanted = []
+    for marker, values in markers.items():
+        if re.search(rf"(?<![a-zа-я0-9]){re.escape(marker)}(?![a-zа-я0-9])", low):
+            wanted.extend(values)
+    return not wanted or any(x in typ for x in wanted)
+
+
+def _wotb_recommendation_candidates(text, limit=35):
+    low = _wotb_norm(text)
+    with WOTB_CACHE_LOCK:
+        tanks = list(WOTB_CACHE.values())
+
+    if not tanks:
+        return []
+
+    tier_match = re.search(r"\b(1[0-1]|[1-9])\b", low)
+    wanted_tier = int(tier_match.group(1)) if tier_match else None
+    filtered = [
+        tank for tank in tanks
+        if (wanted_tier is None or str(tank.get("tier")) == str(wanted_tier))
+        and _wotb_type_match(tank, text)
+    ]
+    if not filtered:
+        filtered = [tank for tank in tanks if wanted_tier is None or str(tank.get("tier")) == str(wanted_tier)]
+    if not filtered:
+        filtered = tanks
+
+    # Для рекомендации даём ИИ только компактный набор реальных ТТХ из API.
+    filtered.sort(key=lambda t: (-int(t.get("tier") or 0), _wotb_norm(t.get("name"))))
+    return filtered[:limit]
+
+
+def _wotb_format_tank(tank):
+    lines = [f"🎮 World of Tanks Blitz — {tank.get('name') or 'Неизвестный танк'}"]
+    if tank.get("tier") is not None:
+        lines.append(f"Уровень: {tank.get('tier')}")
+    if tank.get("type"):
+        lines.append(f"Класс: {tank.get('type')}")
+    if tank.get("damage") is not None:
+        lines.append(f"Альфа: {tank.get('damage')} HP")
+    if tank.get("penetration") is not None:
+        lines.append(f"Пробитие: {tank.get('penetration')} мм")
+    if tank.get("hp") is not None:
+        lines.append(f"Прочность: {tank.get('hp')} HP")
+    if tank.get("caliber") is not None:
+        lines.append(f"Калибр: {tank.get('caliber')} мм")
+    if tank.get("reload") is not None:
+        lines.append(f"Перезарядка: {tank.get('reload')} с")
+    if tank.get("speed_forward") is not None:
+        lines.append(f"Скорость: {tank.get('speed_forward')} км/ч")
+    return "\n".join(lines)
+
+
+def _wotb_ask_recommendation(user_text, candidates):
+    if not candidates or not groq_clients:
+        return None
+
+    rows = []
+    for tank in candidates:
+        rows.append({
+            "name": tank.get("name"),
+            "tier": tank.get("tier"),
+            "type": tank.get("type"),
+            "damage": tank.get("damage"),
+            "penetration": tank.get("penetration"),
+            "hp": tank.get("hp"),
+            "speed": tank.get("speed_forward"),
+            "reload": tank.get("reload"),
+            "armor_hull_front": tank.get("armor_hull_front"),
+            "armor_turret_front": tank.get("armor_turret_front"),
+        })
+
+    prompt = (
+        "Ты игровой консультант именно по World of Tanks Blitz от Wargaming. "
+        "Выбирай только из переданного списка. Не придумывай ТТХ и не смешивай "
+        "с Tanks Blitz от Lesta. Если пользователь просит совет, дай 1-3 варианта "
+        "и кратко объясни по реальным данным. Если вопрос не позволяет выбрать, "
+        "скажи, что нужен критерий. Ответ по-русски.\n\n"
+        f"Запрос пользователя: {user_text}\n"
+        + json.dumps(rows, ensure_ascii=False)
+    )
+    messages = [
+        {"role": "system", "content": prompt},
+        {"role": "user", "content": user_text},
+    ]
+
+    for idx, client in enumerate(groq_clients):
+        for model, blocked in (
+            (MAIN_MODEL, main_blocked_until),
+            (BACKUP_MODEL, backup_blocked_until),
+        ):
+            if time.time() < blocked.get(idx, 0):
+                continue
+            try:
+                return ask_model(
+                    model,
+                    messages,
+                    min(GROQ_MAX_TOKENS, 220),
+                    client=client,
+                )
+            except Exception as e:
+                if is_rate_limit_error(e):
+                    blocked[idx] = time.time() + get_retry_seconds(e, 600)
+                print(f"WOTB tank AI account {idx+1} {model} error:", e, flush=True)
+    return None
+
+
+def handle_wotb_tank_message(chat_id, peer_id, text):
+    """Отдельная ветка World of Tanks Blitz. Возвращает True, если сообщение
+    относится к выбору игры/ТТХ/совету по WoT Blitz."""
+    text = normalize_text(text)
+    if not text:
+        return False
+
+    wotb_marker = _wotb_is_marker(text)
+    lesta_marker = _lesta_is_marker(text)
+    is_tank = _wotb_tank_query(text)
+    context = _wotb_get_context(chat_id)
+
+    if wotb_marker and lesta_marker:
+        send_message(peer_id, "Уточни игру: Tanks Blitz или World of Tanks Blitz (ВГ)?")
+        return True
+
+    # Короткий ответ на наш вопрос «ВГ».
+    if _wotb_norm(text) in {"вг", "wg", "world of tanks blitz", "wot blitz", "вот блиц"}:
+        _wotb_set_context(chat_id, "wotb")
+        send_message(peer_id, "✅ Понял, дальше запросы по World of Tanks Blitz (ВГ).")
+        return True
+
+    if _wotb_norm(text) in {"танкс блиц", "tanks blitz", "танки блиц", "леста", "lesta"}:
+        _wotb_set_context(chat_id, "lesta")
+        send_message(peer_id, "✅ Понял, дальше запросы по Tanks Blitz (Леста).")
+        return True
+
+    if wotb_marker:
+        _wotb_set_context(chat_id, "wotb")
+        context = "wotb"
+    elif lesta_marker:
+        _wotb_set_context(chat_id, "lesta")
+        context = "lesta"
+
+    # Простое «какая альфа у ...» без названия игры нельзя безопасно
+    # отвечать данными одной из двух игр: ТТХ отличаются.
+    if is_tank and not context:
+        send_message(peer_id, "Чтобы не перепутать ТТХ, уточни: Tanks Blitz или World of Tanks Blitz (ВГ)?")
+        return True
+
+    if context != "wotb":
+        return False
+
+    if not WOTB_APP_ID:
+        send_message(
+            peer_id,
+            "Для World of Tanks Blitz (ВГ) пока не задан WOTB_APP_ID. "
+            "Добавь application_id Wargaming в Render, и бот сможет брать реальные ТТХ из API."
+        )
+        return True
+
+    if not WOTB_CACHE:
+        load_wotb_tanks(force=True)
+
+    if not WOTB_CACHE:
+        send_message(peer_id, "Не удалось получить Tankopedia World of Tanks Blitz из API. Попробуй ещё раз чуть позже.")
+        return True
+
+    # Рекомендации / «на чём играть».
+    if re.search(r"(?:каким|на каком|на чем|на чём|посоветуй|выбрать|поиграть|играть на)", _wotb_norm(text)) and not re.search(r"(?:какая|какой|сколько|альфа|урон|пробит|характерист|ттх)", _wotb_norm(text)):
+        candidates = _wotb_recommendation_candidates(text)
+        answer = _wotb_ask_recommendation(text, candidates)
+        if answer:
+            send_message(peer_id, "🎮 World of Tanks Blitz (ВГ)\n" + answer.strip())
+        else:
+            send_message(peer_id, "Скажи, например: «посоветуй тяжёлый 10 уровня» или «каким танком играть с большой альфой»." )
+        return True
+
+    matches = _wotb_find_tanks(text, limit=5)
+    if not matches:
+        send_message(peer_id, "Не нашёл этот танк в Tankopedia World of Tanks Blitz. Напиши название точнее.")
+        return True
+
+    # Если вопрос конкретный — отдаём факты напрямую из API, без выдумок ИИ.
+    if len(matches) == 1 or any(word in _wotb_norm(text) for word in ("альфа", "урон", "пробит", "ттх", "характерист")):
+        if len(matches) == 1:
+            send_message(peer_id, _wotb_format_tank(matches[0]))
+        else:
+            preview = "\n".join(f"• {t.get('name')}" for t in matches[:5])
+            send_message(peer_id, "Нашёл несколько вариантов, уточни танк:\n" + preview)
+        return True
+
+    answer = _wotb_ask_recommendation(text, matches)
+    if answer:
+        send_message(peer_id, "🎮 World of Tanks Blitz (ВГ)\n" + answer.strip())
+    else:
+        send_message(peer_id, _wotb_format_tank(matches[0]))
+    return True
 
 
 # =========================================================
@@ -4367,6 +4908,11 @@ def callback():
             send_message(peer_id, owner_reply)
             return "ok"
 
+        # Отдельная ветка World of Tanks Blitz (Wargaming).
+        # Старую логику Tanks Blitz не удаляем и не заменяем.
+        if handle_wotb_tank_message(chat_id, peer_id, (message.get("text") or "").strip()):
+            return "ok"
+
         # Полностью выключенная система не читает память, AI, обучение
         # и не выполняет лишних API-запросов.
         if not SYSTEM_ENABLED:
@@ -4877,6 +5423,18 @@ if __name__ == "__main__":
     )
 
     load_system_settings()
+
+    print(
+        f"🎮 World of Tanks Blitz API: {'YES' if WOTB_APP_ID else 'NO'}",
+        flush=True
+    )
+
+    if WOTB_APP_ID:
+        load_wotb_tanks(force=True)
+        threading.Thread(
+            target=_wotb_refresh_loop,
+            daemon=True
+        ).start()
 
     print(
         f"⚙️ System: {'ON' if SYSTEM_ENABLED else 'OFF'}",
