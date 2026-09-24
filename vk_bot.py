@@ -4518,32 +4518,30 @@ def all_ai_exhausted():
 
 
 def set_all_ai_pause(reason="Все AI недоступны"):
-    global SYSTEM_ENABLED, all_ai_blocked_until
+    global all_ai_blocked_until
     with all_ai_lock:
         all_ai_blocked_until = time.time() + ALL_AI_SLEEP_SECONDS
-    SYSTEM_ENABLED = False
-    save_system_setting("system_enabled", False)
+    save_system_setting("ai_relay_active", True)
+    save_system_setting("primary_ai_status", "relay")
     print(
-        f"ALL AI EXHAUSTED | system paused for {ALL_AI_SLEEP_SECONDS}s | {reason}",
+        f"ALL AI EXHAUSTED | relay activated | {reason}",
         flush=True
     )
 
-
-def maybe_restore_all_ai():
-    global SYSTEM_ENABLED, all_ai_blocked_until
-    with all_ai_lock:
-        blocked_until = all_ai_blocked_until
-    if blocked_until and time.time() >= blocked_until:
-        all_ai_blocked_until = 0.0
-        SYSTEM_ENABLED = True
-        save_system_setting("system_enabled", True)
-        print("ALL AI PAUSE FINISHED | system enabled", flush=True)
 
 
 def ask_ai(chat_id, text, user_id, user_name):
     maybe_restore_all_ai()
 
-    if not SYSTEM_ENABLED:
+   def maybe_restore_all_ai():
+    global all_ai_blocked_until
+    with all_ai_lock:
+        blocked_until = all_ai_blocked_until
+    if blocked_until and not all_ai_exhausted():
+        all_ai_blocked_until = 0.0
+        save_system_setting("ai_relay_active", False)
+        save_system_setting("primary_ai_status", "online")
+        print("ALL AI RECOVERED | relay deactivated", flush=True)not SYSTEM_ENABLED:
         raise RuntimeError("Система временно отключена.")
 
     try:
