@@ -1419,8 +1419,8 @@ CLAN_RECRUITMENT = {
         "members": 12,
     },
     "1VODA": {
-        "deputy_vk": "id948950706",
-        "deputy_url": "https://vk.ru/id948950706",
+        "deputy_vk": "id877595083",
+        "deputy_url": "https://vk.ru/id877595083",
         "deputy_name": "Зам 1VODA",
         "min_battles": 5000,
         "min_damage": 1400,
