@@ -5110,7 +5110,28 @@ def media_inbox_cleanup():
         .execute()
     )
 
+def create_text_relay_job(platform, chat_id, sender_id, sender_name, msg_id, text):
+    """Создаёт задачу для второго бота, когда основной AI временно недоступен."""
+    kind = "text_relay_vk" if platform == "vk" else "text_relay_tg"
+    event_key = f"relay:{platform}:{chat_id}:{msg_id}:{int(time.time())}"
 
+    try:
+        supabase.table(MEDIA_INBOX_TABLE).insert({
+            "event_key": event_key,
+            "chat_id": int(chat_id),
+            "sender_id": int(sender_id),
+            "sender_name": sender_name,
+            "message_id": int(msg_id) if msg_id is not None else None,
+            "kind": kind,
+            "caption": text or None,
+            "status": "relay_pending",
+        }).execute()
+        print(f"TEXT RELAY +1: [{kind}] chat={chat_id} sender={sender_id}", flush=True)
+        return True
+    except Exception as e:
+        print("TEXT RELAY insert error:", e, flush=True)
+        return False
+        
 def handle_media_inbox_row(row):
     """
     Обрабатывает результат второго бота так же, как обычное
@@ -5557,12 +5578,24 @@ def callback():
 
             return "ok"
 
-        reply = ask_ai(
-            chat_id,
-            text,
-            str(sender_id),
-            user_name
-        )
+        try:
+            reply = ask_ai(
+                chat_id,
+                text,
+                str(sender_id),
+                user_name
+            )
+        except RuntimeError as ai_error:
+            if str(ai_error) == "Все текстовые AI временно недоступны.":
+                create_text_relay_job(
+                    "vk",
+                    chat_id,
+                    sender_id,
+                    user_name,
+                    message.get("conversation_message_id"),
+                    text
+                )
+            return "ok"
 
         if reply:
 
@@ -5750,12 +5783,24 @@ def telegram_webhook(secret):
 
             return "ok"
 
-        reply = ask_ai(
-            chat_id,
-            text,
-            str(sender_id),
-            user_name
-        )
+        try:
+            reply = ask_ai(
+                chat_id,
+                text,
+                str(sender_id),
+                user_name
+            )
+        except RuntimeError as ai_error:
+            if str(ai_error) == "Все текстовые AI временно недоступны.":
+                create_text_relay_job(
+                    "telegram",
+                    chat_id,
+                    sender_id,
+                    user_name,
+                    message.get("message_id"),
+                    text
+                )
+            return "ok"
 
         if reply:
 
