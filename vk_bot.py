@@ -17,7 +17,7 @@ from supabase import create_client
 # CONFIG
 # =========================================================
 
-BOT_VERSION = "V1.9.6"
+BOT_VERSION = "V1.9.7"
 BOT_BUILD = "Tanks Blitz + VK ID memory + emotions + context + anti-repeat + media inbox + VOODA clan recruitment"
 
 VK_TOKEN = os.environ.get("VK_TOKEN", "").strip()
@@ -1405,29 +1405,72 @@ def _replace_personal_fact(chat_id, user_id, name, prefix, fact):
 
 
 # =========================================================
-# VOODA ALLIANCE — CLAN RECRUITMENT
+# VOODA ALLIANCE — CLAN RECRUITMENT / AI ASSISTANT
 # =========================================================
 
 CLAN_RECRUITMENT = {
-    "VOODA": {"deputy_vk":"id1020077553","deputy_url":"https://vk.ru/id1020077553","deputy_name":"Зам VOODA","min_battles":8000,"min_damage":1500,"min_winrate":54.0,"members":12},
-    "1VODA": {"deputy_vk":"id948950706","deputy_url":"https://vk.ru/id948950706","deputy_name":"Зам 1VODA","min_battles":5000,"min_damage":1400,"min_winrate":52.0,"members":48},
-    "2VODA": {"deputy_vk":"casting_inwards","deputy_url":"https://vk.ru/casting_inwards","deputy_name":"Зам 2VODA","min_battles":3000,"min_damage":1250,"min_winrate":51.0,"members":34},
-    "3VODA": {"deputy_vk":"afak_stepankovv","deputy_url":"https://vk.ru/afak_stepankovv","deputy_name":"Зам 3VODA","min_battles":1000,"min_damage":1000,"min_winrate":49.0,"members":24},
+    "VOODA": {
+        "deputy_vk": "id1020077553",
+        "deputy_url": "https://vk.ru/id1020077553",
+        "deputy_name": "Зам VOODA",
+        "min_battles": 8000,
+        "min_damage": 1500,
+        "min_winrate": 54.0,
+        "members": 12,
+    },
+    "1VODA": {
+        "deputy_vk": "id948950706",
+        "deputy_url": "https://vk.ru/id948950706",
+        "deputy_name": "Зам 1VODA",
+        "min_battles": 5000,
+        "min_damage": 1400,
+        "min_winrate": 52.0,
+        "members": 48,
+    },
+    "2VODA": {
+        "deputy_vk": "casting_inwards",
+        "deputy_url": "https://vk.ru/casting_inwards",
+        "deputy_name": "Зам 2VODA",
+        "min_battles": 3000,
+        "min_damage": 1250,
+        "min_winrate": 51.0,
+        "members": 34,
+    },
+    "3VODA": {
+        "deputy_vk": "afak_stepankovv",
+        "deputy_url": "https://vk.ru/afak_stepankovv",
+        "deputy_name": "Зам 3VODA",
+        "min_battles": 1000,
+        "min_damage": 1000,
+        "min_winrate": 49.0,
+        "members": 24,
+    },
 }
+
 CLAN_ORDER = ("VOODA", "1VODA", "2VODA", "3VODA")
 CLAN_MAX_MEMBERS = 50
-
+CLAN_TOPIC_RE = re.compile(
+    r"\b(?:clan|клан|клана|клане|клану|voda|vooda|1voda|2voda|3voda|"
+    r"зам|набор|набира|игроков|рекрут|вступ|перейти|уйти|перевод)\b",
+    re.IGNORECASE,
+)
 CLAN_SEARCH_RE = re.compile(
     r"\b(?:ищу\s+(?:себе\s+)?клан|нужен\s+(?:мне\s+)?клан|"
     r"кто\s+(?:возьм[её]т|примет)\s+(?:меня\s+)?в\s+клан|"
     r"возьм[её]те\s+в\s+клан|примете\s+в\s+клан|клан\s+ищу)\b",
-    re.IGNORECASE
+    re.IGNORECASE,
 )
 CLAN_RECRUITING_RE = re.compile(
     r"\b(?:набира(?:ем|ю|ют)|набор\s+(?:в\s+клан|игроков)|"
     r"ищ(?:ем|у|ут)\s+игрок(?:ов|и)|нужн(?:ы|о)\s+игрок(?:и|ов)|"
     r"принима(?:ем|ю|ют)\s+в\s+клан|рекрутинг)\b",
-    re.IGNORECASE
+    re.IGNORECASE,
+)
+CLAN_OTHER_RE = re.compile(
+    r"\b(?:друг(?:ой|ие|ого)\s+клан|ещ[её]\s+(?:клан|вариант)|"
+    r"какие\s+(?:есть\s+)?кланы|какой\s+(?:ещ[её]\s+)?клан|"
+    r"покажи\s+(?:наши\s+)?кланы|условия\s+клан|инф(?:а|ормация)\s+(?:про|о|по)\s+клан)\b",
+    re.IGNORECASE,
 )
 
 
@@ -1435,18 +1478,32 @@ def _clan_state(chat_id):
     state = get_learning_state(chat_id)
     try:
         payload = json.loads(state.get("personality") or "{}")
-        if not isinstance(payload, dict): payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
     except Exception:
         payload = {}
+
     runtime = payload.get("clan_recruitment")
-    if not isinstance(runtime, dict): runtime = {}
+    if not isinstance(runtime, dict):
+        runtime = {}
+
     counts = runtime.get("counts")
-    if not isinstance(counts, dict): counts = {}
+    if not isinstance(counts, dict):
+        counts = {}
+
     for name, cfg in CLAN_RECRUITMENT.items():
-        try: counts[name] = max(0, min(50, int(counts.get(name, cfg["members"]))))
-        except Exception: counts[name] = cfg["members"]
+        try:
+            counts[name] = max(
+                0,
+                min(50, int(counts.get(name, cfg["members"])))
+            )
+        except Exception:
+            counts[name] = cfg["members"]
+
     candidates = runtime.get("candidates")
-    if not isinstance(candidates, dict): candidates = {}
+    if not isinstance(candidates, dict):
+        candidates = {}
+
     runtime["counts"] = counts
     runtime["candidates"] = candidates
     payload["clan_recruitment"] = runtime
@@ -1490,26 +1547,44 @@ def _resolve_vk_screen_name(screen_name):
 
 
 def _is_clan_deputy(sender_id, clan_name):
-    try: uid = int(sender_id)
-    except Exception: return False
+    try:
+        uid = int(sender_id)
+    except Exception:
+        return False
+
     deputy = CLAN_RECRUITMENT[clan_name]["deputy_vk"]
     if deputy.startswith("id"):
         return uid == int(deputy[2:])
+
     resolved = _resolve_vk_screen_name(deputy)
     if resolved is not None:
         return uid == resolved
-    # Запасной вариант для случаев, когда users.get недоступен.
-    allowed = {x.strip() for x in os.environ.get("CLAN_DEPUTY_IDS", "").split(",") if x.strip()}
+
+    allowed = {
+        x.strip()
+        for x in os.environ.get("CLAN_DEPUTY_IDS", "").split(",")
+        if x.strip()
+    }
     return str(uid) in allowed
 
 
 def handle_clan_member_command(chat_id, sender_id, text):
-    m = re.fullmatch(r"\s*бот\s+у\s+нас\s+в\s+клане\s+(VOODA|1VODA|2VODA|3VODA)\s+(\d{1,2})\s*", text or "", re.I)
-    if not m: return None
+    m = re.fullmatch(
+        r"\s*бот\s+у\s+нас\s+в\s+клане\s+(VOODA|1VODA|2VODA|3VODA)\s+(\d{1,2})\s*",
+        text or "",
+        re.I,
+    )
+    if not m:
+        return None
+
     clan = m.group(1).upper()
     members = int(m.group(2))
-    if members > 50: return "Максимум в клане — 50 человек."
-    if not _is_clan_deputy(sender_id, clan): return "Эту цифру может менять только зам этого клана."
+
+    if members > 50:
+        return "Максимум в клане — 50 человек."
+    if not _is_clan_deputy(sender_id, clan):
+        return "Эту цифру может менять только зам этого клана."
+
     payload, runtime = _clan_state(chat_id)
     runtime["counts"][clan] = members
     payload["clan_recruitment"] = runtime
@@ -1520,35 +1595,93 @@ def handle_clan_member_command(chat_id, sender_id, text):
 def _num(s):
     s = str(s).lower().replace(" ", "").replace(",", ".")
     m = re.fullmatch(r"(\d+(?:\.\d+)?)(к)?", s)
-    if not m: return None
+    if not m:
+        return None
     v = float(m.group(1)) * (1000 if m.group(2) else 1)
     return int(v) if v.is_integer() else v
 
 
-def extract_clan_stats(text):
+def extract_clan_stats(text, missing=None):
+    """Распознаёт полную стату и короткие ответы вроде '1500 и 54%'."""
     low = normalize_text(text or "").lower()
-    out = {"battles":None, "damage":None, "winrate":None}
+    out = {"battles": None, "damage": None, "winrate": None}
+
     patterns = [
-        ("battles", r"(\d[\d\s.,]*\d|\d+(?:[.,]\d+)?)\s*(к)?\s*(?:бо[её]в|боя|battle|battles)\b"),
-        ("damage", r"(?:средн(?:ий|его)?\s+)?урон\s*[:=]?\s*(\d[\d\s.,]*\d|\d+(?:[.,]\d+)?)\s*(к)?\b"),
-        ("damage", r"(\d[\d\s.,]*\d|\d+(?:[.,]\d+)?)\s*(к)?\s*(?:среднего\s+)?урона\b"),
+        (
+            "battles",
+            r"(\d[\d\s.,]*\d|\d+(?:[.,]\d+)?)\s*(к)?\s*"
+            r"(?:бо[её]в|боя|battle|battles)\b",
+        ),
+        (
+            "damage",
+            r"(?:средн(?:ий|его)?\s+)?урон\s*[:=]?\s*"
+            r"(\d[\d\s.,]*\d|\d+(?:[.,]\d+)?)\s*(к)?\b",
+        ),
+        (
+            "damage",
+            r"(\d[\d\s.,]*\d|\d+(?:[.,]\d+)?)\s*(к)?\s*"
+            r"(?:среднего\s+)?урона\b",
+        ),
     ]
+
     for key, pat in patterns:
-        if out[key] is not None: continue
+        if out[key] is not None:
+            continue
         m = re.search(pat, low, re.I)
         if m:
-            try: out[key] = int(_num(m.group(1) + ("к" if m.group(2) else "")))
-            except Exception: pass
+            try:
+                out[key] = int(_num(m.group(1) + ("к" if m.group(2) else "")))
+            except Exception:
+                pass
+
     for pat in (
         r"(\d{1,3}(?:[.,]\d+)?)\s*%\s*(?:побед|победы)?",
-        r"(?:процент\s+побед|побед|винрейт|winrate|wr)\s*[:=]?\s*(\d{1,3}(?:[.,]\d+)?)\s*%?",
+        r"(?:процент\s+побед|побед|винрейт|winrate|wr)\s*[:=]?\s*"
+        r"(\d{1,3}(?:[.,]\d+)?)\s*%?",
     ):
         m = re.search(pat, low, re.I)
         if m:
             try:
                 v = float(m.group(1).replace(",", "."))
-                if 0 <= v <= 100: out["winrate"] = v; break
-            except Exception: pass
+                if 0 <= v <= 100:
+                    out["winrate"] = v
+                    break
+            except Exception:
+                pass
+
+    # Главное исправление: короткие ответы после вопроса бота.
+    # Например, бот спросил 'бои, урон и % побед', человек пишет '5000',
+    # потом '1500 и 54%'. Значения назначаются по оставшимся полям.
+    missing = list(missing or [])
+    if missing:
+        tokens = re.findall(r"(?<!\w)(\d+(?:[.,]\d+)?)(?:\s*(к))?(?:\s*%)?", low)
+        bare = []
+        for value, k in tokens:
+            try:
+                n = float(value.replace(",", "."))
+                if k:
+                    n *= 1000
+                bare.append(n)
+            except Exception:
+                pass
+
+        # Убираем числа, которые уже были распознаны с подписью.
+        if re.search(r"\d[\d\s.,]*\d?\s*(?:к)?\s*(?:бо[её]в|боя|battle|battles)\b", low):
+            if "battles" in missing and bare:
+                bare = bare[1:]
+        if re.search(r"(?:урон|урона)\s*[:=]?\s*\d", low):
+            if "damage" in missing and bare:
+                # Не удаляем, если это единственное число, уже использованное выше.
+                if len(bare) > len(missing):
+                    bare = bare[1:]
+
+        # Проценты уже разобраны — оставшиеся числа идут по порядку missing.
+        clean_missing = [k for k in missing if out.get(k) is None]
+        for key, value in zip(clean_missing, bare):
+            if key == "winrate" and value > 100:
+                continue
+            out[key] = int(value) if float(value).is_integer() else value
+
     return out
 
 
@@ -1564,9 +1697,14 @@ def _save_candidate(chat_id, user_id, name, candidate):
     candidate["name"] = name or candidate.get("name") or ""
     candidate["updated_at"] = time.time()
     runtime["candidates"][str(user_id)] = candidate
+
     if len(runtime["candidates"]) > 1000:
-        ordered = sorted(runtime["candidates"].items(), key=lambda x: float(x[1].get("updated_at",0)))
+        ordered = sorted(
+            runtime["candidates"].items(),
+            key=lambda x: float(x[1].get("updated_at", 0)),
+        )
         runtime["candidates"] = dict(ordered[-1000:])
+
     payload["clan_recruitment"] = runtime
     return _save_clan_state(chat_id, payload)
 
@@ -1574,23 +1712,52 @@ def _save_candidate(chat_id, user_id, name, candidate):
 def _merge_stats(old, new):
     result = dict(old or {})
     for k in ("battles", "damage", "winrate"):
-        if new.get(k) is not None: result[k] = new[k]
+        if new.get(k) is not None:
+            result[k] = new[k]
     return result
 
 
+def _missing_stat_keys(stats):
+    return [k for k in ("battles", "damage", "winrate") if stats.get(k) is None]
+
+
 def _missing_stats(stats):
-    names = {"battles":"количество боёв", "damage":"средний урон", "winrate":"процент побед"}
-    return [names[k] for k in ("battles","damage","winrate") if stats.get(k) is None]
+    names = {
+        "battles": "количество боёв",
+        "damage": "средний урон",
+        "winrate": "процент побед",
+    }
+    return [names[k] for k in _missing_stat_keys(stats)]
 
 
-def choose_clan_for_stats(chat_id, stats):
+def choose_clan_for_stats(chat_id, stats, requested_clan=None):
+    """Всегда сверяет ВСЕ три показателя и вместимость перед рекомендацией."""
     _, runtime = _clan_state(chat_id)
+
+    if requested_clan:
+        requested_clan = requested_clan.upper()
+        if requested_clan in CLAN_RECRUITMENT:
+            cfg = CLAN_RECRUITMENT[requested_clan]
+            if runtime["counts"].get(requested_clan, cfg["members"]) >= 50:
+                return None
+            if (
+                stats.get("battles", 0) >= cfg["min_battles"]
+                and stats.get("damage", 0) >= cfg["min_damage"]
+                and stats.get("winrate", 0) >= cfg["min_winrate"]
+            ):
+                return requested_clan
+            return None
+
     for clan in CLAN_ORDER:
         cfg = CLAN_RECRUITMENT[clan]
-        if runtime["counts"].get(clan, cfg["members"]) >= 50: continue
-        if stats["battles"] < cfg["min_battles"]: continue
-        if stats["damage"] < cfg["min_damage"]: continue
-        if stats["winrate"] < cfg["min_winrate"]: continue
+        if runtime["counts"].get(clan, cfg["members"]) >= 50:
+            continue
+        if stats.get("battles", 0) < cfg["min_battles"]:
+            continue
+        if stats.get("damage", 0) < cfg["min_damage"]:
+            continue
+        if stats.get("winrate", 0) < cfg["min_winrate"]:
+            continue
         return clan
     return None
 
@@ -1600,61 +1767,247 @@ def _clan_stats_text(stats):
     return f"{int(stats['battles'])} боёв, {int(stats['damage'])} среднего урона, {wr}% побед"
 
 
+def _clan_list_text(chat_id):
+    _, runtime = _clan_state(chat_id)
+    lines = []
+    for clan in CLAN_ORDER:
+        cfg = CLAN_RECRUITMENT[clan]
+        members = runtime["counts"].get(clan, cfg["members"])
+        lines.append(
+            f"{clan} {members}/50: {cfg['min_battles']}+ боёв, "
+            f"{cfg['min_damage']}+ урона, {int(cfg['min_winrate'])}%+ побед"
+        )
+    return "\n".join(lines)
+
+
+def _requested_clan(text):
+    low = (text or "").lower()
+    for clan in CLAN_ORDER:
+        if re.search(rf"(?<!\w){re.escape(clan.lower())}(?!\w)", low):
+            return clan
+    return None
+
+
+def _is_clan_question(text):
+    low = (text or "").lower()
+    return bool(
+        CLAN_OTHER_RE.search(low)
+        or _requested_clan(low)
+        or re.search(r"\b(?:можно|подхожу|подойдет|подойд[её]т|условия|сколько|"
+                     r"стата|статы|состав|место|мест|зам|ссылка)\b", low)
+    ) and bool(CLAN_TOPIC_RE.search(low))
+
+
+def clan_ai_answer(chat_id, sender_id, user_name, text, stats=None, candidate=None):
+    """AI отвечает по кланам, но получает только проверенные цифры из кода."""
+    _, runtime = _clan_state(chat_id)
+    stats = stats or {}
+    requested = _requested_clan(text)
+    missing = _missing_stats(stats)
+
+    rows = []
+    for clan in CLAN_ORDER:
+        cfg = CLAN_RECRUITMENT[clan]
+        members = runtime["counts"].get(clan, cfg["members"])
+        rows.append(
+            f"{clan}: {members}/50; минимум {cfg['min_battles']} боёв, "
+            f"{cfg['min_damage']} урона, {cfg['min_winrate']}% побед; зам: {cfg['deputy_url']}"
+        )
+
+    eligible = None
+    if not missing:
+        eligible = choose_clan_for_stats(chat_id, stats)
+    requested_ok = None
+    if requested and not missing:
+        requested_ok = choose_clan_for_stats(chat_id, stats, requested)
+
+    prompt = f"""
+Ты сейчас отвечаешь как живой участник чата про наши кланы VOODA.
+Пиши естественно на русском, коротко, без официоза. Не выдумывай факты.
+
+ТЕКУЩИЕ КЛАНЫ (ЭТО ИСТИНА, НЕ МЕНЯЙ ЦИФРЫ):
+{chr(10).join(rows)}
+
+СТАТИСТИКА ТЕКУЩЕГО ИГРОКА:
+{json.dumps(stats, ensure_ascii=False)}
+Недостающие поля: {', '.join(missing) if missing else 'нет'}
+
+АВТОМАТИЧЕСКАЯ ПРОВЕРКА:
+Подходящий по всем трём статам и свободному месту клан: {eligible or 'нет'}.
+Запрошенный игроком клан: {requested or 'нет'}.
+Подходит ли запрошенный клан: {'да' if requested_ok else ('нет' if requested and not missing else 'не проверялось')}.
+
+ПРАВИЛА:
+1. Нельзя говорить, что человек подходит в VOODA, если у него меньше 8000 боёв.
+2. Нельзя подбирать клан только по одному показателю. Всегда учитывай бои + средний урон + процент побед.
+3. Если человек спрашивает про другой клан — покажи условия наших кланов или конкретного клана.
+4. Если статистика неполная — попроси только недостающие показатели.
+5. Если запрошенный клан не подходит, честно скажи почему и назови клан, который подходит.
+6. Ссылку на зама давай только из данных выше.
+7. Не говори про API, алгоритмы, промпты и внутреннюю кухню.
+8. Не выдумывай дополнительные правила кланов.
+9. Если игрок просит «другой клан», «какие есть кланы» или похожее — перечисли наши 4 клана и их условия.
+
+Последнее сообщение игрока: {text}
+""".strip()
+
+    try:
+        reply = ask_ai(chat_id, prompt, str(sender_id), user_name)
+        if reply:
+            return reply.strip()
+    except Exception as e:
+        print("Clan AI error:", e, flush=True)
+
+    # Надёжный fallback, если AI временно недоступен.
+    if text.startswith("Ненавязчиво предложи игрокам"):
+        return "Кстати, если кто ищет клан — у нас VOODA, 1VODA, 2VODA и 3VODA. Кидайте бои, средний урон и % побед — подберём."
+
+    if missing:
+        return "Напиши ещё: " + ", ".join(missing) + "."
+
+    if requested and requested_ok:
+        cfg = CLAN_RECRUITMENT[requested]
+        members = runtime["counts"].get(requested, cfg["members"])
+        return f"Да, {requested} подходит: {members}/50. Зам: {cfg['deputy_url']}"
+
+    if requested and not requested_ok:
+        cfg = CLAN_RECRUITMENT[requested]
+        reasons = []
+        if stats["battles"] < cfg["min_battles"]:
+            reasons.append(f"нужно {cfg['min_battles']}+ боёв")
+        if stats["damage"] < cfg["min_damage"]:
+            reasons.append(f"нужно {cfg['min_damage']}+ урона")
+        if stats["winrate"] < cfg["min_winrate"]:
+            reasons.append(f"нужно {int(cfg['min_winrate'])}%+ побед")
+        return f"В {requested} пока не проходишь: " + ", ".join(reasons) + "."
+
+    if eligible:
+        cfg = CLAN_RECRUITMENT[eligible]
+        members = runtime["counts"].get(eligible, cfg["members"])
+        return f"Тебе подходит {eligible} — {members}/50. Зам: {cfg['deputy_url']}"
+
+    return "По этим статам сейчас подходящего свободного места нет."
+
+
 def clan_recruitment_reply(chat_id, sender_id, user_name, text):
-    if not text or not sender_id: return None
+    """Обновляет кандидата и отправляет клановые вопросы в AI."""
+    if not text or not sender_id:
+        return None
+
     c = _candidate(chat_id, sender_id)
-    active = bool(c and c.get("active") and time.time() - float(c.get("updated_at",0)) < 7*86400)
+    active = bool(
+        c
+        and c.get("active")
+        and time.time() - float(c.get("updated_at", 0)) < 7 * 86400
+    )
     searching = bool(CLAN_SEARCH_RE.search(text))
     recruiting = bool(CLAN_RECRUITING_RE.search(text))
-    found = extract_clan_stats(text)
+    clan_question = _is_clan_question(text)
+
+    current_stats = dict((c or {}).get("stats") or {})
+    found = extract_clan_stats(text, missing=_missing_stat_keys(current_stats))
 
     if searching:
-        c = c or {"active":True,"stats":{}}
+        c = c or {"active": True, "stats": {}}
         c["active"] = True
         c["stats"] = _merge_stats(c.get("stats"), found)
         _save_candidate(chat_id, sender_id, user_name, c)
         active = True
+        current_stats = c["stats"]
+
     elif active and any(v is not None for v in found.values()):
         c["stats"] = _merge_stats(c.get("stats"), found)
         _save_candidate(chat_id, sender_id, user_name, c)
+        current_stats = c["stats"]
+
     elif recruiting:
-        if not c or time.time() - float(c.get("last_pitch",0)) >= 6*3600:
-            c = c or {}
+        # Если человек набирает в чужой клан, мягко предлагаем наши.
+        c = c or {"stats": {}}
+        if time.time() - float(c.get("last_pitch", 0)) >= 6 * 3600:
             c["last_pitch"] = time.time()
             _save_candidate(chat_id, sender_id, user_name, c)
-            return "Если захочешь перейти в наш альянс — подберу клан по стате. Напиши бои, средний урон и % побед."
+            return clan_ai_answer(chat_id, sender_id, user_name, text, current_stats, c)
         return None
 
-    if not active: return None
-    stats = c.get("stats", {})
-    missing = _missing_stats(stats)
-    if missing:
-        _save_candidate(chat_id, sender_id, user_name, c)
-        if len(missing) == 1: return f"Осталось написать {missing[0]}."
-        return "Напиши количество боёв, средний урон и процент побед."
+    # После поиска клана AI ведёт диалог и проверяет неполную/полную стату.
+    if active:
+        current_stats = c.get("stats", {})
+        missing = _missing_stats(current_stats)
+        if missing:
+            # Если человек уже спросил про конкретный клан/другой вариант,
+            # сначала отвечаем по клану, но не притворяемся, что стата проверена.
+            if clan_question:
+                return clan_ai_answer(
+                    chat_id, sender_id, user_name, text, current_stats, c
+                )
+            return "Напиши ещё: " + ", ".join(missing) + "."
 
-    clan = choose_clan_for_stats(chat_id, stats)
-    c["active"] = False
-    c["last_result"] = clan or ""
-    c["last_result_at"] = time.time()
-    _save_candidate(chat_id, sender_id, user_name, c)
-    if not clan:
-        return "По этим статам подходящего места сейчас нет. Можешь позже прислать обновлённую статистику."
-    cfg = CLAN_RECRUITMENT[clan]
-    _, runtime = _clan_state(chat_id)
-    members = runtime["counts"].get(clan, cfg["members"])
-    return (f"Подходит {clan} — {members}/50. Статы: {_clan_stats_text(stats)}. "
-            f"Зам: [{cfg['deputy_vk']}|{cfg['deputy_name']}]. {cfg['deputy_url']}")
+        # Полная статистика: рекомендация вычисляется кодом, AI только объясняет.
+        clan = choose_clan_for_stats(chat_id, current_stats)
+        c["active"] = False
+        c["last_result"] = clan or ""
+        c["last_result_at"] = time.time()
+        _save_candidate(chat_id, sender_id, user_name, c)
+        return clan_ai_answer(
+            chat_id, sender_id, user_name, text, current_stats, c
+        )
+
+    # Вопрос о наших кланах от любого участника — отвечает AI с полной таблицей.
+    if clan_question:
+        return clan_ai_answer(chat_id, sender_id, user_name, text, c.get("stats", {}), c)
+
+    return None
 
 
 def clan_followup_message(chat_id, sender_id):
     c = _candidate(chat_id, sender_id)
-    if not c or not c.get("last_result"): return None
-    if time.time() - float(c.get("last_result_at",0)) < 6*3600: return None
-    if time.time() - float(c.get("last_followup",0)) < 86400: return None
+    if not c or not c.get("last_result"):
+        return None
+    if time.time() - float(c.get("last_result_at", 0)) < 6 * 3600:
+        return None
+    if time.time() - float(c.get("last_followup", 0)) < 86400:
+        return None
     c["last_followup"] = time.time()
     _save_candidate(chat_id, sender_id, c.get("name"), c)
     return f"Кстати, с кланом {c['last_result']} получилось? Если нет — могу снова подобрать."
+
+
+def maybe_spontaneous_clan_pitch(chat_id, sender_id, user_name, text):
+    """Редко и ненавязчиво предлагает альянс в общем чате."""
+    if not text:
+        return None
+
+    pitch_context = re.search(
+        r"\b(?:танки|танков|игрок|игроки|стат|стата|бои|боёв|урон|побед|"
+        r"чат|альянс|команда|взвод)\b",
+        text.lower(),
+    )
+    if not pitch_context and not CLAN_TOPIC_RE.search(text):
+        return None
+
+    payload, runtime = _clan_state(chat_id)
+    now = time.time()
+    last = float(runtime.get("last_spontaneous_pitch", 0) or 0)
+
+    # Не чаще одного предложения на чат за 3 часа.
+    if now - last < 3 * 3600:
+        return None
+    if random.random() >= 0.015:
+        return None
+
+    runtime["last_spontaneous_pitch"] = now
+    payload["clan_recruitment"] = runtime
+    _save_clan_state(chat_id, payload)
+
+    return clan_ai_answer(
+        chat_id,
+        sender_id,
+        user_name,
+        "Ненавязчиво предложи игрокам в этом общем чате наши кланы. "
+        "Скажи, что можно прислать бои, средний урон и % побед — подберём клан.",
+        {},
+        None,
+    )
 
 def save_explicit_user_memory(
     chat_id,
@@ -3556,6 +3909,34 @@ def build_chat_context(
     })
 
     # =========================================
+    # VOODA CLAN KNOWLEDGE
+    # =========================================
+    clan_lines = []
+    try:
+        _, clan_runtime = _clan_state(chat_id)
+        for clan_name in CLAN_ORDER:
+            cfg = CLAN_RECRUITMENT[clan_name]
+            members = clan_runtime["counts"].get(clan_name, cfg["members"])
+            clan_lines.append(
+                f"- {clan_name}: {members}/50; {cfg['min_battles']}+ боёв; "
+                f"{cfg['min_damage']}+ среднего урона; {cfg['min_winrate']}%+ побед; "
+                f"зам: {cfg['deputy_url']}"
+            )
+    except Exception as e:
+        print("Clan context error:", e, flush=True)
+
+    if clan_lines:
+        messages.append({
+            "role": "system",
+            "content": (
+                "ЗНАНИЯ ОБ АЛЬЯНСЕ VOODA. Используй только эти цифры. "
+                "Не выдумывай условия. Если игрок спрашивает про клан, "
+                "сверяй все три показателя: бои, средний урон и процент побед:\n"
+                + "\n".join(clan_lines)
+            ),
+        })
+
+    # =========================================
     # DEVELOPMENT STAGE
     # =========================================
 
@@ -5129,8 +5510,8 @@ def callback():
             text
         )
 
-        # Набор в VOODA — отдельная rule-based функция. Она не зависит от
-        # should_answer/random и не тратит Groq/OpenRouter токены.
+        # Клановый диалог идёт ДО обычного should_answer: просьбы о клане,
+        # статы и вопросы про VOODA/1VODA/2VODA/3VODA нельзя случайно пропускать.
         clan_reply = clan_recruitment_reply(
             chat_id, sender_id, user_name, text
         )
@@ -5139,6 +5520,17 @@ def callback():
                 chat_id, None, "Бот", "assistant", clan_reply
             )
             send_clan_message(peer_id, clan_reply)
+            return "ok"
+
+        # Иногда бот сам, но очень редко, предлагает альянс участникам общего чата.
+        spontaneous_pitch = maybe_spontaneous_clan_pitch(
+            chat_id, sender_id, user_name, text
+        )
+        if spontaneous_pitch is not None:
+            save_chat_message(
+                chat_id, None, "Бот", "assistant", spontaneous_pitch
+            )
+            send_clan_message(peer_id, spontaneous_pitch)
             return "ok"
 
         maybe_learn(
