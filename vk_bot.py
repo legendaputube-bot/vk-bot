@@ -17,8 +17,8 @@ from supabase import create_client
 # CONFIG
 # =========================================================
 
-BOT_VERSION = "V1.9.2"
-BOT_BUILD = "Tanks Blitz + память по VK ID + эмоции по пользователям + контекст + анти-повтор + мат/сленг"
+BOT_VERSION = "V1.9.5"
+BOT_BUILD = "Tanks Blitz + память по VK ID + эмоции по пользователям + контекст + анти-повтор + мат/сленг + фото/голос через второго бота (Supabase)"
 
 VK_TOKEN = os.environ.get("VK_TOKEN", "").strip()
 VK_CONFIRMATION_CODE = os.environ.get(
@@ -60,6 +60,36 @@ else:
 OPENROUTER_API_KEY = os.environ.get(
     "OPENROUTER_API_KEY", ""
 ).strip()
+
+
+# =========================================================
+# MEDIA INBOX: фото и голос разбирает ВТОРОЙ бот
+# =========================================================
+# Второй бот (media_bot.py) слушает тот же чат VK, разбирает голосовые
+# и картинки своим Groq-ключом и кладёт результат в таблицу media_inbox
+# в Supabase. Основной бот забирает оттуда строки и отвечает.
+# Пока MEDIA_INBOX_ENABLED=0, всё работает как раньше (вложения игнорируются).
+
+MEDIA_INBOX_ENABLED = os.environ.get(
+    "MEDIA_INBOX_ENABLED", "1"
+).strip() != "0"
+
+MEDIA_INBOX_TABLE = "media_inbox"
+MEDIA_INBOX_POLL_SECONDS = 5
+MEDIA_INBOX_MAX_AGE_SECONDS = 10 * 60
+MEDIA_INBOX_KEEP_SECONDS = 2 * 24 * 60 * 60
+
+MEDIA_TEXT_CHARS = 450
+
+# 1 = на КАЖДУЮ картинку по Tanks Blitz отвечаем обязательно.
+# 0 = решаем как с обычным текстом (иногда отвечаем, иногда молчим).
+MEDIA_PHOTO_ALWAYS_REPLY = os.environ.get(
+    "MEDIA_PHOTO_ALWAYS_REPLY", "1"
+).strip() != "0"
+
+# Если подряд прилетело несколько картинок, обязательно отвечаем
+# только на первую за это время.
+MEDIA_PHOTO_COOLDOWN_SECONDS = 20
 
 SUPABASE_URL = os.environ.get(
     "SUPABASE_URL", ""
@@ -204,6 +234,9 @@ groq_clients = [
 # groq оставлен для обратной совместимости со старым кодом ниже
 # (если он где-то ещё используется напрямую) — это просто первый аккаунт.
 groq = groq_clients[0] if groq_clients else None
+
+media_photo_last_reply = {}
+media_photo_lock = threading.Lock()
 
 
 # =========================================================
@@ -4320,6 +4353,296 @@ def activity_loop():
 
 
 # =========================================================
+# MEDIA INBOX: ФОТО И ГОЛОС ОТ ВТОРОГО БОТА
+# =========================================================
+
+def vk_has_media_attachment(message):
+    """Есть ли во входящем VK-сообщении фото или голосовое."""
+    for att in (message.get("attachments") or []):
+        if att.get("type") in ("photo", "audio_message"):
+            return True
+
+    return False
+
+
+def media_photo_reply_allowed(chat_id):
+    """Не чаще одного «обязательного» ответа на картинку за 20 секунд."""
+    now = time.time()
+
+    with media_photo_lock:
+        last = media_photo_last_reply.get(chat_id, 0.0)
+
+        if now - last < MEDIA_PHOTO_COOLDOWN_SECONDS:
+            return False
+
+        media_photo_last_reply[chat_id] = now
+
+    return True
+
+
+def _iso_ago(seconds):
+    return datetime.fromtimestamp(
+        time.time() - seconds,
+        tz=timezone.utc
+    ).isoformat()
+
+
+def media_inbox_fetch_new():
+    result = (
+        supabase
+        .table(MEDIA_INBOX_TABLE)
+        .select("*")
+        .eq("status", "new")
+        .gte("created_at", _iso_ago(MEDIA_INBOX_MAX_AGE_SECONDS))
+        .order("id")
+        .limit(10)
+        .execute()
+    )
+
+    return result.data or []
+
+
+def media_inbox_claim(row_id):
+    """Забираем строку себе. True только если она ещё была 'new'."""
+    result = (
+        supabase
+        .table(MEDIA_INBOX_TABLE)
+        .update({
+            "status": "taken",
+            "taken_at": utc_now()
+        })
+        .eq("id", row_id)
+        .eq("status", "new")
+        .execute()
+    )
+
+    return bool(result.data)
+
+
+def media_inbox_finish(row_id, status):
+    try:
+        (
+            supabase
+            .table(MEDIA_INBOX_TABLE)
+            .update({"status": status})
+            .eq("id", row_id)
+            .execute()
+        )
+    except Exception as e:
+        print("MEDIA INBOX finish error:", e, flush=True)
+
+
+def media_inbox_cleanup():
+    # Слишком старые необработанные строки закрываем.
+    (
+        supabase
+        .table(MEDIA_INBOX_TABLE)
+        .update({"status": "expired"})
+        .eq("status", "new")
+        .lt("created_at", _iso_ago(MEDIA_INBOX_MAX_AGE_SECONDS))
+        .execute()
+    )
+
+    # Очень старые строки удаляем, чтобы таблица не росла.
+    (
+        supabase
+        .table(MEDIA_INBOX_TABLE)
+        .delete()
+        .lt("created_at", _iso_ago(MEDIA_INBOX_KEEP_SECONDS))
+        .execute()
+    )
+
+
+def handle_media_inbox_row(row):
+    """
+    Обрабатывает результат второго бота так же, как обычное
+    VK-сообщение: память по VK ID, эмоции, решение отвечать и ответ.
+    """
+    chat_id = int(row["chat_id"])
+    sender_id = int(row["sender_id"])
+
+    kind = row.get("kind") or ""
+
+    result = re.sub(
+        r"\s+",
+        " ",
+        (row.get("result") or "")
+    ).strip()
+
+    caption = limit_text((row.get("caption") or "").strip())
+
+    reply_from_id = row.get("reply_from_id")
+
+    # Псевдо-сообщение VK: из него бот берёт только «кому ответили».
+    message = (
+        {"reply_message": {"from_id": reply_from_id}}
+        if reply_from_id is not None
+        else {}
+    )
+
+    register_active_chat("vk", chat_id)
+
+    user_name = (
+        get_vk_user_name(sender_id)
+        or (row.get("sender_name") or "").strip()
+        or None
+    )
+
+    forced = False
+
+    if kind == "voice" and result:
+        # Голосовое = слова человека, как обычный текст.
+        text = limit_text(result)
+        ai_text = limit_text(result, MEDIA_TEXT_CHARS)
+
+    elif kind == "image" and result:
+        # text = только слова самого человека (подпись),
+        # ai_text = то, что увидит основной ИИ.
+        text = caption
+
+        ai_text = limit_text(
+            f"{caption} [прислал картинку: {result}]".strip(),
+            MEDIA_TEXT_CHARS
+        )
+
+        forced = (
+            MEDIA_PHOTO_ALWAYS_REPLY
+            and media_photo_reply_allowed(chat_id)
+        )
+
+    else:
+        # Разобрать не удалось или картинка не про Blitz:
+        # обрабатываем только подпись, если она была.
+        text = caption
+        ai_text = caption
+
+    if not ai_text:
+        return
+
+    print(
+        f"MEDIA INBOX [{kind}] от {user_name or sender_id}: "
+        f"{ai_text[:120]}",
+        flush=True
+    )
+
+    if text:
+        maybe_save_funny_reaction(
+            chat_id,
+            sender_id,
+            user_name,
+            text
+        )
+
+    save_chat_message(
+        chat_id,
+        sender_id,
+        user_name,
+        "user",
+        ai_text
+    )
+
+    if text:
+        update_bot_emotion(
+            chat_id,
+            text,
+            sender_id,
+            user_name,
+            message_targets_bot(message, text, "vk")
+        )
+
+        save_explicit_user_memory(
+            chat_id,
+            sender_id,
+            user_name,
+            text
+        )
+
+    maybe_learn(
+        chat_id
+    )
+
+    if not (forced or should_answer(message, ai_text, "vk")):
+
+        print(
+            "BOT SILENT:",
+            ai_text[:100],
+            flush=True
+        )
+
+        return
+
+    reply = ask_ai(
+        chat_id,
+        ai_text,
+        str(sender_id),
+        user_name
+    )
+
+    if reply:
+
+        save_chat_message(
+            chat_id,
+            None,
+            "Бот",
+            "assistant",
+            reply
+        )
+
+        send_message(
+            chat_id,
+            reply
+        )
+
+
+def media_inbox_loop():
+    """Раз в несколько секунд забирает новые строки от второго бота."""
+    last_cleanup = 0.0
+    last_error_print = 0.0
+
+    while True:
+
+        try:
+
+            if SYSTEM_ENABLED:
+
+                for row in media_inbox_fetch_new():
+
+                    if not media_inbox_claim(row["id"]):
+                        continue
+
+                    try:
+                        handle_media_inbox_row(row)
+                        media_inbox_finish(row["id"], "done")
+
+                    except Exception as e:
+                        print(
+                            "MEDIA INBOX row error:",
+                            e,
+                            flush=True
+                        )
+                        media_inbox_finish(row["id"], "error")
+
+            if time.time() - last_cleanup > 3600:
+                media_inbox_cleanup()
+                last_cleanup = time.time()
+
+        except Exception as e:
+
+            now = time.time()
+
+            # Не засоряем логи, если таблицы ещё нет или Supabase недоступен.
+            if now - last_error_print > 60:
+                print(
+                    "MEDIA INBOX poll error:",
+                    e,
+                    flush=True
+                )
+                last_error_print = now
+
+        time.sleep(MEDIA_INBOX_POLL_SECONDS)
+
+
+# =========================================================
 # RENDER HEALTH CHECK
 # =========================================================
 
@@ -4351,10 +4674,10 @@ def home():
             ),
 
         "vision":
-            False,
+            MEDIA_INBOX_ENABLED,
 
         "voice":
-            False
+            MEDIA_INBOX_ENABLED
     }, 200
 
 
@@ -4436,6 +4759,13 @@ def callback():
         chat_id = int(
             peer_id
         )
+
+        # Фото и голосовые (в том числе с подписью) разбирает второй бот,
+        # результат придёт через Supabase (media_inbox) и обработается
+        # отдельно. Здесь такое сообщение пропускаем, чтобы не отвечать
+        # дважды.
+        if MEDIA_INBOX_ENABLED and vk_has_media_attachment(message):
+            return "ok"
 
         text = (
             message.get("text")
@@ -4919,14 +5249,18 @@ if __name__ == "__main__":
     )
 
     print(
-        "🖼 Image processing: DISABLED",
+        "🖼🎤 Фото/голос через второго бота (Supabase, только VK): "
+        f"{'ON' if MEDIA_INBOX_ENABLED else 'OFF'}",
         flush=True
     )
 
-    print(
-        "🎤 Voice processing: DISABLED",
-        flush=True
-    )
+    if MEDIA_INBOX_ENABLED:
+        print(
+            f"   таблица: {MEDIA_INBOX_TABLE} | "
+            f"опрос каждые {MEDIA_INBOX_POLL_SECONDS} с | "
+            f"на картинки отвечает всегда: {MEDIA_PHOTO_ALWAYS_REPLY}",
+            flush=True
+        )
 
     print(
         "📱 Telegram token: "
@@ -4982,6 +5316,12 @@ if __name__ == "__main__":
         target=activity_loop,
         daemon=True
     ).start()
+
+    if MEDIA_INBOX_ENABLED:
+        threading.Thread(
+            target=media_inbox_loop,
+            daemon=True
+        ).start()
 
     port = int(
         os.environ.get(
