@@ -4529,11 +4529,7 @@ def set_all_ai_pause(reason="Все AI недоступны"):
     )
 
 
-
-def ask_ai(chat_id, text, user_id, user_name):
-    maybe_restore_all_ai()
-
-   def maybe_restore_all_ai():
+def maybe_restore_all_ai():
     global all_ai_blocked_until
     with all_ai_lock:
         blocked_until = all_ai_blocked_until
@@ -4541,7 +4537,13 @@ def ask_ai(chat_id, text, user_id, user_name):
         all_ai_blocked_until = 0.0
         save_system_setting("ai_relay_active", False)
         save_system_setting("primary_ai_status", "online")
-        print("ALL AI RECOVERED | relay deactivated", flush=True)not SYSTEM_ENABLED:
+        print("ALL AI RECOVERED | relay deactivated", flush=True)
+
+
+def ask_ai(chat_id, text, user_id, user_name):
+    maybe_restore_all_ai()
+
+    if not SYSTEM_ENABLED:
         raise RuntimeError("Система временно отключена.")
 
     try:
