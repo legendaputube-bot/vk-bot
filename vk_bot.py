@@ -6305,6 +6305,13 @@ def setup_telegram():
             flush=True
         )
 
+try:
+    import blitz_api
+    blitz_api.register(app, ask_ai, send_message, save_chat_message)
+    print("blitz_api: OK", flush=True)
+except Exception as e:
+    print("blitz_api error:", e, flush=True)
+
 
 # =========================================================
 # START
