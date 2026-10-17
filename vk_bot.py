@@ -4965,6 +4965,14 @@ def ask_ai(chat_id, text, user_id, user_name):
     if not SYSTEM_ENABLED:
         raise RuntimeError("Система временно отключена.")
 
+    if all_ai_exhausted():
+        try:
+            return ask_relay(chat_id, text, user_id, user_name)
+        except Exception as relay_error:
+            print("Relay final error:", relay_error, flush=True)
+            set_all_ai_pause("лимиты всех AI исчерпаны")
+            raise RuntimeError("Все текстовые AI временно недоступны.")
+
     try:
         return ask_groq(chat_id, text, user_id, user_name)
     except Exception as groq_error:
