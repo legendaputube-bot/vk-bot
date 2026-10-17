@@ -1,4 +1,5 @@
 import os
+import sys
 import logging
 from flask import request, jsonify
 
@@ -7,6 +8,7 @@ VK_PEER = os.environ.get("BLITZ_VK_PEER", "").strip()
 
 
 def register(app, ask_ai, send_message, save_chat_message):
+    g = sys._getframe(1).f_globals
 
     @app.route("/api/ask", methods=["POST"])
     def blitz_api_ask():
@@ -15,13 +17,30 @@ def register(app, ask_ai, send_message, save_chat_message):
         data = request.get_json(silent=True) or {}
         text = str(data.get("text") or "").strip()[:300]
         name = str(data.get("name") or "Участник").strip()[:60]
-        uid = str(data.get("user_id") or "app")
-        if not text or not VK_PEER:
-            return jsonify({"ok": False, "error": "empty"}), 400
         try:
-            chat_id = int(VK_PEER)
-            save_chat_message(chat_id, None, name, "user", text)
-            reply = ask_ai(chat_id, text, uid, name)
+            uid = int(data.get("user_id"))
+        except Exception:
+            uid = 0
+        if not text or not VK_PEER or not uid:
+            return jsonify({"ok": False, "error": "empty"}), 400
+        chat_id = int(VK_PEER)
+        try:
+            cmd = g["handle_owner_command"](text, uid)
+            if cmd:
+                send_message(chat_id, cmd)
+                return jsonify({"ok": True, "reply": cmd})
+            if not g.get("SYSTEM_ENABLED", True):
+                return jsonify({"ok": True, "reply": ""})
+            save_chat_message(chat_id, uid, name, "user", text)
+            try:
+                g["update_bot_emotion"](chat_id, text, uid, name, True)
+            except Exception as e:
+                logging.error("blitz_api emotion: %s", e)
+            try:
+                g["save_explicit_user_memory"](chat_id, uid, name, text)
+            except Exception as e:
+                logging.error("blitz_api memory: %s", e)
+            reply = ask_ai(chat_id, text, str(uid), name)
             if reply:
                 save_chat_message(chat_id, None, "Бот", "assistant", reply)
                 send_message(chat_id, reply)
