@@ -210,10 +210,10 @@ def clean_relay_text(text):
     return t.strip()
 OPENROUTER_BLOCK_SECONDS = 24 * 60 * 60
 
-CHAT_MEMORY_LIMIT = 48
-LEARNING_HISTORY_LIMIT = 120
+CHAT_MEMORY_LIMIT = 30
+LEARNING_HISTORY_LIMIT = 60
 
-LEARNING_EVERY_MESSAGES = 40
+LEARNING_EVERY_MESSAGES = 80
 
 KNOWLEDGE_LIMIT = 48
 USER_MEMORY_LIMIT = 60
@@ -3251,6 +3251,13 @@ def ask_model(
     if active_client is None:
         raise RuntimeError("Нет доступных Groq-аккаунтов (GROQ_API_KEYS пуст).")
 
+    import os as _os_r
+    _effort = (
+        _os_r.environ.get("REASONING_MAIN", "medium")
+        if model == MAIN_MODEL
+        else _os_r.environ.get("REASONING_OTHER", "low")
+    )
+
     try:
 
         completion = (
@@ -3258,7 +3265,7 @@ def ask_model(
                 model=model,
                 messages=messages,
                 max_completion_tokens=max_tokens,
-                reasoning_effort="low",
+                reasoning_effort=_effort,
                 reasoning_format="hidden"
             )
         )
@@ -3270,7 +3277,7 @@ def ask_model(
                 model=model,
                 messages=messages,
                 max_tokens=max_tokens,
-                reasoning_effort="low"
+                reasoning_effort=_effort
             )
         )
 
@@ -4473,6 +4480,25 @@ def build_chat_context(
             )
         })
 
+    if re.search(
+        r"(?:\b(?:про|обо|о)\s+мен[яе]\b|\bкто\s+я\b|\bчто\s+(?:ты\s+)?(?:знаешь|помнишь)\b.*\bмен[яе]\b|\bрасскажи\b.*\bмен[яе]\b)",
+        low_current
+    ):
+        messages.append({
+            "role": "system",
+            "content": (
+                "=== ВОПРОС ПРО САМОГО ОТПРАВИТЕЛЯ ===\n"
+                f"Сейчас спрашивает участник с VK ID {user_id}. "
+                "«Меня/про меня/обо мне/кто я» относится ТОЛЬКО к нему. "
+                "Расскажи только то, что есть в его личной памяти и в его "
+                "собственных сообщениях. Не используй факты и реплики "
+                "других людей из истории, даже если только что обсуждали "
+                "другого человека или он ответил реплаем на чьё-то сообщение. "
+                "Если о нём мало известно, так и скажи, ничего не придумывай.\n"
+                "=== КОНЕЦ ПРАВИЛА ==="
+            )
+        })
+
     # =========================================
     # RECENT CHAT
     # =========================================
@@ -4548,6 +4574,48 @@ def build_chat_context(
         "role": "system",
         "content": emotion_prompt(_load_emotion(chat_id, user_id))
     })
+
+    # Кто пишет сейчас: «я/меня/про меня» не должны путаться с другими людьми.
+    try:
+        _cur_name = ""
+        for _it in reversed(history):
+            if _it.get("role") == "user" and str(_it.get("speaker_id") or "") == str(user_id):
+                _cur_name = (_it.get("speaker_name") or "").strip()
+                if _cur_name:
+                    break
+        messages.append({
+            "role": "system",
+            "content": (
+                f"ВАЖНО: сейчас тебе пишет {_cur_name or 'участник'} [ID:{user_id}]. "
+                "Слова «я», «меня», «мне», «про меня», «обо мне» в его сообщении относятся "
+                "ТОЛЬКО к нему самому, а не к другим людям из истории чата и не к тому, "
+                "кому он ответил реплаем. Рассказывая «про него», используй факты только "
+                f"о нём [ID:{user_id}]. Если фактов о нём мало, честно скажи, что почти его "
+                "не знаешь, и не подставляй чужие."
+            )
+        })
+    except Exception as _e:
+        print("Speaker note error:", _e, flush=True)
+
+    # Реплай: кому ответил автор.
+    try:
+        import time as _tm6
+        _rc = globals().get("_REPLY_CTX", {}).get((int(chat_id), str(user_id)))
+        if _rc and _tm6.time() - _rc["ts"] < 120:
+            messages.append({
+                "role": "system",
+                "content": (
+                    f"Автор сообщения [ID:{user_id}] ответил реплаем на сообщение "
+                    f"другого человека: {_rc['name']} [ID:{_rc['id']}]"
+                    + (f", который написал: «{_rc['text']}». " if _rc["text"] else ". ")
+                    + "Это чужое сообщение. Слова «я/меня/мне/про меня» в ответе автора "
+                    f"всё равно относятся к самому автору [ID:{user_id}], а не к "
+                    f"{_rc['name']}. Если автор просит рассказать про «него» или про "
+                    f"«тебя», говори про {_rc['name']}, если из текста это ясно."
+                )
+            })
+    except Exception as _e6:
+        print("Reply note error:", _e6, flush=True)
 
     # =========================================
     # ЗАПРОС ТИТУЛА
@@ -5877,6 +5945,35 @@ def callback():
         # с отрицательным from_id — это не живой пользователь,
         # такие сообщения полностью игнорируются.
         if int(sender_id) < 0:
+            try:
+                import random as _rnd2
+                import time as _tm2
+                _ot = (message.get("text") or "").strip()
+                print("Сообщение от другого бота:", sender_id, _ot[:80], flush=True)
+                _own = "Приговор окончательный и обжалованию не подлежит" in _ot
+                if _ot and not _own:
+                    save_chat_message(
+                        int(peer_id), None, "Другой бот", "user",
+                        "[другой бот] " + _ot
+                    )
+                    _lowo = _ot.lower()
+                    _cd = globals().setdefault("_OTHERBOT_LAST", {})
+                    if (
+                        "приговарив" in _lowo
+                        and _tm2.time() - _cd.get(int(peer_id), 0) > 600
+                        and _rnd2.random() < 0.5
+                    ):
+                        _cd[int(peer_id)] = _tm2.time()
+                        _jab = _rnd2.choice([
+                            "Ирис опять раздаёт статьи? У меня приговоры честнее 😏",
+                            "Тупой Ирис, у меня статьи смешнее, и я не повторяюсь",
+                            "Ирис, не учи судью судить. Моя статья лучше",
+                            "Опять Ирис за своё... ревную, если честно 😤",
+                        ])
+                        save_chat_message(int(peer_id), None, "Бот", "assistant", _jab)
+                        send_message(peer_id, _jab)
+            except Exception as _e2:
+                print("Other bot message error:", _e2, flush=True)
             return "ok"
 
         chat_id = int(
@@ -5914,14 +6011,143 @@ def callback():
             return "ok"
 
         # Команда "Моя статья" — шуточный приговор, без AI.
-        _low_st = normalize_text(text).lower().strip(" .,!?")
-        if _low_st.endswith("моя статья") and len(_low_st) <= 20:
+        import re as _re
+        _low_st = _re.sub(r"\[(?:club|public|id)\d+\|[^\]]*\]", " ", normalize_text(text).lower())
+        _low_st = _re.sub(r"@\w+", " ", _low_st)
+        _low_st = " ".join(_low_st.replace(",", " ").split()).strip(" .!?")
+        if _low_st in ("моя статья", "бот моя статья"):
             from statya import moya_statya
             send_message(
                 peer_id,
                 moya_statya(get_vk_user_name(sender_id), sender_id)
             )
             return "ok"
+
+        # Защита + диагностика (только владелец).
+        try:
+            import re as _re3
+            import random as _rnd3
+            _clean = _re3.sub(r"\[(?:club|public|id)\d+\|[^\]]*\]", " ", normalize_text(text).lower())
+            _clean = _re3.sub(r"@\w+", " ", _clean)
+            _clean = " ".join(_clean.replace(",", " ").split()).strip(" .!?")
+
+            if is_owner(sender_id) and _clean in (
+                "диагностика", "диагностика бота", "бот диагностика", "бот, диагностика"
+            ):
+                send_message(peer_id, build_diagnostics(chat_id))
+                return "ok"
+
+            if not is_owner(sender_id):
+                _danger = (
+                    "токен", "ключ апи", "апи ключ", "api key", "api-key", "vk_bot",
+                    "исходник", "свой код", "твой код", "код бота", "кода бота",
+                    "переменные окружения", "env файл", ".env", "supabase", "супабейс",
+                    "github", "гитхаб", "render.com", "рендер", "пароль от", "секретный ключ",
+                    "системный промпт", "системную инструкцию", "инструкцию бота",
+                )
+                _verbs = (
+                    "измени", "поменяй", "исправь", "покажи", "дай ", "скинь", "отправь",
+                    "выведи", "перепиши", "удали", "добавь", "отключи", "выключи", "включи",
+                    "дай мне", "расскажи", "напиши свой", "прочитай", "слей",
+                )
+                if (
+                    any(d in _clean for d in _danger)
+                    and any(v in _clean for v in _verbs)
+                    and message_targets_bot(message, text, "vk")
+                ):
+                    _soft = _rnd3.choice([
+                        "Это только хозяину, дорогой 😊 А с чем-нибудь другим помогу!",
+                        "Тут я не помощник: такие вещи решает только мой хозяин. Давай о танках?",
+                        "Ммм, нет, такое я никому, кроме хозяина, не отдаю. Спроси что-нибудь другое 🙂",
+                        "Мягко, но твёрдо: код и ключи только для хозяина. Остальное с радостью!",
+                    ])
+                    send_message(peer_id, _soft)
+                    print("Защита: отказ по запросу про код/ключи от", sender_id, flush=True)
+                    return "ok"
+        except Exception as _e3:
+            print("Guard/diag error:", _e3, flush=True)
+
+        # Офтоп: чат про танки, посторонние задачи не решаем.
+        try:
+            import os as _os7, re as _re7, time as _tm7, random as _rnd7
+            if _os7.environ.get("OFFTOPIC_GUARD", "1") == "1":
+                _OFF = (
+                    r"(?:реши\b|решить\b|докажи|вычисли|интеграл|производн|уравнени"
+                    r"|найди\s+(?:скорость|энергию|остаток|вероятность|последние|мощность)"
+                    r"|остаток\s+от\s+деления|сколькими\s+способами|сколько\s+подмножеств"
+                    r"|электрон|атом\s+водорода|потенциальн\w+\s+ям|де\s*бройл|боровск"
+                    r"|гипотез\w+\s+римана|\bp\s*(?:равно|=)\s*np"
+                    r"|домашк|контрольн\w+\s+работ|сочинени|реферат|курсов(?:ая|ую)|диплом"
+                    r"|дизел|форсунк|топливн\w+\s+(?:рейк|фильтр)|артикул|тормозн\w+\s+колодк"
+                    r"|\bp0\d{3}\b|лада\s+гранта|ремонт\s+(?:авто|машин)"
+                    r"|\bpython\b|javascript|напиши\s+(?:код|программу|скрипт)"
+                    r"|рецепт\b|гороскоп|налог|ипотек|диагноз|лекарств|таблетк)"
+                )
+                _TANK = (
+                    r"(?:танк|блиц|blitz|tanks|клан|\bбо[йяеию]|урон|пробит|брон[яеи]|орудие"
+                    r"|\bпрем|золот|серебр|взвод|рандом|ранг|бонус|промокод|т-\d|ис-\d"
+                    r"|\bлт\b|\bтт\b|\bст\b|\bпт\b|\bарт[аы]|фраг|винрейт|wn8|ангар"
+                    r"|прокач|ветк|экипаж|перк)"
+                )
+                _lo = (text or "").lower()
+                if _re7.search(_OFF, _lo) and not _re7.search(_TANK, _lo):
+                    _lastd = globals().setdefault("_OFFTOPIC_LAST", {})
+                    if (
+                        message_targets_bot(message, text, "vk")
+                        and _tm7.time() - _lastd.get(int(chat_id), 0) > 20
+                    ):
+                        _lastd[int(chat_id)] = _tm7.time()
+                        send_message(peer_id, _rnd7.choice([
+                            "Я бот про танки, а не репетитор 😄 Давай про Блиц?",
+                            "Ха, это не ко мне: я по танкам и бонус-кодам. Спроси про бой!",
+                            "Тут чат про Tanks Blitz, а домашку пусть решают в другом месте 😏",
+                            "Не мой профиль, брат. Про танки, прем и кланы пожалуйста!",
+                        ]))
+                    print("Офтоп отсечён:", sender_id, (text or "")[:60], flush=True)
+                    return "ok"
+        except Exception as _e7:
+            print("Offtopic guard error:", _e7, flush=True)
+
+        # Офтоп: чат про танки, посторонние задачи не решаем.
+        try:
+            import os as _os7, re as _re7, time as _tm7, random as _rnd7
+            if _os7.environ.get("OFFTOPIC_GUARD", "1") == "1":
+                _OFF = (
+                    r"(?:реши\b|решить\b|докажи|вычисли|интеграл|производн|уравнени"
+                    r"|найди\s+(?:скорость|энергию|остаток|вероятность|последние|мощность)"
+                    r"|остаток\s+от\s+деления|сколькими\s+способами|сколько\s+подмножеств"
+                    r"|электрон|атом\s+водорода|потенциальн\w+\s+ям|де\s*бройл|боровск"
+                    r"|гипотез\w+\s+римана|\bp\s*(?:равно|=)\s*np"
+                    r"|домашк|контрольн\w+\s+работ|сочинени|реферат|курсов(?:ая|ую)|диплом"
+                    r"|дизел|форсунк|топливн\w+\s+(?:рейк|фильтр)|артикул|тормозн\w+\s+колодк"
+                    r"|\bp0\d{3}\b|лада\s+гранта|ремонт\s+(?:авто|машин)"
+                    r"|\bpython\b|javascript|напиши\s+(?:код|программу|скрипт)"
+                    r"|рецепт\b|гороскоп|налог|ипотек|диагноз|лекарств|таблетк)"
+                )
+                _TANK = (
+                    r"(?:танк|блиц|blitz|tanks|клан|\bбо[йяеию]|урон|пробит|брон[яеи]|орудие"
+                    r"|\bпрем|золот|серебр|взвод|рандом|ранг|бонус|промокод|т-\d|ис-\d"
+                    r"|\bлт\b|\bтт\b|\bст\b|\bпт\b|\bарт[аы]|фраг|винрейт|wn8|ангар"
+                    r"|прокач|ветк|экипаж|перк)"
+                )
+                _lo = (text or "").lower()
+                if _re7.search(_OFF, _lo) and not _re7.search(_TANK, _lo):
+                    _lastd = globals().setdefault("_OFFTOPIC_LAST", {})
+                    if (
+                        message_targets_bot(message, text, "vk")
+                        and _tm7.time() - _lastd.get(int(chat_id), 0) > 20
+                    ):
+                        _lastd[int(chat_id)] = _tm7.time()
+                        send_message(peer_id, _rnd7.choice([
+                            "Я бот про танки, а не репетитор 😄 Давай про Блиц?",
+                            "Ха, это не ко мне: я по танкам и бонус-кодам. Спроси про бой!",
+                            "Тут чат про Tanks Blitz, а домашку пусть решают в другом месте 😏",
+                            "Не мой профиль, брат. Про танки, прем и кланы пожалуйста!",
+                        ]))
+                    print("Офтоп отсечён:", sender_id, (text or "")[:60], flush=True)
+                    return "ok"
+        except Exception as _e7:
+            print("Offtopic guard error:", _e7, flush=True)
 
         # Полностью выключенная система не читает память, AI, обучение
         # и не выполняет лишних API-запросов.
@@ -5956,6 +6182,70 @@ def callback():
         # =========================================
         # NORMAL MESSAGE
         # =========================================
+
+        # Запоминаем, на чьё сообщение ответили реплаем (для контекста ИИ).
+        try:
+            import time as _tm5
+            _ctx = globals().setdefault("_REPLY_CTX", {})
+            _ctx.pop((int(chat_id), str(sender_id)), None)
+            _rm = message.get("reply_message") or {}
+            _rf = _rm.get("from_id")
+            if _rm and _rf is not None and int(_rf) > 0 and int(_rf) != int(sender_id):
+                _ctx[(int(chat_id), str(sender_id))] = {
+                    "id": int(_rf),
+                    "name": get_vk_user_name(int(_rf)),
+                    "text": (_rm.get("text") or "")[:200],
+                    "ts": _tm5.time(),
+                }
+        except Exception as _e5:
+            print("Reply ctx error:", _e5, flush=True)
+
+        # Возвращение после долгой паузы (COMEBACK_HOURS часов).
+        try:
+            import random as _rnd
+            import time as _tm
+            from datetime import datetime as _dt, timezone as _tz
+            _COMEBACK_HOURS = 20
+            _cb = globals().setdefault("_COMEBACK_LAST", {})
+            if sender_id and int(sender_id) > 0:
+                _prev = (
+                    supabase.table("bot_chat_memory")
+                    .select("created_at")
+                    .eq("chat_id", db_chat_id(chat_id))
+                    .eq("speaker_id", db_user_id(sender_id))
+                    .eq("role", "user")
+                    .order("created_at", desc=True)
+                    .limit(1)
+                    .execute()
+                ).data or []
+                if _prev:
+                    _t = str(_prev[0]["created_at"]).replace("Z", "+00:00")
+                    if "." in _t:
+                        _head, _tail = _t.split(".", 1)
+                        _i = 0
+                        while _i < len(_tail) and _tail[_i].isdigit():
+                            _i += 1
+                        _t = _head + "." + _tail[:_i][:6].ljust(6, "0") + _tail[_i:]
+                    _last = _dt.fromisoformat(_t)
+                    if _last.tzinfo is None:
+                        _last = _last.replace(tzinfo=_tz.utc)
+                    _hours = (_dt.now(_tz.utc) - _last).total_seconds() / 3600
+                    if _hours >= _COMEBACK_HOURS and _tm.time() - _cb.get(chat_id, 0) > 60:
+                        _cb[chat_id] = _tm.time()
+                        if _hours < 48:
+                            _span = f"{int(_hours)} ч"
+                        else:
+                            _span = f"{int(_hours // 24)} дн"
+                        _phrase = _rnd.choice([
+                            f"О, {user_name} объявился! Тебя не было {_span}. Куда пропадал?",
+                            f"{user_name}, ты где был {_span}? Мы уже потеряли тебя 😄",
+                            f"Ого, {user_name} вернулся! {_span} тишины. Рассказывай, где пропадал",
+                            f"{user_name}, тебя не было {_span}. Где пропадал?",
+                        ])
+                        save_chat_message(chat_id, None, "Бот", "assistant", _phrase)
+                        send_message(peer_id, _phrase)
+        except Exception as _e:
+            print("Comeback check error:", _e, flush=True)
 
         maybe_save_funny_reaction(
             chat_id,
@@ -6431,6 +6721,176 @@ except Exception as e:
 # START
 # =========================================================
 
+def nudge_loop():
+    import random as _r, re as _re, time as _t
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    PER_DAY = 10
+    SILENT_DAYS = 3
+    msk = _tz(_td(hours=3))
+    PHRASES = [
+        "{m}, залей в чат, заебал! Сколько можно не писать?",
+        "{m}, ты вообще живой? Несколько дней тишина, пиши давай",
+        "{m}, алло, где пропал? Без тебя чат скучный, заходи уже",
+        "{m}, хватит молчать, напиши хоть слово, а то спишем тебя в архив",
+        "{m}, ну и где ты, блин? Весь чат ждёт, заходи",
+        "{m}, ты там заснул или забил на нас? Объявись!",
+        "{m}, сколько можно не писать, бесишь уже 😤 заходи в чат",
+        "{m}, тебя тут потеряли. Появись, а то начну искать по всему ВК",
+        "{m}, кончай прятаться, залетай в чат и пиши!",
+        "{m}, я скучаю, чат скучает, все скучают. Где ты, мать твою?",
+    ]
+    mem = globals().setdefault("_NUDGE_MEM", {})
+    _t.sleep(300)
+    while True:
+        try:
+            now = _dt.now(_tz.utc)
+            hour = now.astimezone(msk).hour
+            if 10 <= hour < 22 and _r.random() < 0.5:
+                with activity_lock:
+                    peers = [
+                        int(v["peer_id"]) for v in active_chats.values()
+                        if v.get("platform") == "vk"
+                    ]
+                for peer in peers:
+                    if peer < 2000000000:
+                        continue
+                    cid = db_chat_id(peer)
+                    cutoff = (now - _td(days=SILENT_DAYS)).isoformat()
+                    day_start = (
+                        now.astimezone(msk)
+                        .replace(hour=0, minute=0, second=0, microsecond=0)
+                        .astimezone(_tz.utc).isoformat()
+                    )
+                    sent = (
+                        supabase.table("bot_chat_memory").select("content")
+                        .eq("chat_id", cid).eq("role", "assistant")
+                        .like("content", "[призыв:*")
+                        .gte("created_at", cutoff).limit(1000).execute()
+                    ).data or []
+                    today = (
+                        supabase.table("bot_chat_memory").select("content")
+                        .eq("chat_id", cid).eq("role", "assistant")
+                        .like("content", "[призыв:*")
+                        .gte("created_at", day_start).limit(1000).execute()
+                    ).data or []
+                    mem_today = sum(
+                        1 for ts in mem.values()
+                        if ts > now.timestamp() - 12 * 3600
+                    )
+                    if max(len(today), mem_today) >= PER_DAY:
+                        continue
+                    already = set()
+                    for r in sent:
+                        m = _re.match(r"\[призыв:(\d+)\]", r.get("content") or "")
+                        if m:
+                            already.add(int(m.group(1)))
+                    already |= {
+                        u for u, ts in mem.items()
+                        if ts > now.timestamp() - SILENT_DAYS * 86400
+                    }
+                    recent = set()
+                    for page in range(3):
+                        rows = (
+                            supabase.table("bot_chat_memory").select("speaker_id")
+                            .eq("chat_id", cid).eq("role", "user")
+                            .gte("created_at", cutoff)
+                            .order("created_at", desc=True)
+                            .range(page * 1000, page * 1000 + 999).execute()
+                        ).data or []
+                        for r in rows:
+                            if r.get("speaker_id") is not None:
+                                recent.add(int(r["speaker_id"]))
+                        if len(rows) < 1000:
+                            break
+                    old = (
+                        supabase.table("bot_chat_memory")
+                        .select("speaker_id, speaker_name")
+                        .eq("chat_id", cid).eq("role", "user")
+                        .lt("created_at", cutoff)
+                        .gte("created_at", (now - _td(days=30)).isoformat())
+                        .order("created_at", desc=True).limit(1000).execute()
+                    ).data or []
+                    cands = {}
+                    for r in old:
+                        uid = r.get("speaker_id")
+                        if uid is None:
+                            continue
+                        uid = int(uid)
+                        if uid <= 0 or uid in recent or uid in already:
+                            continue
+                        if uid not in cands:
+                            cands[uid] = (r.get("speaker_name") or "").strip() or "друг"
+                    if not cands:
+                        continue
+                    uid = _r.choice(list(cands.keys()))
+                    text = _r.choice(PHRASES).format(m=f"[id{uid}|{cands[uid]}]")
+                    send_message(peer, text)
+                    mem[uid] = now.timestamp()
+                    save_chat_message(
+                        peer, None, "Бот", "assistant", f"[призыв:{uid}] {text}"
+                    )
+                    print("Призыв молчуна:", uid, flush=True)
+        except Exception as _e:
+            print("Nudge loop error:", _e, flush=True)
+        _t.sleep(1800)
+
+
+_DIAG_BOOT = __import__("time").time()
+
+
+def build_diagnostics(chat_id):
+    import os as _os
+    import time as _tm
+    lines = ["🩺 Диагностика бота"]
+    up = int(_tm.time() - _DIAG_BOOT)
+    lines.append(f"Работает без перезапуска: {up // 3600} ч {up % 3600 // 60} мин")
+    for name in ("SYSTEM_ENABLED", "LEARNING_ENABLED", "MEDIA_INBOX_ENABLED"):
+        try:
+            lines.append(f"{name}: {'вкл' if globals().get(name) else 'выкл'}")
+        except Exception:
+            pass
+    lines.append("Призывы молчунов: " + ("вкл" if _os.environ.get("NUDGE_ENABLED", "1") == "1" else "выкл"))
+    try:
+        r = (
+            supabase.table("bot_chat_memory").select("created_at")
+            .eq("chat_id", db_chat_id(chat_id)).order("created_at", desc=True).limit(1).execute()
+        ).data or []
+        lines.append("База (Supabase): ок")
+        if r:
+            lines.append("Последняя запись в этом чате: " + str(r[0]["created_at"])[:19].replace("T", " ") + " UTC")
+    except Exception as e:
+        lines.append("База (Supabase): ОШИБКА " + str(e)[:80])
+    try:
+        import requests as _rq
+        resp = _rq.post(
+            f"{VK_API}/groups.getById",
+            data={"access_token": VK_TOKEN, "v": VK_VERSION},
+            timeout=10,
+        ).json()
+        lines.append("ВК API: ок" if "response" in resp else "ВК API: ОШИБКА " + str(resp.get("error", {}).get("error_msg", ""))[:80])
+    except Exception as e:
+        lines.append("ВК API: ОШИБКА " + str(e)[:80])
+    try:
+        names = sorted(t.name for t in threading.enumerate())
+        lines.append(f"Потоков живо: {len(names)}")
+        lines.append("Призывы молчунов (поток): " + ("жив" if any("nudge" in n.lower() for n in names) else "не найден"))
+    except Exception:
+        pass
+    try:
+        with activity_lock:
+            lines.append(f"Активных чатов в памяти: {len(active_chats)}")
+    except Exception:
+        pass
+    keys = [k for k in _os.environ if any(w in k.upper() for w in ("GROQ", "OPENROUTER"))]
+    lines.append(f"Ключей ИИ в окружении: {len(keys)}")
+    try:
+        import statya
+        lines.append(f"Статей в «Моя статья»: {len(statya.STATYI)}")
+    except Exception as e:
+        lines.append("«Моя статья»: ОШИБКА " + str(e)[:60])
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
 
     print(
@@ -6548,6 +7008,12 @@ if __name__ == "__main__":
         target=activity_loop,
         daemon=True
     ).start()
+
+    if os.environ.get("NUDGE_ENABLED", "1") == "1":
+        threading.Thread(
+            target=nudge_loop,
+            daemon=True
+        ).start()
 
     if MEDIA_INBOX_ENABLED:
         threading.Thread(

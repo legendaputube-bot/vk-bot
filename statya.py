@@ -167,7 +167,10 @@ STATYI = [
 ]
 
 def moya_statya(name, user_id):
-    seed = f"{user_id}-{datetime.date.today()}"
-    num, title, punish = random.Random(seed).choice(STATYI)
+    msk = datetime.timezone(datetime.timedelta(hours=3))
+    day = datetime.datetime.now(msk).date().toordinal()
+    order = list(range(len(STATYI)))
+    random.Random(str(user_id)).shuffle(order)
+    num, title, punish = STATYI[order[day % len(order)]]
     return (f"⚖️ Сегодня {name} приговаривается к статье {num}.\n"
             f"{title}.\nНаказание: {punish}.\nПриговор окончательный и обжалованию не подлежит 😄")
