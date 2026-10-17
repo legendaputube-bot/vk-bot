@@ -4817,15 +4817,7 @@ def is_directed_to_bot_telegram(
 
         return True
 
-    return any(
-        word in low
-        for word in (
-            "бот",
-            "эй бот",
-            "бонус-коды",
-            "бонус коды"
-        )
-    )
+    return bool(re.search(r"(?:^|\W)(?:бот|бонус-коды|бонус\s+коды|эй\s+бот)(?:$|\W)", low, re.IGNORECASE))
 
 
 # =========================================================
@@ -4851,7 +4843,7 @@ def is_reply_to_another_human(message, platform="vk"):
         return False
 
 
-def should_answer(message, text, platform="vk"):
+def _should_answer_base(message, text, platform="vk"):
     """
     Контролируемое вмешательство:
     явное обращение -> всегда;
@@ -4905,6 +4897,126 @@ def should_answer(message, text, platform="vk"):
 # =========================================================
 # AI ROUTER
 # =========================================================
+
+
+# =========================================================
+# CONVERSATION MODE: ИИ решает, продолжается ли диалог с ботом
+# =========================================================
+
+def _convo_cfg(name, default):
+    import os as _os_c
+    try:
+        return int(_os_c.environ.get(name, default))
+    except Exception:
+        return int(default)
+
+
+def _convo_text(ans):
+    if ans is None:
+        return ""
+    if isinstance(ans, str):
+        return ans
+    try:
+        return ans.choices[0].message.content or ""
+    except Exception:
+        return str(ans)
+
+
+def _convo_sender(message, platform):
+    if platform == "telegram":
+        u = message.get("from") or {}
+        return str(u.get("id", "")), (u.get("first_name") or u.get("username") or "")
+    return str(message.get("from_id", "")), ""
+
+
+def _convo_judge(rows, message, text, platform):
+    trim = _convo_cfg("CONVO_TRIM", 150)
+    sid, sname = _convo_sender(message, platform)
+    lines = []
+    for r in rows:
+        c = (r.get("content") or "").replace("\n", " ").strip()
+        if not c:
+            continue
+        who = "БОТ" if r.get("role") == "assistant" else (r.get("speaker_name") or "Участник")
+        if who != "БОТ" and sid and str(r.get("speaker_id")) == sid and not sname:
+            sname = who
+        lines.append(f"{who}: {c[:trim]}")
+    if lines and lines[-1].endswith(text[:trim]):
+        lines = lines[:-1]
+    system = """Ты решаешь, должен ли БОТ ответить на НОВОЕ сообщение в групповом чате про World of Tanks Blitz.
+ДА: человек продолжает разговор с ботом (отвечает на его последнюю реплику, уточняет, задаёт следующий вопрос по той же теме) или задаёт вопрос всему чату по теме игры, на который бот может помочь.
+НЕТ: люди разговаривают между собой, сообщение адресовано другому участнику (по имени или по смыслу), это шутка, реакция, спор, оффтоп или шум.
+Если сомневаешься, отвечай НЕТ. Ответ строго одно слово: ДА или НЕТ."""
+    user = (
+        "ИСТОРИЯ ЧАТА (старые сверху):\n" + "\n".join(lines)
+        + f"\n\nНОВОЕ СООБЩЕНИЕ от {sname or 'Участник'}: {text[:trim * 2]}"
+        + "\n\nОтветь одним словом: ДА или НЕТ."
+    )
+    model = globals().get("BACKUP_MODEL") or MAIN_MODEL
+    try:
+        ans = ask_model(
+            model,
+            [{"role": "system", "content": system},
+             {"role": "user", "content": user}],
+            max_tokens=_convo_cfg("CONVO_MAX_TOKENS", 800)
+        )
+    except Exception as e:
+        print("CONVO judge error:", e, flush=True)
+        return None
+    out = _convo_text(ans).strip().upper()
+    if out.startswith("ДА"):
+        return True
+    if out.startswith("НЕТ"):
+        return False
+    return None
+
+
+def should_answer(message, text, platform="vk", chat_id=None):
+    t = (text or "").strip()
+    if not t or len(t) <= 1:
+        return False
+    if chat_id is None or _convo_cfg("CONVO_ENABLED", 1) == 0:
+        return _should_answer_base(message, text, platform)
+
+    directed = (
+        is_directed_to_bot_telegram(message, t)
+        if platform == "telegram"
+        else is_directed_to_bot_vk(message, t)
+    )
+    if directed:
+        return True
+
+    # реплай другому человеку: бот молчит
+    if is_reply_to_another_human(message, platform):
+        return False
+
+    try:
+        rows = get_chat_memory(chat_id, limit=_convo_cfg("CONVO_CONTEXT", 80)) or []
+    except Exception:
+        return _should_answer_base(message, text, platform)
+
+    # бот давно не писал в чате: старая логика с вероятностями
+    recent = _convo_cfg("CONVO_RECENT", 10)
+    if not any(r.get("role") == "assistant" for r in rows[-recent:]):
+        return _should_answer_base(message, text, platform)
+
+    # сообщение начинается с упоминания или имени другого человека
+    if re.match(r"^\s*(\[id\d+\||@)", t):
+        return False
+    names = set()
+    for r in rows:
+        nm = (r.get("speaker_name") or "").strip().lower()
+        if r.get("role") != "assistant" and len(nm) >= 3 and nm != "бот":
+            names.add(nm.split()[0])
+    first = re.split(r"[\s,:;!?.\-]+", t.lower(), 1)[0]
+    if first in names:
+        return False
+
+    verdict = _convo_judge(rows, message, t, platform)
+    print("CONVO JUDGE:", verdict, "|", t[:60], flush=True)
+    return verdict is True
+
+
 
 def all_ai_exhausted():
     """True только если все доступные AI реально заблокированы/исчерпаны."""
@@ -5752,7 +5864,7 @@ def handle_media_inbox_row(row):
         chat_id
     )
 
-    if not (forced or should_answer(message, ai_text, "vk")):
+    if not (forced or should_answer(message, ai_text, "vk", chat_id)):
 
         print(
             "BOT SILENT:",
@@ -6323,11 +6435,7 @@ def callback():
             send_clan_message(peer_id, clan_followup)
             return "ok"
 
-        if not should_answer(
-            message,
-            text,
-            "vk"
-        ):
+        if not should_answer(message, text, "vk", chat_id):
 
             print(
                 "BOT SILENT:",
@@ -6544,11 +6652,7 @@ def telegram_webhook(secret):
             chat_id
         )
 
-        if not should_answer(
-            message,
-            text,
-            "telegram"
-        ):
+        if not should_answer(message, text, "telegram", chat_id):
 
             print(
                 "TG BOT SILENT:",
