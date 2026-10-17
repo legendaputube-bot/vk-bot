@@ -192,6 +192,11 @@ OPENROUTER_DAILY_LIMIT = 50
 RELAY_API_KEY = os.environ.get("RELAYMODELS_API_KEY", "")
 RELAY_API = "https://api.relaymodels.com/v1/chat/completions"
 RELAY_MODEL = os.environ.get("RELAY_MODEL", "grok-4.6")
+RELAY_REASONING = os.environ.get("RELAY_REASONING", "low").strip().lower()
+RELAY_EXTRA = (
+    {} if RELAY_REASONING in ("", "off")
+    else {"reasoning_effort": RELAY_REASONING}
+)
 print(
     "🔁 RELAY (запасной ИИ): "
     + ("ON, модель " + RELAY_MODEL if RELAY_API_KEY else "OFF, ключ не найден"),
@@ -4948,6 +4953,7 @@ def ask_relay_messages(messages, max_tokens=RELAY_MAX_TOKENS, label="Relay"):
                 "Content-Type": "application/json"
             },
             json={
+                **RELAY_EXTRA,
                 "model": RELAY_MODEL,
                 "messages": messages,
                 "max_tokens": max_tokens,
