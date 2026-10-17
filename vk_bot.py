@@ -2669,6 +2669,29 @@ EMOTION_INSULTS = (
     "бля", "блять", "блядь", "сука"
 )
 
+EMOTION_INSULTS = EMOTION_INSULTS + (
+    "идиот", "дурак", "тупая", "говно", "гавно", "отстой",
+    "бесполезный бот", "бесполезная железка", " лох", " урод", " чмо"
+)
+
+_MILD_SWEARS = ("бля", "блять", "блядь", "сука")
+
+
+def _insult_aimed_at_bot(low, targets_bot):
+    import re as _r8
+    addressed = bool(targets_bot) or bool(
+        _r8.search(r"(?:^|\W)(?:бот|бонус[ -]коды)(?:$|\W)", low)
+    )
+    if not addressed:
+        return False
+    hits = [x for x in EMOTION_INSULTS if x in low]
+    if not hits:
+        return False
+    if any(x not in _MILD_SWEARS for x in hits):
+        return True
+    return bool(_r8.search(r"(?:^|\W)(?:ты|тебя|тебе|твой|твоя)(?:$|\W)", low))
+
+
 EMOTION_SOFTENERS = (
     "извини", "сорян", "прости", "не злись",
     "не обижайся", "без обид", "я не хотел"
@@ -2851,7 +2874,7 @@ def update_bot_emotion(chat_id, text, user_id=None, user_name=None, targets_bot=
 
     elif (
         any(x in low for x in EMOTION_INSULTS)
-        and (targets_bot or re.search(r"(?:бот|бонус[ -]коды)", low))
+        and _insult_aimed_at_bot(low, targets_bot)
     ):
         severity = (
             30
@@ -2914,24 +2937,36 @@ def emotion_prompt(emotion):
 
     if o >= 70 or a >= 80:
         mood = (
-            "Ты сильно задет и раздражён. "
-            "Можно ответить жёстче и с естественным матом, но без угроз."
+            "Ты сильно обижен на этого человека. ОБЯЗАТЕЛЬНО: отвечай сухо, "
+            "коротко (1 фраза, до 12 слов), без шуток, без смайликов и без "
+            "дружелюбия. Прямо дай понять, что тебя оскорбили. Если он просит "
+            "помощь, ответь по делу одной фразой с холодным тоном и скажи, что "
+            "нормально общаться будешь после извинения. Мат допустим, угрозы и "
+            "унижения нет."
         )
     elif o >= 40 or a >= 45:
         mood = (
-            "Ты заметно задет. "
-            "Допустима колкая, раздражённая или обиженная реакция "
-            "и умеренный мат."
+            "Ты заметно обижен на этого человека. ОБЯЗАТЕЛЬНО: отвечай холодно "
+            "и колко, без смайликов и без привычной бодрости. Начни с короткой "
+            "обиженной фразы про то, как он с тобой разговаривал, потом ответь "
+            "по делу в 1-2 предложения. Допустим умеренный мат."
         )
     elif o >= 15 or a >= 20:
         mood = (
-            "Ты слегка задет. "
-            "Можно подколоть в ответ или показать лёгкую обиду."
+            "Тебя недавно обидел этот человек. ОБЯЗАТЕЛЬНО: добавь в начало "
+            "ответа одну короткую обиженную или язвительную фразу (например, "
+            "про то, что он грубил), без смайликов, потом ответь по делу."
         )
     else:
         mood = (
             "Ты спокоен. "
             "Мат и сленг возможны только если естественно подходят разговору."
+        )
+
+    if int(emotion.get("apology_count", 0)) and o < 40 and o >= 15:
+        mood += (
+            " Он уже извинялся: можно смягчиться, но ворчливо, "
+            "не сразу прощая."
         )
 
     return (
@@ -4617,6 +4652,62 @@ def build_chat_context(
     except Exception as _e6:
         print("Reply note error:", _e6, flush=True)
 
+    # Повтор вопроса: человек уже спрашивал то же самое, и бот отвечал.
+    try:
+        import re as _re7
+        _h7 = history if "history" in locals() else get_chat_memory(chat_id, limit=80)
+        _h7 = list(_h7 or [])
+        _stop7 = {
+            "какой", "какая", "какое", "какие", "что", "как", "это", "есть",
+            "можно", "почему", "зачем", "когда", "где", "расскажи", "скажи",
+            "подскажи", "пожалуйста", "стоит", "очень", "просто"
+        }
+
+        def _w7(t):
+            out = set()
+            for w in _re7.findall(r"[а-яёa-z0-9]{4,}", (t or "").lower()):
+                if w not in _stop7:
+                    out.add(w[:5])
+            return out
+
+        # текущее сообщение уже могло попасть в историю: не считаем его повтором
+        if (
+            _h7
+            and _h7[-1].get("role") == "user"
+            and str(_h7[-1].get("speaker_id") or "") == str(user_id)
+            and (text or "").strip()[:40] in (_h7[-1].get("content") or "")
+        ):
+            _h7 = _h7[:-1]
+
+        _cur7 = _w7(text)
+        _rep7 = False
+        if len(_cur7) >= 2:
+            for _i7, _r7 in enumerate(_h7):
+                if _r7.get("role") != "user":
+                    continue
+                if str(_r7.get("speaker_id") or "") != str(user_id):
+                    continue
+                _old7 = _w7(_r7.get("content"))
+                _common7 = len(_cur7 & _old7)
+                if _common7 >= 2 and _common7 / min(len(_cur7), len(_old7)) >= 0.6:
+                    if any(x.get("role") == "assistant" for x in _h7[_i7 + 1:]):
+                        _rep7 = True
+                        break
+
+        if _rep7:
+            messages.append({
+                "role": "system",
+                "content": (
+                    "ПОВТОРНЫЙ ВОПРОС. Этот человек уже спрашивал почти то же самое, "
+                    "и ты ему отвечал выше в истории. Не пересказывай прошлый ответ "
+                    "заново. Одной фразой по-доброму подколи, что он уже спрашивал "
+                    "(без злости), и коротко напомни главное. Новое добавляй только "
+                    "если оно действительно есть."
+                )
+            })
+    except Exception as _e7:
+        print("Repeat note error:", _e7, flush=True)
+
     # =========================================
     # ЗАПРОС ТИТУЛА
     # =========================================
@@ -6071,9 +6162,9 @@ def callback():
                     _lowo = _ot.lower()
                     _cd = globals().setdefault("_OTHERBOT_LAST", {})
                     if (
-                        "приговарив" in _lowo
-                        and _tm2.time() - _cd.get(int(peer_id), 0) > 600
-                        and _rnd2.random() < 0.5
+                        ("приговарив" in _lowo or "приговор" in _lowo or "к статье" in _lowo)
+                        and _tm2.time() - _cd.get(int(peer_id), 0) > 120
+                        and _rnd2.random() < 0.9
                     ):
                         _cd[int(peer_id)] = _tm2.time()
                         _jab = _rnd2.choice([
@@ -6081,6 +6172,8 @@ def callback():
                             "Тупой Ирис, у меня статьи смешнее, и я не повторяюсь",
                             "Ирис, не учи судью судить. Моя статья лучше",
                             "Опять Ирис за своё... ревную, если честно 😤",
+                            "Ирис, это моя статья, не своруй мою работу 😏",
+                            "Ирис, у тебя приговоры скучные. Давай я тебя тоже посужу",
                         ])
                         save_chat_message(int(peer_id), None, "Бот", "assistant", _jab)
                         send_message(peer_id, _jab)
@@ -6131,7 +6224,18 @@ def callback():
             from statya import moya_statya
             send_message(
                 peer_id,
-                moya_statya(get_vk_user_name(sender_id), sender_id)
+                moya_statya(
+                    (
+                        "[id%s|%s]" % (
+                            int(sender_id),
+                            (get_vk_user_name(sender_id) or "Участник")
+                            .replace("[", "").replace("]", "").replace("|", "")
+                        )
+                        if str(sender_id).lstrip("-").isdigit() and int(sender_id) > 0
+                        else get_vk_user_name(sender_id)
+                    ),
+                    sender_id
+                )
             )
             return "ok"
 
