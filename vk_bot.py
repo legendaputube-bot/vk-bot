@@ -192,6 +192,11 @@ OPENROUTER_DAILY_LIMIT = 50
 RELAY_API_KEY = os.environ.get("RELAYMODELS_API_KEY", "")
 RELAY_API = "https://api.relaymodels.com/v1/chat/completions"
 RELAY_MODEL = os.environ.get("RELAY_MODEL", "grok-4.6")
+print(
+    "🔁 RELAY (запасной ИИ): "
+    + ("ON, модель " + RELAY_MODEL if RELAY_API_KEY else "OFF, ключ не найден"),
+    flush=True
+)
 RELAY_MAX_TOKENS = 1200
 RELAY_TIMEOUT = 40
 OPENROUTER_BLOCK_SECONDS = 24 * 60 * 60
