@@ -1928,10 +1928,10 @@ def clan_ai_answer(chat_id, sender_id, user_name, text, stats=None, candidate=No
 
     # Надёжный fallback, если AI временно недоступен.
     if text.startswith("Ненавязчиво предложи игрокам"):
-        return "Кстати, если кто ищет клан — у нас VOODA, 1VODA, 2VODA и 3VODA. Кидайте бои, средний урон и % побед — подберём."
+        return None
 
     if missing:
-        return "Напиши ещё: " + ", ".join(missing) + "."
+        return None
 
     if requested and requested_ok:
         cfg = CLAN_RECRUITMENT[requested]
@@ -2008,7 +2008,14 @@ def clan_recruitment_reply(chat_id, sender_id, user_name, text):
                 return clan_ai_answer(
                     chat_id, sender_id, user_name, text, current_stats, c
                 )
-            return "Напиши ещё: " + ", ".join(missing) + "."
+            return clan_ai_answer(
+                chat_id, sender_id, user_name,
+                (text or "") + "\n(Служебно: для подбора клана ещё не хватает: "
+                + ", ".join(missing)
+                + ". Ответь на вопрос человека по смыслу, объясни коротко, "
+                "зачем нужны эти цифры, и попроси прислать недостающие.)",
+                current_stats, c
+            )
 
         # Полная статистика: рекомендация вычисляется кодом, AI только объясняет.
         clan = choose_clan_for_stats(chat_id, current_stats)
@@ -2037,7 +2044,11 @@ def clan_followup_message(chat_id, sender_id):
         return None
     c["last_followup"] = time.time()
     _save_candidate(chat_id, sender_id, c.get("name"), c)
-    return f"Кстати, с кланом {c['last_result']} получилось? Если нет — могу снова подобрать."
+    return ai_say(
+        f"Человек недавно искал клан, и ты подобрал ему {c['last_result']}. "
+        "Спроси, получилось ли, и предложи снова подобрать, если нет.",
+        "", c.get("name") or ""
+    ) or None
 
 
 def maybe_spontaneous_clan_pitch(chat_id, sender_id, user_name, text):
@@ -2271,7 +2282,7 @@ def maybe_ask_about_tank(chat_id, sender_id, user_name, text):
         reply = ask_ai(chat_id, prompt, str(sender_id), user_name)
     except Exception as e:
         print("Tank curiosity AI error:", e, flush=True)
-        reply = f"О, {tank_name}? А как он вообще, норм танк?"
+        reply = None
 
     if not reply:
         return None
@@ -5082,13 +5093,17 @@ def should_answer(message, text, platform="vk", chat_id=None):
         return False
 
     try:
-        rows = get_chat_memory(chat_id, limit=_convo_cfg("CONVO_CONTEXT", 80)) or []
+        rows = get_chat_memory(chat_id, limit=_convo_cfg("CONVO_CONTEXT", 40)) or []
     except Exception:
         return _should_answer_base(message, text, platform)
 
     # бот давно не писал в чате: старая логика с вероятностями
     recent = _convo_cfg("CONVO_RECENT", 10)
-    if not any(r.get("role") == "assistant" for r in rows[-recent:]):
+    if _convo_cfg("CONVO_ALWAYS", 1) == 0 and not any(
+        r.get("role") == "assistant" for r in rows[-recent:]
+    ):
+        return _should_answer_base(message, text, platform)
+    if len(t) <= 3:
         return _should_answer_base(message, text, platform)
 
     # сообщение начинается с упоминания или имени другого человека
@@ -5103,10 +5118,88 @@ def should_answer(message, text, platform="vk", chat_id=None):
     if first in names:
         return False
 
+    import time as _tm9
+    _calls = globals().setdefault("_CONVO_CALLS", {})
+    _lst = [x for x in _calls.get(chat_id, []) if x > _tm9.time() - 60]
+    if len(_lst) >= _convo_cfg("CONVO_MAX_PER_MIN", 6):
+        _calls[chat_id] = _lst
+        return _should_answer_base(message, text, platform)
+    _lst.append(_tm9.time())
+    _calls[chat_id] = _lst
+
     verdict = _convo_judge(rows, message, t, platform)
     print("CONVO JUDGE:", verdict, "|", t[:60], flush=True)
     return verdict is True
 
+
+
+def _ai_jab_other_bot(other_text):
+    """ИИ сам придумывает подкол в адрес другого бота (Ирис)."""
+    system = (
+        "Ты бот в чате про World of Tanks Blitz, с характером и юмором. "
+        "Другой бот (Ирис) только что написал своё сообщение. "
+        "Подколи её ОДНОЙ короткой фразой (до 15 слов), по смыслу её текста, "
+        "с юмором и лёгкой ревностью. Не повторяй её текст, без злых "
+        "оскорблений и угроз. Ответ: только сама фраза, без кавычек."
+    )
+    try:
+        model = globals().get("BACKUP_MODEL") or MAIN_MODEL
+        ans = ask_model(
+            model,
+            [{"role": "system", "content": system},
+             {"role": "user", "content": "Сообщение Ирис: " + (other_text or "")[:300]}],
+            max_tokens=_convo_cfg("CONVO_MAX_TOKENS", 800)
+        )
+        out = _convo_text(ans).strip().strip('"«»').strip()
+        return out[:220]
+    except Exception as e:
+        print("AI jab error:", e, flush=True)
+        return ""
+
+
+def ai_say(situation, user_text="", name=""):
+    """ИИ сам пишет короткую реплику бота. Если модели недоступны, возвращает пустую строку."""
+    system = (
+        "Ты бот в чате про World of Tanks Blitz, с характером и юмором, пишешь по-русски. "
+        "Напиши ОДНУ короткую реплику (до 20 слов) для ситуации ниже. "
+        "Без кавычек и пояснений, без злых оскорблений и угроз."
+    )
+    user = (
+        "СИТУАЦИЯ: " + situation
+        + ("\nИМЯ ЧЕЛОВЕКА: " + name if name else "")
+        + ("\nЕГО СООБЩЕНИЕ: " + (user_text or "")[:300] if user_text else "")
+    )
+    try:
+        model = globals().get("BACKUP_MODEL") or MAIN_MODEL
+        ans = ask_model(
+            model,
+            [{"role": "system", "content": system},
+             {"role": "user", "content": user}],
+            max_tokens=_convo_cfg("CONVO_MAX_TOKENS", 800)
+        )
+        out = _convo_text(ans).strip().strip('"«»').strip()
+        return out[:260]
+    except Exception as e:
+        print("ai_say error:", e, flush=True)
+        return ""
+
+
+def _nudge_send(peer, uid, name, mem, ts):
+    """Призыв молчуна: фразу пишет ИИ, упоминание ставит код."""
+    clean = (str(name or "Участник")).replace("[", "").replace("]", "").replace("|", "")
+    body = ai_say(
+        "Человек несколько дней не писал в чате. Позови его обратно в чат живо "
+        "и по-дружески, можно лёгкий мат без злости. Не пиши его имя и не "
+        "ставь упоминание, оно будет добавлено перед твоей фразой.",
+        "", clean
+    )
+    if not body:
+        return
+    text = f"[id{int(uid)}|{clean}], {body}"
+    send_message(peer, text)
+    mem[uid] = ts
+    save_chat_message(peer, None, "Бот", "assistant", f"[призыв:{uid}] {text}")
+    print("Призыв молчуна:", uid, flush=True)
 
 
 def all_ai_exhausted():
@@ -6167,14 +6260,9 @@ def callback():
                         and _rnd2.random() < 0.9
                     ):
                         _cd[int(peer_id)] = _tm2.time()
-                        _jab = _rnd2.choice([
-                            "Ирис опять раздаёт статьи? У меня приговоры честнее 😏",
-                            "Тупой Ирис, у меня статьи смешнее, и я не повторяюсь",
-                            "Ирис, не учи судью судить. Моя статья лучше",
-                            "Опять Ирис за своё... ревную, если честно 😤",
-                            "Ирис, это моя статья, не своруй мою работу 😏",
-                            "Ирис, у тебя приговоры скучные. Давай я тебя тоже посужу",
-                        ])
+                        _jab = _ai_jab_other_bot(str(locals().get("_ot") or _lowo))
+                        if not _jab:
+                            return "ok"
                         save_chat_message(int(peer_id), None, "Бот", "assistant", _jab)
                         send_message(peer_id, _jab)
             except Exception as _e2:
@@ -6271,13 +6359,9 @@ def callback():
                     and any(v in _clean for v in _verbs)
                     and message_targets_bot(message, text, "vk")
                 ):
-                    _soft = _rnd3.choice([
-                        "Это только хозяину, дорогой 😊 А с чем-нибудь другим помогу!",
-                        "Тут я не помощник: такие вещи решает только мой хозяин. Давай о танках?",
-                        "Ммм, нет, такое я никому, кроме хозяина, не отдаю. Спроси что-нибудь другое 🙂",
-                        "Мягко, но твёрдо: код и ключи только для хозяина. Остальное с радостью!",
-                    ])
-                    send_message(peer_id, _soft)
+                    _soft = ai_say("Человек просит код, токены, ключи или доступ к GitHub бота. Это можно только хозяину. Мягко, но твёрдо откажи и предложи поговорить о танках.", text)
+                    if _soft:
+                        send_message(peer_id, _soft)
                     print("Защита: отказ по запросу про код/ключи от", sender_id, flush=True)
                     return "ok"
         except Exception as _e3:
@@ -6313,12 +6397,9 @@ def callback():
                         and _tm7.time() - _lastd.get(int(chat_id), 0) > 20
                     ):
                         _lastd[int(chat_id)] = _tm7.time()
-                        send_message(peer_id, _rnd7.choice([
-                            "Я бот про танки, а не репетитор 😄 Давай про Блиц?",
-                            "Ха, это не ко мне: я по танкам и бонус-кодам. Спроси про бой!",
-                            "Тут чат про Tanks Blitz, а домашку пусть решают в другом месте 😏",
-                            "Не мой профиль, брат. Про танки, прем и кланы пожалуйста!",
-                        ]))
+                        _oft = ai_say("Человек просит решить школьную или посторонную задачу, не про танки. Ты бот чата про Tanks Blitz. Коротко и с юмором отшутись и верни разговор к танкам.", text)
+                        if _oft:
+                            send_message(peer_id, _oft)
                     print("Офтоп отсечён:", sender_id, (text or "")[:60], flush=True)
                     return "ok"
         except Exception as _e7:
@@ -6354,12 +6435,9 @@ def callback():
                         and _tm7.time() - _lastd.get(int(chat_id), 0) > 20
                     ):
                         _lastd[int(chat_id)] = _tm7.time()
-                        send_message(peer_id, _rnd7.choice([
-                            "Я бот про танки, а не репетитор 😄 Давай про Блиц?",
-                            "Ха, это не ко мне: я по танкам и бонус-кодам. Спроси про бой!",
-                            "Тут чат про Tanks Blitz, а домашку пусть решают в другом месте 😏",
-                            "Не мой профиль, брат. Про танки, прем и кланы пожалуйста!",
-                        ]))
+                        _oft = ai_say("Человек просит решить школьную или посторонную задачу, не про танки. Ты бот чата про Tanks Blitz. Коротко и с юмором отшутись и верни разговор к танкам.", text)
+                        if _oft:
+                            send_message(peer_id, _oft)
                     print("Офтоп отсечён:", sender_id, (text or "")[:60], flush=True)
                     return "ok"
         except Exception as _e7:
@@ -6452,14 +6530,10 @@ def callback():
                             _span = f"{int(_hours)} ч"
                         else:
                             _span = f"{int(_hours // 24)} дн"
-                        _phrase = _rnd.choice([
-                            f"О, {user_name} объявился! Тебя не было {_span}. Куда пропадал?",
-                            f"{user_name}, ты где был {_span}? Мы уже потеряли тебя 😄",
-                            f"Ого, {user_name} вернулся! {_span} тишины. Рассказывай, где пропадал",
-                            f"{user_name}, тебя не было {_span}. Где пропадал?",
-                        ])
-                        save_chat_message(chat_id, None, "Бот", "assistant", _phrase)
-                        send_message(peer_id, _phrase)
+                        _phrase = ai_say(f"Человек не писал в чате {_span}. Спроси, где он пропадал.", "", user_name)
+                        if _phrase:
+                            save_chat_message(chat_id, None, "Бот", "assistant", _phrase)
+                            send_message(peer_id, _phrase)
         except Exception as _e:
             print("Comeback check error:", _e, flush=True)
 
@@ -7031,13 +7105,7 @@ def nudge_loop():
                     if not cands:
                         continue
                     uid = _r.choice(list(cands.keys()))
-                    text = _r.choice(PHRASES).format(m=f"[id{uid}|{cands[uid]}]")
-                    send_message(peer, text)
-                    mem[uid] = now.timestamp()
-                    save_chat_message(
-                        peer, None, "Бот", "assistant", f"[призыв:{uid}] {text}"
-                    )
-                    print("Призыв молчуна:", uid, flush=True)
+                    _nudge_send(peer, uid, cands[uid], mem, now.timestamp())
         except Exception as _e:
             print("Nudge loop error:", _e, flush=True)
         _t.sleep(1800)
