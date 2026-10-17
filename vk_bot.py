@@ -5913,6 +5913,16 @@ def callback():
             send_clan_message(peer_id, clan_count_reply)
             return "ok"
 
+        # Команда "Моя статья" — шуточный приговор, без AI.
+        _low_st = normalize_text(text).lower().strip(" .,!?")
+        if _low_st.endswith("моя статья") and len(_low_st) <= 20:
+            from statya import moya_statya
+            send_message(
+                peer_id,
+                moya_statya(get_vk_user_name(sender_id), sender_id)
+            )
+            return "ok"
+
         # Полностью выключенная система не читает память, AI, обучение
         # и не выполняет лишних API-запросов.
         if not SYSTEM_ENABLED:
