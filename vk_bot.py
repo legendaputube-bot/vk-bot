@@ -188,6 +188,12 @@ LEARNING_MAX_TOKENS = 190
 MAX_MESSAGE_CHARS = 170
 OWNER_VK_ID = 948950706
 OPENROUTER_DAILY_LIMIT = 50
+# Платный запасной ИИ (relaymodels, OpenAI-совместимый API)
+RELAY_API_KEY = os.environ.get("RELAYMODELS_API_KEY", "")
+RELAY_API = "https://api.relaymodels.com/v1/chat/completions"
+RELAY_MODEL = os.environ.get("RELAY_MODEL", "grok-4.6")
+RELAY_MAX_TOKENS = 300
+RELAY_TIMEOUT = 40
 OPENROUTER_BLOCK_SECONDS = 24 * 60 * 60
 
 CHAT_MEMORY_LIMIT = 24
@@ -4863,6 +4869,77 @@ def maybe_restore_all_ai():
         print("ALL AI RECOVERED | relay deactivated", flush=True)
 
 
+def ask_relay_messages(messages, max_tokens=RELAY_MAX_TOKENS, label="Relay"):
+    if not RELAY_API_KEY:
+        raise RuntimeError("RELAYMODELS_API_KEY не установлен.")
+
+    try:
+        response = requests.post(
+            RELAY_API,
+            headers={
+                "Authorization": f"Bearer {RELAY_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": RELAY_MODEL,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "stream": False
+            },
+            timeout=RELAY_TIMEOUT
+        )
+    except Exception as e:
+        raise RuntimeError(f"{label} request error: {e}")
+
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"{label} HTTP {response.status_code}: {response.text[:500]}"
+        )
+
+    try:
+        data = response.json()
+    except Exception as e:
+        raise RuntimeError(f"{label} invalid JSON: {e}")
+
+    choices = data.get("choices") or []
+    if not choices:
+        raise RuntimeError(f"{label} returned no choices.")
+
+    message = choices[0].get("message") or {}
+    content = message.get("content")
+
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                value = part.get("text") or ""
+                if value:
+                    parts.append(value)
+        content = "\n".join(parts)
+
+    reply = clean_model_text(content or "")
+    usage = data.get("usage") or {}
+
+    print(
+        f"{label}:",
+        "model=", data.get("model"),
+        "prompt=", usage.get("prompt_tokens"),
+        "completion=", usage.get("completion_tokens"),
+        "total=", usage.get("total_tokens"),
+        flush=True
+    )
+
+    if not reply:
+        raise RuntimeError(f"{label} returned empty response.")
+
+    return limit_text(reply)
+
+
+def ask_relay(chat_id, text, user_id, user_name):
+    messages = build_chat_context(chat_id, user_id, user_name, text)
+    return ask_relay_messages(messages, RELAY_MAX_TOKENS, "Relay")
+
+
 def ask_ai(chat_id, text, user_id, user_name):
     maybe_restore_all_ai()
 
@@ -4877,6 +4954,10 @@ def ask_ai(chat_id, text, user_id, user_name):
             return ask_openrouter(chat_id, text, user_id, user_name)
         except Exception as openrouter_error:
             print("OpenRouter final error:", openrouter_error, flush=True)
+            try:
+                return ask_relay(chat_id, text, user_id, user_name)
+            except Exception as relay_error:
+                print("Relay final error:", relay_error, flush=True)
             # 24 часа ставим только если лимиты/блокировки действительно
             # закрыли все доступные AI, а не из-за случайной сетевой ошибки.
             if all_ai_exhausted():
