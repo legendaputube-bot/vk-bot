@@ -227,6 +227,7 @@ LEARNING_RETRY_TIME = 10 * 60
 
 # Если все доступные AI-модели исчерпали лимит, бот делает паузу на 24 часа.
 ALL_AI_SLEEP_SECONDS = 24 * 60 * 60
+GROQ_LIMIT_PAUSE_SECONDS = 2 * 60 * 60
 
 
 # =========================================================
@@ -5041,10 +5042,7 @@ def ask_groq(
 
                     main_blocked_until[idx] = (
                         time.time()
-                        + get_retry_seconds(
-                            e,
-                            3600
-                        )
+                        + max(GROQ_LIMIT_PAUSE_SECONDS, get_retry_seconds(e, 3600))
                     )
 
                 print(
@@ -5088,10 +5086,7 @@ def ask_groq(
 
                     backup_blocked_until[idx] = (
                         time.time()
-                        + get_retry_seconds(
-                            e,
-                            600
-                        )
+                        + max(GROQ_LIMIT_PAUSE_SECONDS, get_retry_seconds(e, 600))
                     )
 
                 print(
