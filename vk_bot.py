@@ -3316,15 +3316,32 @@ def ask_model(
             )
         )
 
-    except Exception:
+    except Exception as first_error:
+        # При лимите не повторяем запрос к той же модели.
+        if is_rate_limit_error(first_error):
+            raise
 
-        completion = (
-            active_client.chat.completions.create(
-                model=model,
-                messages=messages,
-                max_tokens=max_tokens,
-                reasoning_effort=_effort
+        # Совместимость с API, которое не поддерживает
+        # max_completion_tokens или reasoning_format.
+        error_text = str(first_error).lower()
+        unsupported_parameter = any(
+            marker in error_text
+            for marker in (
+                "max_completion_tokens",
+                "reasoning_format",
+                "unsupported parameter",
+                "unknown parameter",
+                "unrecognized request argument"
             )
+        )
+        if not unsupported_parameter:
+            raise
+
+        completion = active_client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            reasoning_effort=_effort
         )
 
     usage = getattr(
@@ -5054,16 +5071,48 @@ def _convo_judge(rows, message, text, platform):
         + f"\n\nНОВОЕ СООБЩЕНИЕ от {sname or 'Участник'}: {text[:trim * 2]}"
         + "\n\nОтветь одним словом: ДА или НЕТ."
     )
+    judge_messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+    ans = None
     model = globals().get("BACKUP_MODEL") or MAIN_MODEL
-    try:
-        ans = ask_model(
-            model,
-            [{"role": "system", "content": system},
-             {"role": "user", "content": user}],
-            max_tokens=_convo_cfg("CONVO_MAX_TOKENS", 800)
+
+    # Судья использует только аккаунты, где выбранная модель не заблокирована.
+    for idx, client in enumerate(groq_clients):
+        blocked_until = (
+            backup_blocked_until.get(idx, 0)
+            if model == BACKUP_MODEL
+            else main_blocked_until.get(idx, 0)
         )
-    except Exception as e:
-        print("CONVO judge error:", e, flush=True)
+        if time.time() < blocked_until:
+            continue
+        try:
+            ans = ask_model(
+                model,
+                judge_messages,
+                max_tokens=_convo_cfg("CONVO_MAX_TOKENS", 800),
+                client=client
+            )
+            break
+        except Exception as e:
+            if is_rate_limit_error(e):
+                target = (
+                    backup_blocked_until
+                    if model == BACKUP_MODEL
+                    else main_blocked_until
+                )
+                target[idx] = time.time() + max(
+                    GROQ_LIMIT_PAUSE_SECONDS,
+                    get_retry_seconds(e, 600 if model == BACKUP_MODEL else 3600)
+                )
+            print(
+                f"CONVO judge Groq[{idx+1}] error:",
+                e,
+                flush=True
+            )
+
+    if ans is None:
         return None
     out = _convo_text(ans).strip().upper()
     if out.startswith("ДА"):
