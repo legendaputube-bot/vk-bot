@@ -4937,7 +4937,15 @@ def ask_relay(chat_id, text, user_id, user_name):
     return limit_text(result)
 
 
+OLD_AI_PAUSE_UNTIL = 1792333912
+
+
 def ask_ai(chat_id, text, user_id, user_name):
+    if time.time() < OLD_AI_PAUSE_UNTIL:
+        try:
+            return ask_relay(chat_id, text, user_id, user_name)
+        except Exception as pause_error:
+            print("Relay (pause mode) error:", pause_error, flush=True)
     try:
         return ask_ai_main(chat_id, text, user_id, user_name)
     except Exception as main_error:
