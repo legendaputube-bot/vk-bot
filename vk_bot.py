@@ -4863,7 +4863,95 @@ def maybe_restore_all_ai():
         print("ALL AI RECOVERED | relay deactivated", flush=True)
 
 
+RELAY_API_KEY = os.environ.get("RELAYMODELS_API_KEY", "")
+RELAY_API = "https://api.relaymodels.com/v1/chat/completions"
+RELAY_MODEL = os.environ.get("RELAY_MODEL", "gpt-5.6-terra")
+RELAY_MAX_TOKENS = 1000
+RELAY_TIMEOUT = 40
+RELAY_EXTRA_RULE = (
+    "Формулы пиши обычным текстом, без LaTeX и без звёздочек. "
+    "Если не знаешь, так и скажи, не выдумывай"
+)
+
+
+def clean_relay_text(text):
+    t = str(text or "")
+    t = re.sub(r"\\boxed\{([^{}]*)\}", r"\1", t)
+    for bad in ("**", "\\[", "\\]", "\\(", "\\)"):
+        t = t.replace(bad, "")
+    t = re.sub(r"[ \t]+", " ", t)
+    return t.strip()
+
+
+def ask_relay_messages(messages, max_tokens=RELAY_MAX_TOKENS, label="Relay"):
+    if not RELAY_API_KEY:
+        raise RuntimeError("RELAYMODELS_API_KEY не установлен.")
+    try:
+        response = requests.post(
+            RELAY_API,
+            headers={
+                "Authorization": f"Bearer {RELAY_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": RELAY_MODEL,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "stream": False
+            },
+            timeout=RELAY_TIMEOUT
+        )
+    except Exception as e:
+        raise RuntimeError(f"{label} request error: {e}")
+    if response.status_code != 200:
+        raise RuntimeError(f"{label} HTTP {response.status_code}: {response.text[:500]}")
+    try:
+        data = response.json()
+    except Exception as e:
+        raise RuntimeError(f"{label} invalid JSON: {e}")
+    choices = data.get("choices") or []
+    if not choices:
+        raise RuntimeError(f"{label} returned no choices.")
+    message = choices[0].get("message") or {}
+    content = message.get("content")
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                value = part.get("text") or ""
+                if value:
+                    parts.append(value)
+        content = "\n".join(parts)
+    reply = clean_model_text(content or "")
+    if not reply:
+        raise RuntimeError(f"{label} returned empty response.")
+    return limit_text(reply)
+
+
+def ask_relay(chat_id, text, user_id, user_name):
+    messages = build_chat_context(chat_id, user_id, user_name, text)
+    messages = list(messages) + [{"role": "system", "content": RELAY_EXTRA_RULE}]
+    result = clean_relay_text(ask_relay_messages(messages, RELAY_MAX_TOKENS, "Relay"))
+    if not result:
+        raise RuntimeError("Relay returned empty response after cleaning.")
+    return limit_text(result)
+
+
 def ask_ai(chat_id, text, user_id, user_name):
+    try:
+        return ask_ai_main(chat_id, text, user_id, user_name)
+    except Exception as main_error:
+        if "отключена" in str(main_error):
+            raise
+        print("Main AI failed, trying Relay:", main_error, flush=True)
+        try:
+            return ask_relay(chat_id, text, user_id, user_name)
+        except Exception as relay_error:
+            print("Relay final error:", relay_error, flush=True)
+            raise main_error
+
+
+def ask_ai_main(chat_id, text, user_id, user_name):
     maybe_restore_all_ai()
 
     if not SYSTEM_ENABLED:
