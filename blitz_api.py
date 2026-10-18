@@ -24,6 +24,9 @@ def register(app, ask_ai, send_message, save_chat_message):
         if not text or not VK_PEER or not uid:
             return jsonify({"ok": False, "error": "empty"}), 400
         chat_id = int(VK_PEER)
+        import time as _t, traceback as _tb
+        _t0 = _t.time()
+        print(f'BRIDGE IN | uid={uid} name={name} text={text[:60]}', flush=True)
         try:
             cmd = g["handle_owner_command"](text, uid)
             if cmd:
@@ -40,11 +43,16 @@ def register(app, ask_ai, send_message, save_chat_message):
                 g["save_explicit_user_memory"](chat_id, uid, name, text)
             except Exception as e:
                 logging.error("blitz_api memory: %s", e)
+            print('BRIDGE ask_ai start', flush=True)
             reply = ask_ai(chat_id, text, str(uid), name)
+            print(f'BRIDGE REPLY | {_t.time()-_t0:.1f}s | len={len(reply or "")} | {str(reply)[:80]}', flush=True)
             if reply:
                 save_chat_message(chat_id, None, "Бот", "assistant", reply)
                 send_message(chat_id, reply)
+            print('BRIDGE OUT ok', flush=True)
             return jsonify({"ok": True, "reply": reply or ""})
         except Exception as e:
             logging.error("blitz_api_ask: %s", e)
+            print('BRIDGE ERROR |', e, flush=True)
+            print(_tb.format_exc(), flush=True)
             return jsonify({"ok": False, "error": "ai"}), 500
