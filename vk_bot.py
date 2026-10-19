@@ -181,7 +181,7 @@ OPENROUTER_MODEL = "openrouter/free"
 # =========================================================
 
 GROQ_MAX_TOKENS = 350
-OPENROUTER_MAX_TOKENS = 190
+OPENROUTER_MAX_TOKENS = 400
 LEARNING_MAX_TOKENS = 190
 
 # Жёсткий лимит одного входящего/исходящего сообщения.
@@ -4161,6 +4161,100 @@ def maybe_learn(chat_id):
 # CHAT CONTEXT
 # =========================================================
 
+# =========================================================
+# WG TANKS DB — справочник танков (tanks_compact.json)
+# =========================================================
+
+WG_TANKS = []
+
+WG_TYPE_RU = {
+    "lightTank": "ЛТ",
+    "mediumTank": "СТ",
+    "heavyTank": "ТТ",
+    "AT-SPG": "ПТ-САУ",
+}
+
+
+def load_wg_tanks():
+    global WG_TANKS
+    try:
+        path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "tanks_compact.json"
+        )
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        items = []
+        for t in data:
+            name = str(t.get("name") or "").strip()
+            if len(name) < 3:
+                continue
+            key = name.lower().replace("ё", "е")
+            pat = re.compile(
+                r"(?<![\w-])" + re.escape(key) + r"(?![\w-])"
+            )
+            items.append((len(key), key, pat, t))
+        items.sort(key=lambda x: -x[0])
+        WG_TANKS = items
+        print(f"WG TANKS LOADED | {len(items)}", flush=True)
+    except Exception as e:
+        WG_TANKS = []
+        print("WG tanks load error:", e, flush=True)
+
+
+load_wg_tanks()
+
+
+def _wg_tank_line(t):
+    shells = []
+    for s in (t.get("shells") or []):
+        shells.append(
+            f"{s.get('type')}: пробитие {s.get('penetration')}, "
+            f"урон {s.get('damage')}"
+        )
+    armor = t.get("armor") or {}
+    hull = armor.get("hull") or {}
+    turret = armor.get("turret") or {}
+    kind = WG_TYPE_RU.get(t.get("type"), t.get("type"))
+    prem = ", премиум" if t.get("premium") else ""
+    return (
+        f"- {t.get('name')}: {t.get('tier')} ур., {kind}, "
+        f"{t.get('nation')}{prem}; HP {t.get('hp')}; "
+        f"скорость {t.get('speed_forward')}/{t.get('speed_backward')}; "
+        f"орудие {t.get('gun')}, перезарядка {t.get('reload_time')} с, "
+        f"сведение {t.get('aim_time')} с, разброс {t.get('dispersion')}; "
+        f"УВН {t.get('depression')}/{t.get('elevation')}; "
+        f"снаряды: {'; '.join(shells)}; "
+        f"броня корпус {hull.get('front')}/{hull.get('sides')}/"
+        f"{hull.get('rear')}, башня {turret.get('front')}/"
+        f"{turret.get('sides')}/{turret.get('rear')}"
+    )
+
+
+def wg_tanks_context(text):
+    if not WG_TANKS:
+        return None
+    low = str(text or "").lower().replace("ё", "е")
+    found = []
+    for _, key, pat, t in WG_TANKS:
+        m = pat.search(low)
+        if m:
+            found.append(t)
+            low = low[:m.start()] + " " * (m.end() - m.start()) + low[m.end():]
+            if len(found) >= 3:
+                break
+    if not found:
+        return None
+    lines = [_wg_tank_line(t) for t in found]
+    return (
+        "СПРАВОЧНИК ТАНКОВ (международная версия WoT Blitz, стоковая "
+        "комплектация, может отличаться от российской). Отвечай только "
+        "по этим цифрам и не выдумывай то, чего тут нет. Цен на "
+        "оборудование, серебро и золото ты не знаешь. Не длиннее 170 "
+        "символов:\n" + "\n".join(lines)
+    )
+
+
 def build_chat_context(
     chat_id,
     user_id,
@@ -4258,6 +4352,13 @@ def build_chat_context(
                 })
     except Exception as e:
         print("Tank context error:", e, flush=True)
+
+    try:
+        wg_block = wg_tanks_context(text)
+        if wg_block:
+            messages.append({"role": "system", "content": wg_block})
+    except Exception as e:
+        print("WG tanks context error:", e, flush=True)
 
     # =========================================
     # DEVELOPMENT STAGE
