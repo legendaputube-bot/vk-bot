@@ -44,7 +44,9 @@
     "rear": 45
    }
   },
-  "max_ammo": 77
+  "max_ammo": 77,
+  "price_credit": 400000,
+  "price_gold": null
  },
  {
   "id": 22529,
@@ -96,7 +98,9 @@
     "rear": 35
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 7297,
@@ -148,7 +152,9 @@
     "rear": 90
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 17,
@@ -200,7 +206,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 87
+  "max_ammo": 87,
+  "price_credit": 400000,
+  "price_gold": null
  },
  {
   "id": 1569,
@@ -252,7 +260,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 70
+  "max_ammo": 70,
+  "price_credit": 1340000,
+  "price_gold": null
  },
  {
   "id": 23841,
@@ -304,7 +314,9 @@
     "rear": 25
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 8225,
@@ -356,7 +368,9 @@
     "rear": 51
    }
   },
-  "max_ammo": 72
+  "max_ammo": 72,
+  "price_credit": 2580000,
+  "price_gold": null
  },
  {
   "id": 54353,
@@ -408,7 +422,9 @@
     "rear": 108
    }
   },
-  "max_ammo": 64
+  "max_ammo": 64,
+  "price_credit": null,
+  "price_gold": 2500
  },
  {
   "id": 8321,
@@ -460,7 +476,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 45
+  "max_ammo": 45,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 1297,
@@ -512,7 +530,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 81
+  "max_ammo": 81,
+  "price_credit": 1380000,
+  "price_gold": null
  },
  {
   "id": 5457,
@@ -564,7 +584,9 @@
     "rear": 32
    }
   },
-  "max_ammo": 61
+  "max_ammo": 61,
+  "price_credit": 1350500,
+  "price_gold": null
  },
  {
   "id": 6193,
@@ -616,7 +638,9 @@
     "rear": 48
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 8049,
@@ -668,7 +692,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 1105,
@@ -720,7 +746,9 @@
     "rear": 32
    }
   },
-  "max_ammo": 75
+  "max_ammo": 75,
+  "price_credit": 900000,
+  "price_gold": null
  },
  {
   "id": 6209,
@@ -772,7 +800,9 @@
     "rear": 30
    }
   },
-  "max_ammo": 56
+  "max_ammo": 56,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 1025,
@@ -814,7 +844,9 @@
     "rear": 15
    }
   },
-  "max_ammo": 98
+  "max_ammo": 98,
+  "price_credit": 1200,
+  "price_gold": null
  },
  {
   "id": 63841,
@@ -866,7 +898,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 87
+  "max_ammo": 87,
+  "price_credit": null,
+  "price_gold": 1200
  },
  {
   "id": 2321,
@@ -918,7 +952,9 @@
     "rear": 65
    }
   },
-  "max_ammo": 55
+  "max_ammo": 55,
+  "price_credit": 935000,
+  "price_gold": null
  },
  {
   "id": 52513,
@@ -970,7 +1006,9 @@
     "rear": 43
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": 5200
  },
  {
   "id": 6481,
@@ -1022,7 +1060,9 @@
     "rear": 25
    }
   },
-  "max_ammo": 120
+  "max_ammo": 120,
+  "price_credit": null,
+  "price_gold": 100
  },
  {
   "id": 52497,
@@ -1064,7 +1104,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 100
+  "max_ammo": 100,
+  "price_credit": null,
+  "price_gold": 750
  },
  {
   "id": 20561,
@@ -1116,7 +1158,9 @@
     "rear": 76
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 18961,
@@ -1168,7 +1212,9 @@
     "rear": 10
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": 1360000,
+  "price_gold": null
  },
  {
   "id": 18945,
@@ -1220,7 +1266,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 25
+  "max_ammo": 25,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 63585,
@@ -1272,7 +1320,9 @@
     "rear": 89
    }
   },
-  "max_ammo": 92
+  "max_ammo": 92,
+  "price_credit": null,
+  "price_gold": 1200
  },
  {
   "id": 52241,
@@ -1319,7 +1369,9 @@
     "rear": 59
    }
   },
-  "max_ammo": 112
+  "max_ammo": 112,
+  "price_credit": null,
+  "price_gold": 1500
  },
  {
   "id": 16401,
@@ -1371,7 +1423,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 45
+  "max_ammo": 45,
+  "price_credit": 3400000,
+  "price_gold": null
  },
  {
   "id": 18689,
@@ -1418,7 +1472,9 @@
     "rear": 25
    }
   },
-  "max_ammo": 46
+  "max_ammo": 46,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 53537,
@@ -1460,7 +1516,9 @@
     "rear": 6
    }
   },
-  "max_ammo": 80
+  "max_ammo": 80,
+  "price_credit": null,
+  "price_gold": 750
  },
  {
   "id": 2161,
@@ -1512,7 +1570,9 @@
     "rear": 42
    }
   },
-  "max_ammo": 24
+  "max_ammo": 24,
+  "price_credit": null,
+  "price_gold": 5000
  },
  {
   "id": 21281,
@@ -1564,7 +1624,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 71
+  "max_ammo": 71,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 10369,
@@ -1616,7 +1678,9 @@
     "rear": 50
    }
   },
-  "max_ammo": 54
+  "max_ammo": 54,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 4369,
@@ -1663,7 +1727,9 @@
     "rear": 32
    }
   },
-  "max_ammo": 56
+  "max_ammo": 56,
+  "price_credit": 6000,
+  "price_gold": null
  },
  {
   "id": 8529,
@@ -1715,7 +1781,9 @@
     "rear": 101
    }
   },
-  "max_ammo": 70
+  "max_ammo": 70,
+  "price_credit": 2650000,
+  "price_gold": null
  },
  {
   "id": 21009,
@@ -1767,7 +1835,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 5665,
@@ -1809,7 +1879,9 @@
     "rear": 24
    }
   },
-  "max_ammo": 103
+  "max_ammo": 103,
+  "price_credit": null,
+  "price_gold": 25
  },
  {
   "id": 52993,
@@ -1861,7 +1933,9 @@
     "rear": 17
    }
   },
-  "max_ammo": 72
+  "max_ammo": 72,
+  "price_credit": null,
+  "price_gold": 1450
  },
  {
   "id": 6961,
@@ -1913,7 +1987,9 @@
     "rear": 45
    }
   },
-  "max_ammo": 35
+  "max_ammo": 35,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 54289,
@@ -1965,7 +2041,9 @@
     "rear": 84
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": null,
+  "price_gold": 7500
  },
  {
   "id": 8257,
@@ -2012,7 +2090,9 @@
     "rear": 6
    }
   },
-  "max_ammo": 70
+  "max_ammo": 70,
+  "price_credit": null,
+  "price_gold": 50
  },
  {
   "id": 4465,
@@ -2064,7 +2144,9 @@
     "rear": 75
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 12417,
@@ -2116,7 +2198,9 @@
     "rear": 45
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 20737,
@@ -2168,7 +2252,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 30
+  "max_ammo": 30,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 9553,
@@ -2220,7 +2306,9 @@
     "rear": 102
    }
   },
-  "max_ammo": 120
+  "max_ammo": 120,
+  "price_credit": 940000,
+  "price_gold": null
  },
  {
   "id": 22033,
@@ -2267,7 +2355,9 @@
     "rear": 31
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 6689,
@@ -2314,7 +2404,9 @@
     "rear": 19
    }
   },
-  "max_ammo": 20
+  "max_ammo": 20,
+  "price_credit": null,
+  "price_gold": 1
  },
  {
   "id": 23329,
@@ -2366,7 +2458,9 @@
     "rear": 50
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 2610000,
+  "price_gold": null
  },
  {
   "id": 55313,
@@ -2418,7 +2512,9 @@
     "rear": 84
    }
   },
-  "max_ammo": 68
+  "max_ammo": 68,
+  "price_credit": null,
+  "price_gold": 7400
  },
  {
   "id": 3105,
@@ -2470,7 +2566,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": null,
+  "price_gold": 100
  },
  {
   "id": 6417,
@@ -2522,7 +2620,9 @@
     "rear": 42
    }
   },
-  "max_ammo": 87
+  "max_ammo": 87,
+  "price_credit": null,
+  "price_gold": 250
  },
  {
   "id": 56609,
@@ -2574,7 +2674,9 @@
     "rear": 51
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": 5000
  },
  {
   "id": 23057,
@@ -2626,7 +2728,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 7713,
@@ -2678,7 +2782,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 68
+  "max_ammo": 68,
+  "price_credit": null,
+  "price_gold": 100
  },
  {
   "id": 2129,
@@ -2730,7 +2836,9 @@
     "rear": 35
    }
   },
-  "max_ammo": 180
+  "max_ammo": 180,
+  "price_credit": 400000,
+  "price_gold": null
  },
  {
   "id": 6145,
@@ -2782,7 +2890,9 @@
     "rear": 100
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 22785,
@@ -2834,7 +2944,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 56
+  "max_ammo": 56,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 24081,
@@ -2886,7 +2998,9 @@
     "rear": 52
    }
   },
-  "max_ammo": 80
+  "max_ammo": 80,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 8737,
@@ -2938,7 +3052,9 @@
     "rear": 51
    }
   },
-  "max_ammo": 62
+  "max_ammo": 62,
+  "price_credit": 3500000,
+  "price_gold": null
  },
  {
   "id": 25377,
@@ -2990,7 +3106,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 16641,
@@ -3042,7 +3160,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 100
+  "max_ammo": 100,
+  "price_credit": 880000,
+  "price_gold": null
  },
  {
   "id": 57361,
@@ -3094,7 +3214,9 @@
     "rear": 22
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": 3500
  },
  {
   "id": 10625,
@@ -3146,7 +3268,9 @@
     "rear": 48
    }
   },
-  "max_ammo": 54
+  "max_ammo": 54,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 23809,
@@ -3198,7 +3322,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 8465,
@@ -3250,7 +3376,9 @@
     "rear": 42
    }
   },
-  "max_ammo": 80
+  "max_ammo": 80,
+  "price_credit": 2390000,
+  "price_gold": null
  },
  {
   "id": 25105,
@@ -3302,7 +3430,9 @@
     "rear": 50
    }
   },
-  "max_ammo": 64
+  "max_ammo": 64,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 9761,
@@ -3354,7 +3484,9 @@
     "rear": 19
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": 900000,
+  "price_gold": null
  },
  {
   "id": 26401,
@@ -3406,7 +3538,9 @@
     "rear": 25
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 51489,
@@ -3448,7 +3582,9 @@
     "rear": 6
    }
   },
-  "max_ammo": 1200
+  "max_ammo": 1200,
+  "price_credit": null,
+  "price_gold": 650
  },
  {
   "id": 8193,
@@ -3500,7 +3636,9 @@
     "rear": 62
    }
   },
-  "max_ammo": 34
+  "max_ammo": 34,
+  "price_credit": 3660000,
+  "price_gold": null
  },
  {
   "id": 5169,
@@ -3552,7 +3690,9 @@
     "rear": 42
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 920000,
+  "price_gold": null
  },
  {
   "id": 9489,
@@ -3604,7 +3744,9 @@
     "rear": 150
    }
   },
-  "max_ammo": 72
+  "max_ammo": 72,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 2353,
@@ -3646,7 +3788,9 @@
     "rear": 16
    }
   },
-  "max_ammo": 62
+  "max_ammo": 62,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 10785,
@@ -3698,7 +3842,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 42
+  "max_ammo": 42,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 897,
@@ -3750,7 +3896,9 @@
     "rear": 50
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 2410000,
+  "price_gold": null
  },
  {
   "id": 4417,
@@ -3802,7 +3950,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 9217,
@@ -3854,7 +4004,9 @@
     "rear": 68
    }
   },
-  "max_ammo": 30
+  "max_ammo": 30,
+  "price_credit": null,
+  "price_gold": 7600
  },
  {
   "id": 10513,
@@ -3906,7 +4058,9 @@
     "rear": 85
    }
   },
-  "max_ammo": 92
+  "max_ammo": 92,
+  "price_credit": 2435000,
+  "price_gold": null
  },
  {
   "id": 4433,
@@ -3958,7 +4112,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 65
+  "max_ammo": 65,
+  "price_credit": 3600000,
+  "price_gold": null
  },
  {
   "id": 625,
@@ -4010,7 +4166,9 @@
     "rear": 63
    }
   },
-  "max_ammo": 102
+  "max_ammo": 102,
+  "price_credit": null,
+  "price_gold": 3000
  },
  {
   "id": 59137,
@@ -4062,7 +4220,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 28
+  "max_ammo": 28,
+  "price_credit": null,
+  "price_gold": 5000
  },
  {
   "id": 1921,
@@ -4114,7 +4274,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 400000,
+  "price_gold": null
  },
  {
   "id": 6497,
@@ -4166,7 +4328,9 @@
     "rear": 100
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": 3640000,
+  "price_gold": null
  },
  {
   "id": 10241,
@@ -4218,7 +4382,9 @@
     "rear": 45
    }
   },
-  "max_ammo": 44
+  "max_ammo": 44,
+  "price_credit": 1365000,
+  "price_gold": null
  },
  {
   "id": 64593,
@@ -4270,7 +4436,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 39
+  "max_ammo": 39,
+  "price_credit": null,
+  "price_gold": 3500
  },
  {
   "id": 11537,
@@ -4322,7 +4490,9 @@
     "rear": 42
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": 2570000,
+  "price_gold": null
  },
  {
   "id": 15697,
@@ -4374,7 +4544,9 @@
     "rear": 25
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 353,
@@ -4416,7 +4588,9 @@
     "rear": 15
    }
   },
-  "max_ammo": 96
+  "max_ammo": 96,
+  "price_credit": 1200,
+  "price_gold": null
  },
  {
   "id": 8561,
@@ -4468,7 +4642,9 @@
     "rear": 30
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 1649,
@@ -4520,7 +4696,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 100
+  "max_ammo": 100,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 60161,
@@ -4572,7 +4750,9 @@
     "rear": 100
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": null,
+  "price_gold": 7500
  },
  {
   "id": 2945,
@@ -4624,7 +4804,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 51
+  "max_ammo": 51,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 8577,
@@ -4676,7 +4858,9 @@
     "rear": 25
    }
   },
-  "max_ammo": 65
+  "max_ammo": 65,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 11265,
@@ -4728,7 +4912,9 @@
     "rear": 75
    }
   },
-  "max_ammo": 54
+  "max_ammo": 54,
+  "price_credit": null,
+  "price_gold": 500
  },
  {
   "id": 5185,
@@ -4780,7 +4966,9 @@
     "rear": 15
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": 1345000,
+  "price_gold": null
  },
  {
   "id": 1377,
@@ -4832,7 +5020,9 @@
     "rear": 30
    }
   },
-  "max_ammo": 88
+  "max_ammo": 88,
+  "price_credit": 400000,
+  "price_gold": null
  },
  {
   "id": 18497,
@@ -4884,7 +5074,9 @@
     "rear": 25
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 13857,
@@ -4936,7 +5128,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 27
+  "max_ammo": 27,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 3969,
@@ -4988,7 +5182,9 @@
     "rear": 30
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 1350000,
+  "price_gold": null
  },
  {
   "id": 1121,
@@ -5040,7 +5236,9 @@
     "rear": 35
    }
   },
-  "max_ammo": 97
+  "max_ammo": 97,
+  "price_credit": 1440000,
+  "price_gold": null
  },
  {
   "id": 16449,
@@ -5087,7 +5285,9 @@
     "rear": 15
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 17745,
@@ -5139,7 +5339,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 2401,
@@ -5186,7 +5388,9 @@
     "rear": 10
    }
   },
-  "max_ammo": 93
+  "max_ammo": 93,
+  "price_credit": null,
+  "price_gold": 50
  },
  {
   "id": 64529,
@@ -5238,7 +5442,9 @@
     "rear": 31
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": 7300
  },
  {
   "id": 14881,
@@ -5290,7 +5496,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 36
+  "max_ammo": 36,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 3697,
@@ -5342,7 +5550,9 @@
     "rear": 83
    }
   },
-  "max_ammo": 32
+  "max_ammo": 32,
+  "price_credit": null,
+  "price_gold": 5000
  },
  {
   "id": 60177,
@@ -5394,7 +5604,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 56
+  "max_ammo": 56,
+  "price_credit": null,
+  "price_gold": 7300
  },
  {
   "id": 4993,
@@ -5446,7 +5658,9 @@
     "rear": 50
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 17473,
@@ -5498,7 +5712,9 @@
     "rear": 30
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 14609,
@@ -5550,7 +5766,9 @@
     "rear": 25
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 64801,
@@ -5602,7 +5820,9 @@
     "rear": 53
    }
   },
-  "max_ammo": 34
+  "max_ammo": 34,
+  "price_credit": null,
+  "price_gold": 7600
  },
  {
   "id": 18769,
@@ -5654,7 +5874,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 70
+  "max_ammo": 70,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 3425,
@@ -5706,7 +5928,9 @@
     "rear": 25
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": 3600000,
+  "price_gold": null
  },
  {
   "id": 15905,
@@ -5758,7 +5982,9 @@
     "rear": 27
    }
   },
-  "max_ammo": 57
+  "max_ammo": 57,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 4721,
@@ -5810,7 +6036,9 @@
     "rear": 57
    }
   },
-  "max_ammo": 96
+  "max_ammo": 96,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 5745,
@@ -5862,7 +6090,9 @@
     "rear": 42
    }
   },
-  "max_ammo": 71
+  "max_ammo": 71,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 1857,
@@ -5914,7 +6144,9 @@
     "rear": 35
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": 3450000,
+  "price_gold": null
  },
  {
   "id": 6017,
@@ -5966,7 +6198,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 80
+  "max_ammo": 80,
+  "price_credit": 2410000,
+  "price_gold": null
  },
  {
   "id": 14337,
@@ -6018,7 +6252,9 @@
     "rear": 50
    }
   },
-  "max_ammo": 42
+  "max_ammo": 42,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 3153,
@@ -6070,7 +6306,9 @@
     "rear": 51
    }
   },
-  "max_ammo": 140
+  "max_ammo": 140,
+  "price_credit": 1400000,
+  "price_gold": null
  },
  {
   "id": 21585,
@@ -6122,7 +6360,9 @@
     "rear": 51
    }
   },
-  "max_ammo": 144
+  "max_ammo": 144,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 289,
@@ -6164,7 +6404,9 @@
     "rear": 26
    }
   },
-  "max_ammo": 98
+  "max_ammo": 98,
+  "price_credit": 1200,
+  "price_gold": null
  },
  {
   "id": 19793,
@@ -6216,7 +6458,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 68
+  "max_ammo": 68,
+  "price_credit": 3450000,
+  "price_gold": null
  },
  {
   "id": 4449,
@@ -6268,7 +6512,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 28
+  "max_ammo": 28,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 23585,
@@ -6320,7 +6566,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 75
+  "max_ammo": 75,
+  "price_credit": 1450300,
+  "price_gold": null
  },
  {
   "id": 1585,
@@ -6372,7 +6620,9 @@
     "rear": 47
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": 2480000,
+  "price_gold": null
  },
  {
   "id": 2049,
@@ -6424,7 +6674,9 @@
     "rear": 37
    }
   },
-  "max_ammo": 134
+  "max_ammo": 134,
+  "price_credit": 85000,
+  "price_gold": null
  },
  {
   "id": 64257,
@@ -6476,7 +6728,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": 3500
  },
  {
   "id": 2881,
@@ -6528,7 +6782,9 @@
     "rear": 39
    }
   },
-  "max_ammo": 70
+  "max_ammo": 70,
+  "price_credit": null,
+  "price_gold": 100
  },
  {
   "id": 513,
@@ -6580,7 +6836,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 36
+  "max_ammo": 36,
+  "price_credit": 1424000,
+  "price_gold": null
  },
  {
   "id": 22273,
@@ -6632,7 +6890,9 @@
     "rear": 70
    }
   },
-  "max_ammo": 45
+  "max_ammo": 45,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 16657,
@@ -6684,7 +6944,9 @@
     "rear": 8
    }
   },
-  "max_ammo": 30
+  "max_ammo": 30,
+  "price_credit": 2400000,
+  "price_gold": null
  },
  {
   "id": 51729,
@@ -6731,7 +6993,9 @@
     "rear": 50
    }
   },
-  "max_ammo": 400
+  "max_ammo": 400,
+  "price_credit": null,
+  "price_gold": 1000
  },
  {
   "id": 54097,
@@ -6783,7 +7047,9 @@
     "rear": 102
    }
   },
-  "max_ammo": 70
+  "max_ammo": 70,
+  "price_credit": null,
+  "price_gold": 5000
  },
  {
   "id": 8065,
@@ -6835,7 +7101,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 80
+  "max_ammo": 80,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 2593,
@@ -6887,7 +7155,9 @@
     "rear": 51
    }
   },
-  "max_ammo": 63
+  "max_ammo": 63,
+  "price_credit": 3550000,
+  "price_gold": null
  },
  {
   "id": 1041,
@@ -6939,7 +7209,9 @@
     "rear": 32
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": 400000,
+  "price_gold": null
  },
  {
   "id": 5201,
@@ -6981,7 +7253,9 @@
     "rear": 10
    }
   },
-  "max_ammo": 160
+  "max_ammo": 160,
+  "price_credit": null,
+  "price_gold": 25
  },
  {
   "id": 4657,
@@ -7033,7 +7307,9 @@
     "rear": 47
    }
   },
-  "max_ammo": 100
+  "max_ammo": 100,
+  "price_credit": 400000,
+  "price_gold": null
  },
  {
   "id": 18977,
@@ -7085,7 +7361,9 @@
     "rear": 19
    }
   },
-  "max_ammo": 36
+  "max_ammo": 36,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 6721,
@@ -7137,7 +7415,9 @@
     "rear": 59
    }
   },
-  "max_ammo": 74
+  "max_ammo": 74,
+  "price_credit": 400000,
+  "price_gold": null
  },
  {
   "id": 2065,
@@ -7179,7 +7459,9 @@
     "rear": 16
    }
   },
-  "max_ammo": 264
+  "max_ammo": 264,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 25345,
@@ -7231,7 +7513,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 6225,
@@ -7283,7 +7567,9 @@
     "rear": 79
    }
   },
-  "max_ammo": 45
+  "max_ammo": 45,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 6241,
@@ -7335,7 +7621,9 @@
     "rear": 90
    }
   },
-  "max_ammo": 65
+  "max_ammo": 65,
+  "price_credit": 2610000,
+  "price_gold": null
  },
  {
   "id": 3361,
@@ -7387,7 +7675,9 @@
     "rear": 44
    }
   },
-  "max_ammo": 56
+  "max_ammo": 56,
+  "price_credit": 400000,
+  "price_gold": null
  },
  {
   "id": 21073,
@@ -7439,7 +7729,9 @@
     "rear": 51
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 20001,
@@ -7491,7 +7783,9 @@
     "rear": 30
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": 3600000,
+  "price_gold": null
  },
  {
   "id": 5953,
@@ -7533,7 +7827,9 @@
     "rear": 30
    }
   },
-  "max_ammo": 56
+  "max_ammo": 56,
+  "price_credit": 1200,
+  "price_gold": null
  },
  {
   "id": 6753,
@@ -7585,7 +7881,9 @@
     "rear": 100
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 18433,
@@ -7637,7 +7935,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 1380000,
+  "price_gold": null
  },
  {
   "id": 51985,
@@ -7684,7 +7984,9 @@
     "rear": 27
    }
   },
-  "max_ammo": 112
+  "max_ammo": 112,
+  "price_credit": null,
+  "price_gold": 1200
  },
  {
   "id": 19729,
@@ -7736,7 +8038,9 @@
     "rear": 80
    }
   },
-  "max_ammo": 92
+  "max_ammo": 92,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 4385,
@@ -7788,7 +8092,9 @@
     "rear": 51
    }
   },
-  "max_ammo": 54
+  "max_ammo": 54,
+  "price_credit": 2610000,
+  "price_gold": null
  },
  {
   "id": 8817,
@@ -7840,7 +8146,9 @@
     "rear": 35
    }
   },
-  "max_ammo": 180
+  "max_ammo": 180,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 51713,
@@ -7887,7 +8195,9 @@
     "rear": 53
    }
   },
-  "max_ammo": 140
+  "max_ammo": 140,
+  "price_credit": null,
+  "price_gold": 2400
  },
  {
   "id": 21025,
@@ -7939,7 +8249,9 @@
     "rear": 51
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 2817,
@@ -7991,7 +8303,9 @@
     "rear": 65
    }
   },
-  "max_ammo": 94
+  "max_ammo": 94,
+  "price_credit": 900000,
+  "price_gold": null
  },
  {
   "id": 6977,
@@ -8043,7 +8357,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 74
+  "max_ammo": 74,
+  "price_credit": 1395000,
+  "price_gold": null
  },
  {
   "id": 11137,
@@ -8095,7 +8411,9 @@
     "rear": 42
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 8833,
@@ -8147,7 +8465,9 @@
     "rear": 35
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 4113,
@@ -8199,7 +8519,9 @@
     "rear": 52
    }
   },
-  "max_ammo": 79
+  "max_ammo": 79,
+  "price_credit": 1369000,
+  "price_gold": null
  },
  {
   "id": 8273,
@@ -8241,7 +8563,9 @@
     "rear": 7
    }
   },
-  "max_ammo": 64
+  "max_ammo": 64,
+  "price_credit": null,
+  "price_gold": 25
  },
  {
   "id": 20753,
@@ -8293,7 +8617,9 @@
     "rear": 135
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": 3200000,
+  "price_gold": null
  },
  {
   "id": 5409,
@@ -8345,7 +8671,9 @@
     "rear": 36
    }
   },
-  "max_ammo": 130
+  "max_ammo": 130,
+  "price_credit": 85000,
+  "price_gold": null
  },
  {
   "id": 52737,
@@ -8392,7 +8720,9 @@
     "rear": 25
    }
   },
-  "max_ammo": 103
+  "max_ammo": 103,
+  "price_credit": null,
+  "price_gold": 850
  },
  {
   "id": 6705,
@@ -8434,7 +8764,9 @@
     "rear": 27
    }
   },
-  "max_ammo": 82
+  "max_ammo": 82,
+  "price_credit": 1200,
+  "price_gold": null
  },
  {
   "id": 8001,
@@ -8486,7 +8818,9 @@
     "rear": 25
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 12161,
@@ -8538,7 +8872,9 @@
     "rear": 50
    }
   },
-  "max_ammo": 56
+  "max_ammo": 56,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 5137,
@@ -8590,7 +8926,9 @@
     "rear": 83
    }
   },
-  "max_ammo": 72
+  "max_ammo": 72,
+  "price_credit": 2450000,
+  "price_gold": null
  },
  {
   "id": 9297,
@@ -8642,7 +8980,9 @@
     "rear": 79
    }
   },
-  "max_ammo": 21
+  "max_ammo": 21,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 63601,
@@ -8694,7 +9034,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 21777,
@@ -8746,7 +9088,9 @@
     "rear": 100
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 6433,
@@ -8793,7 +9137,9 @@
     "rear": 13
    }
   },
-  "max_ammo": 45
+  "max_ammo": 45,
+  "price_credit": null,
+  "price_gold": 50
  },
  {
   "id": 53761,
@@ -8845,7 +9191,9 @@
     "rear": 53
    }
   },
-  "max_ammo": 58
+  "max_ammo": 58,
+  "price_credit": null,
+  "price_gold": 2500
  },
  {
   "id": 23073,
@@ -8897,7 +9245,9 @@
     "rear": 55
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 3640000,
+  "price_gold": null
  },
  {
   "id": 55057,
@@ -8949,7 +9299,9 @@
     "rear": 22
    }
   },
-  "max_ammo": 87
+  "max_ammo": 87,
+  "price_credit": null,
+  "price_gold": 2400
  },
  {
   "id": 6161,
@@ -8996,7 +9348,9 @@
     "rear": 22
    }
   },
-  "max_ammo": 240
+  "max_ammo": 240,
+  "price_credit": null,
+  "price_gold": 100
  },
  {
   "id": 20257,
@@ -9048,7 +9402,9 @@
     "rear": 12
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 22801,
@@ -9100,7 +9456,9 @@
     "rear": 82
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 19713,
@@ -9152,7 +9510,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 54785,
@@ -9204,7 +9564,9 @@
     "rear": 63
    }
   },
-  "max_ammo": 30
+  "max_ammo": 30,
+  "price_credit": null,
+  "price_gold": 3500
  },
  {
   "id": 24097,
@@ -9256,7 +9618,9 @@
     "rear": 30
    }
   },
-  "max_ammo": 36
+  "max_ammo": 36,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 23041,
@@ -9308,7 +9672,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 10049,
@@ -9360,7 +9726,9 @@
     "rear": 34
    }
   },
-  "max_ammo": 86
+  "max_ammo": 86,
+  "price_credit": 400000,
+  "price_gold": null
  },
  {
   "id": 7185,
@@ -9412,7 +9780,9 @@
     "rear": 43
    }
   },
-  "max_ammo": 78
+  "max_ammo": 78,
+  "price_credit": 920000,
+  "price_gold": null
  },
  {
   "id": 23825,
@@ -9464,7 +9834,9 @@
     "rear": 8
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 6913,
@@ -9516,7 +9888,9 @@
     "rear": 16
    }
   },
-  "max_ammo": 43
+  "max_ammo": 43,
+  "price_credit": 85000,
+  "price_gold": null
  },
  {
   "id": 11073,
@@ -9568,7 +9942,9 @@
     "rear": 50
    }
   },
-  "max_ammo": 64
+  "max_ammo": 64,
+  "price_credit": 3670000,
+  "price_gold": null
  },
  {
   "id": 769,
@@ -9615,7 +9991,9 @@
     "rear": 16
    }
   },
-  "max_ammo": 84
+  "max_ammo": 84,
+  "price_credit": 6000,
+  "price_gold": null
  },
  {
   "id": 8209,
@@ -9667,7 +10045,9 @@
     "rear": 11
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 11393,
@@ -9719,7 +10099,9 @@
     "rear": 36
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 9505,
@@ -9771,7 +10153,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 3640000,
+  "price_gold": null
  },
  {
   "id": 785,
@@ -9813,7 +10197,9 @@
     "rear": 27
    }
   },
-  "max_ammo": 88
+  "max_ammo": 88,
+  "price_credit": 1200,
+  "price_gold": null
  },
  {
   "id": 26145,
@@ -9865,7 +10251,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 36
+  "max_ammo": 36,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 7937,
@@ -9917,7 +10305,9 @@
     "rear": 47
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": 3450000,
+  "price_gold": null
  },
  {
   "id": 12097,
@@ -9969,7 +10359,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 80
+  "max_ammo": 80,
+  "price_credit": 2570000,
+  "price_gold": null
  },
  {
   "id": 19233,
@@ -10021,7 +10413,9 @@
     "rear": 76
    }
   },
-  "max_ammo": 100
+  "max_ammo": 100,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 24577,
@@ -10073,7 +10467,9 @@
     "rear": 80
    }
   },
-  "max_ammo": 36
+  "max_ammo": 36,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 2865,
@@ -10125,7 +10521,9 @@
     "rear": 62
    }
   },
-  "max_ammo": 35
+  "max_ammo": 35,
+  "price_credit": 2600000,
+  "price_gold": null
  },
  {
   "id": 10529,
@@ -10177,7 +10575,9 @@
     "rear": 13
    }
   },
-  "max_ammo": 45
+  "max_ammo": 45,
+  "price_credit": null,
+  "price_gold": 250
  },
  {
   "id": 9009,
@@ -10229,7 +10629,9 @@
     "rear": 42
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 27169,
@@ -10281,7 +10683,9 @@
     "rear": 44
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 641,
@@ -10333,7 +10737,9 @@
     "rear": 15
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 3480000,
+  "price_gold": null
  },
  {
   "id": 8961,
@@ -10385,7 +10791,9 @@
     "rear": 85
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": 1500
  },
  {
   "id": 19265,
@@ -10437,7 +10845,9 @@
     "rear": 25
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 10257,
@@ -10489,7 +10899,9 @@
     "rear": 83
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 3450000,
+  "price_gold": null
  },
  {
   "id": 11553,
@@ -10541,7 +10953,9 @@
     "rear": 13
    }
   },
-  "max_ammo": 45
+  "max_ammo": 45,
+  "price_credit": 950000,
+  "price_gold": null
  },
  {
   "id": 849,
@@ -10588,7 +11002,9 @@
     "rear": 55
    }
   },
-  "max_ammo": 92
+  "max_ammo": 92,
+  "price_credit": 85000,
+  "price_gold": null
  },
  {
   "id": 58881,
@@ -10640,7 +11056,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 30
+  "max_ammo": 30,
+  "price_credit": null,
+  "price_gold": 1500
  },
  {
   "id": 1665,
@@ -10692,7 +11110,9 @@
     "rear": 24
    }
   },
-  "max_ammo": 70
+  "max_ammo": 70,
+  "price_credit": 85000,
+  "price_gold": null
  },
  {
   "id": 9985,
@@ -10744,7 +11164,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 36
+  "max_ammo": 36,
+  "price_credit": 2560000,
+  "price_gold": null
  },
  {
   "id": 64337,
@@ -10796,7 +11218,9 @@
     "rear": 65
    }
   },
-  "max_ammo": 70
+  "max_ammo": 70,
+  "price_credit": null,
+  "price_gold": 3000
  },
  {
   "id": 7009,
@@ -10848,7 +11272,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 52
+  "max_ammo": 52,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 5393,
@@ -10900,7 +11326,9 @@
     "rear": 32
    }
   },
-  "max_ammo": 420
+  "max_ammo": 420,
+  "price_credit": 400000,
+  "price_gold": null
  },
  {
   "id": 11281,
@@ -10952,7 +11380,9 @@
     "rear": 65
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 15441,
@@ -11004,7 +11434,9 @@
     "rear": 25
    }
   },
-  "max_ammo": 80
+  "max_ammo": 80,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 1393,
@@ -11056,7 +11488,9 @@
     "rear": 42
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": null,
+  "price_gold": 5000
  },
  {
   "id": 7025,
@@ -11108,7 +11542,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 59905,
@@ -11160,7 +11596,9 @@
     "rear": 45
    }
   },
-  "max_ammo": 34
+  "max_ammo": 34,
+  "price_credit": null,
+  "price_gold": 7300
  },
  {
   "id": 57617,
@@ -11212,7 +11650,9 @@
     "rear": 42
    }
   },
-  "max_ammo": 82
+  "max_ammo": 82,
+  "price_credit": null,
+  "price_gold": 5000
  },
  {
   "id": 64065,
@@ -11264,7 +11704,9 @@
     "rear": 80
    }
   },
-  "max_ammo": 91
+  "max_ammo": 91,
+  "price_credit": null,
+  "price_gold": 7500
  },
  {
   "id": 2689,
@@ -11306,7 +11748,9 @@
     "rear": 14
    }
   },
-  "max_ammo": 80
+  "max_ammo": 80,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 11009,
@@ -11358,7 +11802,9 @@
     "rear": 90
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 2430000,
+  "price_gold": null
  },
  {
   "id": 7041,
@@ -11410,7 +11856,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 12305,
@@ -11462,7 +11910,9 @@
     "rear": 83
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 4929,
@@ -11514,7 +11964,9 @@
     "rear": 15
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": 2370000,
+  "price_gold": null
  },
  {
   "id": 4193,
@@ -11566,7 +12018,9 @@
     "rear": 55
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": 3450000,
+  "price_gold": null
  },
  {
   "id": 52257,
@@ -11618,7 +12072,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": 2350
  },
  {
   "id": 60929,
@@ -11665,7 +12121,9 @@
     "rear": 13
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": null,
+  "price_gold": 850
  },
  {
   "id": 3713,
@@ -11717,7 +12175,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": 930500,
+  "price_gold": null
  },
  {
   "id": 12033,
@@ -11769,7 +12229,9 @@
     "rear": 45
    }
   },
-  "max_ammo": 35
+  "max_ammo": 35,
+  "price_credit": 3510000,
+  "price_gold": null
  },
  {
   "id": 16193,
@@ -11821,7 +12283,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 51
+  "max_ammo": 51,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 13329,
@@ -11873,7 +12337,9 @@
     "rear": 53
    }
   },
-  "max_ammo": 87
+  "max_ammo": 87,
+  "price_credit": null,
+  "price_gold": 100
  },
  {
   "id": 17489,
@@ -11925,7 +12391,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 70
+  "max_ammo": 70,
+  "price_credit": 2650000,
+  "price_gold": null
  },
  {
   "id": 2145,
@@ -11972,7 +12440,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 100
+  "max_ammo": 100,
+  "price_credit": 6000,
+  "price_gold": null
  },
  {
   "id": 593,
@@ -12024,7 +12494,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 77
+  "max_ammo": 77,
+  "price_credit": 945000,
+  "price_gold": null
  },
  {
   "id": 14625,
@@ -12076,7 +12548,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 2403000,
+  "price_gold": null
  },
  {
   "id": 4737,
@@ -12128,7 +12602,9 @@
     "rear": 30
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 7985,
@@ -12180,7 +12656,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 30
+  "max_ammo": 30,
+  "price_credit": 2500000,
+  "price_gold": null
  },
  {
   "id": 17217,
@@ -12232,7 +12710,9 @@
     "rear": 50
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 18513,
@@ -12284,7 +12764,9 @@
     "rear": 51
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 15649,
@@ -12336,7 +12818,9 @@
     "rear": 19
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 1400000,
+  "price_gold": null
  },
  {
   "id": 1601,
@@ -12378,7 +12862,9 @@
     "rear": 30
    }
   },
-  "max_ammo": 112
+  "max_ammo": 112,
+  "price_credit": null,
+  "price_gold": 25
  },
  {
   "id": 5761,
@@ -12430,7 +12916,9 @@
     "rear": 30
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": 3480000,
+  "price_gold": null
  },
  {
   "id": 5121,
@@ -12472,7 +12960,9 @@
     "rear": 10
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": 25
  },
  {
   "id": 64273,
@@ -12524,7 +13014,9 @@
     "rear": 84
    }
   },
-  "max_ammo": 68
+  "max_ammo": 68,
+  "price_credit": null,
+  "price_gold": 7400
  },
  {
   "id": 2897,
@@ -12571,7 +13063,9 @@
     "rear": 53
    }
   },
-  "max_ammo": 150
+  "max_ammo": 150,
+  "price_credit": 400000,
+  "price_gold": null
  },
  {
   "id": 33,
@@ -12623,7 +13117,9 @@
     "rear": 53
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": 2500
  },
  {
   "id": 19537,
@@ -12675,7 +13171,9 @@
     "rear": 35
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 4945,
@@ -12727,7 +13225,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 44
+  "max_ammo": 44,
+  "price_credit": null,
+  "price_gold": 100
  },
  {
   "id": 16673,
@@ -12779,7 +13279,9 @@
     "rear": 19
    }
   },
-  "max_ammo": 72
+  "max_ammo": 72,
+  "price_credit": 910000,
+  "price_gold": null
  },
  {
   "id": 5489,
@@ -12831,7 +13333,9 @@
     "rear": 42
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 64001,
@@ -12883,7 +13387,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 56
+  "max_ammo": 56,
+  "price_credit": null,
+  "price_gold": 5000
  },
  {
   "id": 2625,
@@ -12935,7 +13441,9 @@
     "rear": 50
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": 925000,
+  "price_gold": null
  },
  {
   "id": 6785,
@@ -12987,7 +13495,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 54
+  "max_ammo": 54,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 3921,
@@ -13039,7 +13549,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 70
+  "max_ammo": 70,
+  "price_credit": 2520000,
+  "price_gold": null
  },
  {
   "id": 3073,
@@ -13086,7 +13598,9 @@
     "rear": 16
    }
   },
-  "max_ammo": 120
+  "max_ammo": 120,
+  "price_credit": null,
+  "price_gold": 50
  },
  {
   "id": 62977,
@@ -13138,7 +13652,9 @@
     "rear": 45
    }
   },
-  "max_ammo": 56
+  "max_ammo": 56,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 19473,
@@ -13190,7 +13706,9 @@
     "rear": 15
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 58641,
@@ -13242,7 +13760,9 @@
     "rear": 120
    }
   },
-  "max_ammo": 42
+  "max_ammo": 42,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 25089,
@@ -13294,7 +13814,9 @@
     "rear": 55
    }
   },
-  "max_ammo": 30
+  "max_ammo": 30,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 1057,
@@ -13346,7 +13868,9 @@
     "rear": 45
    }
   },
-  "max_ammo": 56
+  "max_ammo": 56,
+  "price_credit": 400000,
+  "price_gold": null
  },
  {
   "id": 17425,
@@ -13398,7 +13922,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 80
+  "max_ammo": 80,
+  "price_credit": 85000,
+  "price_gold": null
  },
  {
   "id": 3121,
@@ -13445,7 +13971,9 @@
     "rear": 35
    }
   },
-  "max_ammo": 125
+  "max_ammo": 125,
+  "price_credit": 85000,
+  "price_gold": null
  },
  {
   "id": 54865,
@@ -13487,7 +14015,9 @@
     "rear": 6
    }
   },
-  "max_ammo": 400
+  "max_ammo": 400,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 1809,
@@ -13539,7 +14069,9 @@
     "rear": 16
    }
   },
-  "max_ammo": 42
+  "max_ammo": 42,
+  "price_credit": 85000,
+  "price_gold": null
  },
  {
   "id": 5969,
@@ -13591,7 +14123,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 96
+  "max_ammo": 96,
+  "price_credit": 2350000,
+  "price_gold": null
  },
  {
   "id": 3137,
@@ -13643,7 +14177,9 @@
     "rear": 30
    }
   },
-  "max_ammo": 72
+  "max_ammo": 72,
+  "price_credit": 2552500,
+  "price_gold": null
  },
  {
   "id": 18449,
@@ -13695,7 +14231,9 @@
     "rear": 8
    }
   },
-  "max_ammo": 41
+  "max_ammo": 41,
+  "price_credit": 2440000,
+  "price_gold": null
  },
  {
   "id": 52065,
@@ -13747,7 +14285,9 @@
     "rear": 16
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": null,
+  "price_gold": 1200
  },
  {
   "id": 4401,
@@ -13794,7 +14334,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 99
+  "max_ammo": 99,
+  "price_credit": 6000,
+  "price_gold": null
  },
  {
   "id": 5681,
@@ -13846,7 +14388,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 45
+  "max_ammo": 45,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 7249,
@@ -13898,7 +14442,9 @@
     "rear": 32
    }
   },
-  "max_ammo": 72
+  "max_ammo": 72,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 55889,
@@ -13950,7 +14496,9 @@
     "rear": 32
    }
   },
-  "max_ammo": 64
+  "max_ammo": 64,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 9857,
@@ -14002,7 +14550,9 @@
     "rear": 48
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 18177,
@@ -14054,7 +14604,9 @@
     "rear": 45
    }
   },
-  "max_ammo": 34
+  "max_ammo": 34,
+  "price_credit": 2410000,
+  "price_gold": null
  },
  {
   "id": 53025,
@@ -14106,7 +14658,9 @@
     "rear": 43
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 6993,
@@ -14148,7 +14702,9 @@
     "rear": 12
    }
   },
-  "max_ammo": 80
+  "max_ammo": 80,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 5217,
@@ -14200,7 +14756,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": 1345000,
+  "price_gold": null
  },
  {
   "id": 529,
@@ -14252,7 +14810,9 @@
     "rear": 89
    }
   },
-  "max_ammo": 92
+  "max_ammo": 92,
+  "price_credit": 1390000,
+  "price_gold": null
  },
  {
   "id": 51457,
@@ -14304,7 +14864,9 @@
     "rear": 57
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": 2400
  },
  {
   "id": 9329,
@@ -14356,7 +14918,9 @@
     "rear": 75
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 2561,
@@ -14408,7 +14972,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 68
+  "max_ammo": 68,
+  "price_credit": 915000,
+  "price_gold": null
  },
  {
   "id": 14145,
@@ -14460,7 +15026,9 @@
     "rear": 15
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 400000,
+  "price_gold": null
  },
  {
   "id": 10881,
@@ -14512,7 +15080,9 @@
     "rear": 46
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 8017,
@@ -14559,7 +15129,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 102
+  "max_ammo": 102,
+  "price_credit": null,
+  "price_gold": 50
  },
  {
   "id": 9345,
@@ -14611,7 +15183,9 @@
     "rear": 30
    }
   },
-  "max_ammo": 35
+  "max_ammo": 35,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 20497,
@@ -14663,7 +15237,9 @@
     "rear": 120
    }
   },
-  "max_ammo": 120
+  "max_ammo": 120,
+  "price_credit": 2450000,
+  "price_gold": null
  },
  {
   "id": 5153,
@@ -14705,7 +15281,9 @@
     "rear": 25
    }
   },
-  "max_ammo": 100
+  "max_ammo": 100,
+  "price_credit": 6000,
+  "price_gold": null
  },
  {
   "id": 52481,
@@ -14757,7 +15335,9 @@
     "rear": 62
    }
   },
-  "max_ammo": 61
+  "max_ammo": 61,
+  "price_credit": null,
+  "price_gold": 1500
  },
  {
   "id": 21793,
@@ -14809,7 +15389,9 @@
     "rear": 12
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 3585,
@@ -14861,7 +15443,9 @@
     "rear": 47
    }
   },
-  "max_ammo": 62
+  "max_ammo": 62,
+  "price_credit": 908900,
+  "price_gold": null
  },
  {
   "id": 4881,
@@ -14908,7 +15492,9 @@
     "rear": 16
    }
   },
-  "max_ammo": 76
+  "max_ammo": 76,
+  "price_credit": null,
+  "price_gold": 50
  },
  {
   "id": 55073,
@@ -14950,7 +15536,9 @@
     "rear": 6
    }
   },
-  "max_ammo": 1350
+  "max_ammo": 1350,
+  "price_credit": null,
+  "price_gold": 650
  },
  {
   "id": 9041,
@@ -15002,7 +15590,9 @@
     "rear": 10
    }
   },
-  "max_ammo": 120
+  "max_ammo": 120,
+  "price_credit": 85000,
+  "price_gold": null
  },
  {
   "id": 21521,
@@ -15054,7 +15644,9 @@
     "rear": 80
    }
   },
-  "max_ammo": 56
+  "max_ammo": 56,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 6177,
@@ -15096,7 +15688,9 @@
     "rear": 24
    }
   },
-  "max_ammo": 80
+  "max_ammo": 80,
+  "price_credit": null,
+  "price_gold": 25
  },
  {
   "id": 9073,
@@ -15148,7 +15742,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 35
+  "max_ammo": 35,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 53505,
@@ -15195,7 +15791,9 @@
     "rear": 30
    }
   },
-  "max_ammo": 104
+  "max_ammo": 104,
+  "price_credit": null,
+  "price_gold": 950
  },
  {
   "id": 7473,
@@ -15247,7 +15845,9 @@
     "rear": 45
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": 1440000,
+  "price_gold": null
  },
  {
   "id": 4609,
@@ -15289,7 +15889,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 58
+  "max_ammo": 58,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 21249,
@@ -15341,7 +15943,9 @@
     "rear": 65
    }
   },
-  "max_ammo": 26
+  "max_ammo": 26,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 56097,
@@ -15393,7 +15997,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 71
+  "max_ammo": 71,
+  "price_credit": null,
+  "price_gold": 4000
  },
  {
   "id": 22545,
@@ -15445,7 +16051,9 @@
     "rear": 63
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 7201,
@@ -15497,7 +16105,9 @@
     "rear": 55
    }
   },
-  "max_ammo": 54
+  "max_ammo": 54,
+  "price_credit": 884200,
+  "price_gold": null
  },
  {
   "id": 11809,
@@ -15549,7 +16159,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 65
+  "max_ammo": 65,
+  "price_credit": null,
+  "price_gold": 4900
  },
  {
   "id": 54529,
@@ -15591,7 +16203,9 @@
     "rear": 10
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": null,
+  "price_gold": 700
  },
  {
   "id": 8497,
@@ -15643,7 +16257,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 9793,
@@ -15695,7 +16311,9 @@
     "rear": 34
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": 85000,
+  "price_gold": null
  },
  {
   "id": 49,
@@ -15747,7 +16365,9 @@
     "rear": 45
    }
   },
-  "max_ammo": 34
+  "max_ammo": 34,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 6929,
@@ -15799,7 +16419,9 @@
     "rear": 160
    }
   },
-  "max_ammo": 68
+  "max_ammo": 68,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 23569,
@@ -15851,7 +16473,9 @@
     "rear": 30
    }
   },
-  "max_ammo": 30
+  "max_ammo": 30,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 24865,
@@ -15903,7 +16527,9 @@
     "rear": 50
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 6657,
@@ -15955,7 +16581,9 @@
     "rear": 75
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 1355000,
+  "price_gold": null
  },
  {
   "id": 10817,
@@ -16007,7 +16635,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 96
+  "max_ammo": 96,
+  "price_credit": 1350000,
+  "price_gold": null
  },
  {
   "id": 7953,
@@ -16059,7 +16689,9 @@
     "rear": 84
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": 3450000,
+  "price_gold": null
  },
  {
   "id": 22049,
@@ -16111,7 +16743,9 @@
     "rear": 44
    }
   },
-  "max_ammo": 52
+  "max_ammo": 52,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 15617,
@@ -16163,7 +16797,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 55
+  "max_ammo": 55,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 24593,
@@ -16215,7 +16851,9 @@
     "rear": 80
    }
   },
-  "max_ammo": 52
+  "max_ammo": 52,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 9249,
@@ -16267,7 +16905,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 56
+  "max_ammo": 56,
+  "price_credit": 1327000,
+  "price_gold": null
  },
  {
   "id": 9089,
@@ -16319,7 +16959,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 30
+  "max_ammo": 30,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 56577,
@@ -16366,7 +17008,9 @@
     "rear": 30
    }
   },
-  "max_ammo": 150
+  "max_ammo": 150,
+  "price_credit": null,
+  "price_gold": 850
  },
  {
   "id": 25889,
@@ -16418,7 +17062,9 @@
     "rear": 23
    }
   },
-  "max_ammo": 70
+  "max_ammo": 70,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 3345,
@@ -16465,7 +17111,9 @@
     "rear": 16
    }
   },
-  "max_ammo": 56
+  "max_ammo": 56,
+  "price_credit": null,
+  "price_gold": 50
  },
  {
   "id": 24321,
@@ -16517,7 +17165,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 43
+  "max_ammo": 43,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 8305,
@@ -16569,7 +17219,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 1313,
@@ -16621,7 +17273,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 71
+  "max_ammo": 71,
+  "price_credit": 930500,
+  "price_gold": null
  },
  {
   "id": 25617,
@@ -16673,7 +17327,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 10273,
@@ -16725,7 +17381,9 @@
     "rear": 25
    }
   },
-  "max_ammo": 46
+  "max_ammo": 46,
+  "price_credit": 85000,
+  "price_gold": null
  },
  {
   "id": 2609,
@@ -16777,7 +17435,9 @@
     "rear": 13
    }
   },
-  "max_ammo": 45
+  "max_ammo": 45,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 26913,
@@ -16829,7 +17489,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 385,
@@ -16881,7 +17543,9 @@
     "rear": 25
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 3377,
@@ -16933,7 +17597,9 @@
     "rear": 25
    }
   },
-  "max_ammo": 46
+  "max_ammo": 46,
+  "price_credit": 1420000,
+  "price_gold": null
  },
  {
   "id": 10001,
@@ -16985,7 +17651,9 @@
     "rear": 31
    }
   },
-  "max_ammo": 87
+  "max_ammo": 87,
+  "price_credit": 945000,
+  "price_gold": null
  },
  {
   "id": 5441,
@@ -17037,7 +17705,9 @@
     "rear": 30
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 11297,
@@ -17089,7 +17759,9 @@
     "rear": 51
    }
   },
-  "max_ammo": 72
+  "max_ammo": 72,
+  "price_credit": 2650000,
+  "price_gold": null
  },
  {
   "id": 113,
@@ -17141,7 +17813,9 @@
     "rear": 45
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 20481,
@@ -17193,7 +17867,9 @@
     "rear": 90
    }
   },
-  "max_ammo": 30
+  "max_ammo": 30,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 21841,
@@ -17240,7 +17916,9 @@
     "rear": 35
    }
   },
-  "max_ammo": 25
+  "max_ammo": 25,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 13889,
@@ -17292,7 +17970,9 @@
     "rear": 50
    }
   },
-  "max_ammo": 30
+  "max_ammo": 30,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 11025,
@@ -17344,7 +18024,9 @@
     "rear": 30
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 1300000,
+  "price_gold": null
  },
  {
   "id": 5473,
@@ -17396,7 +18078,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 80
+  "max_ammo": 80,
+  "price_credit": 400000,
+  "price_gold": null
  },
  {
   "id": 64017,
@@ -17448,7 +18132,9 @@
     "rear": 80
    }
   },
-  "max_ammo": 63
+  "max_ammo": 63,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 12321,
@@ -17500,7 +18186,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 1137,
@@ -17552,7 +18240,9 @@
     "rear": 47
    }
   },
-  "max_ammo": 102
+  "max_ammo": 102,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 59649,
@@ -17604,7 +18294,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 32
+  "max_ammo": 32,
+  "price_credit": null,
+  "price_gold": 4900
  },
  {
   "id": 2433,
@@ -17646,7 +18338,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 100
+  "max_ammo": 100,
+  "price_credit": 1200,
+  "price_gold": null
  },
  {
   "id": 7537,
@@ -17698,7 +18392,9 @@
     "rear": 32
    }
   },
-  "max_ammo": 36
+  "max_ammo": 36,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 10753,
@@ -17750,7 +18446,9 @@
     "rear": 100
    }
   },
-  "max_ammo": 30
+  "max_ammo": 30,
+  "price_credit": 3561000,
+  "price_gold": null
  },
  {
   "id": 12049,
@@ -17802,7 +18500,9 @@
     "rear": 150
    }
   },
-  "max_ammo": 24
+  "max_ammo": 24,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 865,
@@ -17844,7 +18544,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 82
+  "max_ammo": 82,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 1409,
@@ -17896,7 +18598,9 @@
     "rear": 50
    }
   },
-  "max_ammo": 63
+  "max_ammo": 63,
+  "price_credit": 920000,
+  "price_gold": null
  },
  {
   "id": 13345,
@@ -17948,7 +18652,9 @@
     "rear": 53
    }
   },
-  "max_ammo": 54
+  "max_ammo": 54,
+  "price_credit": null,
+  "price_gold": 7200
  },
  {
   "id": 7745,
@@ -17990,7 +18696,9 @@
     "rear": 16
    }
   },
-  "max_ammo": 150
+  "max_ammo": 150,
+  "price_credit": null,
+  "price_gold": 25
  },
  {
   "id": 5233,
@@ -18042,7 +18750,9 @@
     "rear": 70
    }
   },
-  "max_ammo": 36
+  "max_ammo": 36,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 3457,
@@ -18094,7 +18804,9 @@
     "rear": 50
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": 2552000,
+  "price_gold": null
  },
  {
   "id": 11777,
@@ -18146,7 +18858,9 @@
     "rear": 57
    }
   },
-  "max_ammo": 62
+  "max_ammo": 62,
+  "price_credit": 400000,
+  "price_gold": null
  },
  {
   "id": 19745,
@@ -18198,7 +18912,9 @@
     "rear": 51
    }
   },
-  "max_ammo": 70
+  "max_ammo": 70,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 15937,
@@ -18240,7 +18956,9 @@
     "rear": 22
    }
   },
-  "max_ammo": 70
+  "max_ammo": 70,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 13073,
@@ -18287,7 +19005,9 @@
     "rear": 16
    }
   },
-  "max_ammo": 180
+  "max_ammo": 180,
+  "price_credit": null,
+  "price_gold": 50
  },
  {
   "id": 17233,
@@ -18339,7 +19059,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 35
+  "max_ammo": 35,
+  "price_credit": 3500000,
+  "price_gold": null
  },
  {
   "id": 1889,
@@ -18391,7 +19113,9 @@
     "rear": 35
    }
   },
-  "max_ammo": 65
+  "max_ammo": 65,
+  "price_credit": 940000,
+  "price_gold": null
  },
  {
   "id": 64561,
@@ -18443,7 +19167,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 45
+  "max_ammo": 45,
+  "price_credit": null,
+  "price_gold": 7500
  },
  {
   "id": 321,
@@ -18490,7 +19216,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 6000,
+  "price_gold": null
  },
  {
   "id": 4481,
@@ -18542,7 +19270,9 @@
     "rear": 50
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 62993,
@@ -18594,7 +19324,9 @@
     "rear": 80
    }
   },
-  "max_ammo": 72
+  "max_ammo": 72,
+  "price_credit": null,
+  "price_gold": 5000
  },
  {
   "id": 14097,
@@ -18646,7 +19378,9 @@
     "rear": 52
    }
   },
-  "max_ammo": 120
+  "max_ammo": 120,
+  "price_credit": 910000,
+  "price_gold": null
  },
  {
   "id": 18257,
@@ -18698,7 +19432,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 51
+  "max_ammo": 51,
+  "price_credit": 1400000,
+  "price_gold": null
  },
  {
   "id": 2913,
@@ -18750,7 +19486,9 @@
     "rear": 12
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": 100
  },
  {
   "id": 15393,
@@ -18802,7 +19540,9 @@
     "rear": 35
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": 3600000,
+  "price_gold": null
  },
  {
   "id": 5505,
@@ -18854,7 +19594,9 @@
     "rear": 30
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 13825,
@@ -18906,7 +19648,9 @@
     "rear": 47
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 17985,
@@ -18958,7 +19702,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 80
+  "max_ammo": 80,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 19281,
@@ -19010,7 +19756,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 3937,
@@ -19062,7 +19810,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 1073,
@@ -19114,7 +19864,9 @@
     "rear": 42
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": 1400000,
+  "price_gold": null
  },
  {
   "id": 53841,
@@ -19166,7 +19918,9 @@
     "rear": 51
    }
   },
-  "max_ammo": 144
+  "max_ammo": 144,
+  "price_credit": null,
+  "price_gold": 3500
  },
  {
   "id": 21505,
@@ -19218,7 +19972,9 @@
     "rear": 45
    }
   },
-  "max_ammo": 51
+  "max_ammo": 51,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 52561,
@@ -19270,7 +20026,9 @@
     "rear": 102
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 3500000,
+  "price_gold": null
  },
  {
   "id": 6529,
@@ -19322,7 +20080,9 @@
     "rear": 35
    }
   },
-  "max_ammo": 70
+  "max_ammo": 70,
+  "price_credit": 920000,
+  "price_gold": null
  },
  {
   "id": 19009,
@@ -19374,7 +20134,9 @@
     "rear": 15
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 16145,
@@ -19426,7 +20188,9 @@
     "rear": 15
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": null,
+  "price_gold": 250
  },
  {
   "id": 801,
@@ -19478,7 +20242,9 @@
     "rear": 44
    }
   },
-  "max_ammo": 75
+  "max_ammo": 75,
+  "price_credit": 885000,
+  "price_gold": null
  },
  {
   "id": 20305,
@@ -19530,7 +20296,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 65
+  "max_ammo": 65,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 4961,
@@ -19582,7 +20350,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": 2570000,
+  "price_gold": null
  },
  {
   "id": 1537,
@@ -19634,7 +20404,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 69
+  "max_ammo": 69,
+  "price_credit": null,
+  "price_gold": 100
  },
  {
   "id": 2097,
@@ -19686,7 +20458,9 @@
     "rear": 62
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": 3500000,
+  "price_gold": null
  },
  {
   "id": 21761,
@@ -19738,7 +20512,9 @@
     "rear": 45
    }
   },
-  "max_ammo": 35
+  "max_ammo": 35,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 64769,
@@ -19790,7 +20566,9 @@
     "rear": 68
    }
   },
-  "max_ammo": 30
+  "max_ammo": 30,
+  "price_credit": null,
+  "price_gold": 7600
  },
  {
   "id": 53585,
@@ -19842,7 +20620,9 @@
     "rear": 57
    }
   },
-  "max_ammo": 55
+  "max_ammo": 55,
+  "price_credit": null,
+  "price_gold": 2250
  },
  {
   "id": 7553,
@@ -19894,7 +20674,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 19985,
@@ -19946,7 +20728,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 30
+  "max_ammo": 30,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 4689,
@@ -19998,7 +20782,9 @@
     "rear": 51
    }
   },
-  "max_ammo": 84
+  "max_ammo": 84,
+  "price_credit": 900000,
+  "price_gold": null
  },
  {
   "id": 17169,
@@ -20045,7 +20831,9 @@
     "rear": 15
    }
   },
-  "max_ammo": 122
+  "max_ammo": 122,
+  "price_credit": null,
+  "price_gold": 50
  },
  {
   "id": 1825,
@@ -20087,7 +20875,9 @@
     "rear": 14
    }
   },
-  "max_ammo": 564
+  "max_ammo": 564,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 21329,
@@ -20139,7 +20929,9 @@
     "rear": 25
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 5985,
@@ -20191,7 +20983,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 72
+  "max_ammo": 72,
+  "price_credit": 1450300,
+  "price_gold": null
  },
  {
   "id": 17953,
@@ -20243,7 +21037,9 @@
     "rear": 19
    }
   },
-  "max_ammo": 57
+  "max_ammo": 57,
+  "price_credit": 1370000,
+  "price_gold": null
  },
  {
   "id": 7281,
@@ -20295,7 +21091,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 6257,
@@ -20347,7 +21145,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 257,
@@ -20399,7 +21199,9 @@
     "rear": 42
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": 400000,
+  "price_gold": null
  },
  {
   "id": 7729,
@@ -20451,7 +21253,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": 910000,
+  "price_gold": null
  },
  {
   "id": 8753,
@@ -20503,7 +21307,9 @@
     "rear": 13
    }
   },
-  "max_ammo": 65
+  "max_ammo": 65,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 1553,
@@ -20555,7 +21361,9 @@
     "rear": 22
    }
   },
-  "max_ammo": 79
+  "max_ammo": 79,
+  "price_credit": 910500,
+  "price_gold": null
  },
  {
   "id": 51745,
@@ -20602,7 +21410,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 92
+  "max_ammo": 92,
+  "price_credit": null,
+  "price_gold": 1750
  },
  {
   "id": 5713,
@@ -20654,7 +21464,9 @@
     "rear": 35
    }
   },
-  "max_ammo": 72
+  "max_ammo": 72,
+  "price_credit": 3515000,
+  "price_gold": null
  },
  {
   "id": 2849,
@@ -20706,7 +21518,9 @@
     "rear": 53
    }
   },
-  "max_ammo": 34
+  "max_ammo": 34,
+  "price_credit": null,
+  "price_gold": 7600
  },
  {
   "id": 3649,
@@ -20758,7 +21572,9 @@
     "rear": 30
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 4145,
@@ -20810,7 +21626,9 @@
     "rear": 62
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 7217,
@@ -20862,7 +21680,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 30
+  "max_ammo": 30,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 51809,
@@ -20914,7 +21734,9 @@
     "rear": 10
    }
   },
-  "max_ammo": 106
+  "max_ammo": 106,
+  "price_credit": null,
+  "price_gold": 950
  },
  {
   "id": 51473,
@@ -20966,7 +21788,9 @@
     "rear": 42
    }
   },
-  "max_ammo": 124
+  "max_ammo": 124,
+  "price_credit": null,
+  "price_gold": 2400
  },
  {
   "id": 9601,
@@ -21018,7 +21842,9 @@
     "rear": 45
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 1617,
@@ -21070,7 +21896,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": 250
  },
  {
   "id": 2577,
@@ -21122,7 +21950,9 @@
     "rear": 54
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": null,
+  "price_gold": 250
  },
  {
   "id": 52769,
@@ -21169,7 +21999,9 @@
     "rear": 14
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": null,
+  "price_gold": 1000
  },
  {
   "id": 19217,
@@ -21221,7 +22053,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 30
+  "max_ammo": 30,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 3873,
@@ -21273,7 +22107,9 @@
     "rear": 53
    }
   },
-  "max_ammo": 73
+  "max_ammo": 73,
+  "price_credit": 1450300,
+  "price_gold": null
  },
  {
   "id": 5729,
@@ -21325,7 +22161,9 @@
     "rear": 55
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": 885000,
+  "price_gold": null
  },
  {
   "id": 51201,
@@ -21377,7 +22215,9 @@
     "rear": 83
    }
   },
-  "max_ammo": 120
+  "max_ammo": 120,
+  "price_credit": null,
+  "price_gold": 2500
  },
  {
   "id": 20513,
@@ -21429,7 +22269,9 @@
     "rear": 50
    }
   },
-  "max_ammo": 45
+  "max_ammo": 45,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 7441,
@@ -21481,7 +22323,9 @@
     "rear": 104
    }
   },
-  "max_ammo": 92
+  "max_ammo": 92,
+  "price_credit": 3598000,
+  "price_gold": null
  },
  {
   "id": 2305,
@@ -21533,7 +22377,9 @@
     "rear": 63
    }
   },
-  "max_ammo": 26
+  "max_ammo": 26,
+  "price_credit": 1305000,
+  "price_gold": null
  },
  {
   "id": 6465,
@@ -21585,7 +22431,9 @@
     "rear": 15
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": 875000,
+  "price_gold": null
  },
  {
   "id": 7793,
@@ -21637,7 +22485,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 3601,
@@ -21679,7 +22529,9 @@
     "rear": 13
    }
   },
-  "max_ammo": 75
+  "max_ammo": 75,
+  "price_credit": null,
+  "price_gold": 25
  },
  {
   "id": 7761,
@@ -21721,7 +22573,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 64
+  "max_ammo": 64,
+  "price_credit": 1200,
+  "price_gold": null
  },
  {
   "id": 16705,
@@ -21773,7 +22627,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 4897,
@@ -21820,7 +22676,9 @@
     "rear": 14
    }
   },
-  "max_ammo": 120
+  "max_ammo": 120,
+  "price_credit": null,
+  "price_gold": 50
  },
  {
   "id": 7809,
@@ -21872,7 +22730,9 @@
     "rear": 50
    }
   },
-  "max_ammo": 48
+  "max_ammo": 48,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 52225,
@@ -21919,7 +22779,9 @@
     "rear": 17
    }
   },
-  "max_ammo": 84
+  "max_ammo": 84,
+  "price_credit": null,
+  "price_gold": 1000
  },
  {
   "id": 10353,
@@ -21971,7 +22833,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 3329,
@@ -22023,7 +22887,9 @@
     "rear": 16
    }
   },
-  "max_ammo": 96
+  "max_ammo": 96,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 11649,
@@ -22075,7 +22941,9 @@
     "rear": 32
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 19969,
@@ -22127,7 +22995,9 @@
     "rear": 80
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 8785,
@@ -22179,7 +23049,9 @@
     "rear": 102
    }
   },
-  "max_ammo": 96
+  "max_ammo": 96,
+  "price_credit": 400000,
+  "price_gold": null
  },
  {
   "id": 62737,
@@ -22231,7 +23103,9 @@
     "rear": 19
    }
   },
-  "max_ammo": 46
+  "max_ammo": 46,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 21265,
@@ -22283,7 +23157,9 @@
     "rear": 113
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 5921,
@@ -22335,7 +23211,9 @@
     "rear": 54
    }
   },
-  "max_ammo": 92
+  "max_ammo": 92,
+  "price_credit": 2403000,
+  "price_gold": null
  },
  {
   "id": 53249,
@@ -22387,7 +23265,9 @@
     "rear": 140
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": 7550
  },
  {
   "id": 22561,
@@ -22439,7 +23319,9 @@
     "rear": 52
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 9841,
@@ -22491,7 +23373,9 @@
     "rear": 19
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 54545,
@@ -22543,7 +23427,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": 2100
  },
  {
   "id": 8513,
@@ -22595,7 +23481,9 @@
     "rear": 30
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 20993,
@@ -22647,7 +23535,9 @@
     "rear": 70
    }
   },
-  "max_ammo": 45
+  "max_ammo": 45,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 9809,
@@ -22699,7 +23589,9 @@
     "rear": 51
    }
   },
-  "max_ammo": 46
+  "max_ammo": 46,
+  "price_credit": null,
+  "price_gold": 500
  },
  {
   "id": 6945,
@@ -22751,7 +23643,9 @@
     "rear": 25
    }
   },
-  "max_ammo": 54
+  "max_ammo": 54,
+  "price_credit": 400000,
+  "price_gold": null
  },
  {
   "id": 54273,
@@ -22798,7 +23692,9 @@
     "rear": 53
    }
   },
-  "max_ammo": 98
+  "max_ammo": 98,
+  "price_credit": null,
+  "price_gold": 1000
  },
  {
   "id": 8241,
@@ -22850,7 +23746,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 30
+  "max_ammo": 30,
+  "price_credit": 3350000,
+  "price_gold": null
  },
  {
   "id": 20769,
@@ -22902,7 +23800,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 6449,
@@ -22954,7 +23854,9 @@
     "rear": 70
    }
   },
-  "max_ammo": 35
+  "max_ammo": 35,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 5377,
@@ -23006,7 +23908,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 28
+  "max_ammo": 28,
+  "price_credit": 2568500,
+  "price_gold": null
  },
  {
   "id": 6673,
@@ -23053,7 +23957,9 @@
     "rear": 15
    }
   },
-  "max_ammo": 36
+  "max_ammo": 36,
+  "price_credit": null,
+  "price_gold": 50
  },
  {
   "id": 23313,
@@ -23105,7 +24011,9 @@
     "rear": 70
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 55297,
@@ -23157,7 +24065,9 @@
     "rear": 45
    }
   },
-  "max_ammo": 35
+  "max_ammo": 35,
+  "price_credit": null,
+  "price_gold": 5100
  },
  {
   "id": 24609,
@@ -23209,7 +24119,9 @@
     "rear": 45
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 4353,
@@ -23261,7 +24173,9 @@
     "rear": 45
    }
   },
-  "max_ammo": 58
+  "max_ammo": 58,
+  "price_credit": 2390000,
+  "price_gold": null
  },
  {
   "id": 6401,
@@ -23308,7 +24222,9 @@
     "rear": 15
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": 50
  },
  {
   "id": 65329,
@@ -23360,7 +24276,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 47
+  "max_ammo": 47,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 7697,
@@ -23412,7 +24330,9 @@
     "rear": 80
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": 2570000,
+  "price_gold": null
  },
  {
   "id": 24337,
@@ -23464,7 +24384,9 @@
     "rear": 28
    }
   },
-  "max_ammo": 64
+  "max_ammo": 64,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 8993,
@@ -23516,7 +24438,9 @@
     "rear": 53
    }
   },
-  "max_ammo": 70
+  "max_ammo": 70,
+  "price_credit": 3450000,
+  "price_gold": null
  },
  {
   "id": 5889,
@@ -23568,7 +24492,9 @@
     "rear": 90
    }
   },
-  "max_ammo": 61
+  "max_ammo": 61,
+  "price_credit": 1390000,
+  "price_gold": null
  },
  {
   "id": 25633,
@@ -23620,7 +24546,9 @@
     "rear": 52
    }
   },
-  "max_ammo": 52
+  "max_ammo": 52,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 11905,
@@ -23672,7 +24600,9 @@
     "rear": 50
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 7425,
@@ -23724,7 +24654,9 @@
     "rear": 63
    }
   },
-  "max_ammo": 26
+  "max_ammo": 26,
+  "price_credit": 2520000,
+  "price_gold": null
  },
  {
   "id": 11585,
@@ -23776,7 +24708,9 @@
     "rear": 59
    }
   },
-  "max_ammo": 160
+  "max_ammo": 160,
+  "price_credit": 900000,
+  "price_gold": null
  },
  {
   "id": 3857,
@@ -23828,7 +24762,9 @@
     "rear": 42
    }
   },
-  "max_ammo": 68
+  "max_ammo": 68,
+  "price_credit": 1345000,
+  "price_gold": null
  },
  {
   "id": 24065,
@@ -23880,7 +24816,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 16897,
@@ -23932,7 +24870,9 @@
     "rear": 55
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 17729,
@@ -23984,7 +24924,9 @@
     "rear": 44
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 25361,
@@ -24036,7 +24978,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 10017,
@@ -24088,7 +25032,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 104
+  "max_ammo": 104,
+  "price_credit": null,
+  "price_gold": 500
  },
  {
   "id": 18209,
@@ -24140,7 +25086,9 @@
     "rear": 19
    }
   },
-  "max_ammo": 46
+  "max_ammo": 46,
+  "price_credit": 2380000,
+  "price_gold": null
  },
  {
   "id": 57105,
@@ -24192,7 +25140,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 26
+  "max_ammo": 26,
+  "price_credit": null,
+  "price_gold": 3500
  },
  {
   "id": 26657,
@@ -24244,7 +25194,9 @@
     "rear": 50
    }
   },
-  "max_ammo": 72
+  "max_ammo": 72,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 9521,
@@ -24296,7 +25248,9 @@
     "rear": 50
    }
   },
-  "max_ammo": 42
+  "max_ammo": 42,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 23553,
@@ -24338,7 +25292,9 @@
     "rear": 16
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 5937,
@@ -24390,7 +25346,9 @@
     "rear": 49
    }
   },
-  "max_ammo": 54
+  "max_ammo": 54,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 9745,
@@ -24442,7 +25400,9 @@
     "rear": 125
    }
   },
-  "max_ammo": 92
+  "max_ammo": 92,
+  "price_credit": 3480000,
+  "price_gold": null
  },
  {
   "id": 11041,
@@ -24494,7 +25454,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 47
+  "max_ammo": 47,
+  "price_credit": 1364000,
+  "price_gold": null
  },
  {
   "id": 3905,
@@ -24546,7 +25508,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 72
+  "max_ammo": 72,
+  "price_credit": 3565000,
+  "price_gold": null
  },
  {
   "id": 3633,
@@ -24598,7 +25562,9 @@
     "rear": 62
    }
   },
-  "max_ammo": 36
+  "max_ammo": 36,
+  "price_credit": 1450000,
+  "price_gold": null
  },
  {
   "id": 1153,
@@ -24650,7 +25616,9 @@
     "rear": 50
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 1420000,
+  "price_gold": null
  },
  {
   "id": 59665,
@@ -24697,7 +25665,9 @@
     "rear": 8
    }
   },
-  "max_ammo": 102
+  "max_ammo": 102,
+  "price_credit": null,
+  "price_gold": 1200
  },
  {
   "id": 10065,
@@ -24749,7 +25719,9 @@
     "rear": 102
    }
   },
-  "max_ammo": 120
+  "max_ammo": 120,
+  "price_credit": 1400000,
+  "price_gold": null
  },
  {
   "id": 10769,
@@ -24801,7 +25773,9 @@
     "rear": 83
    }
   },
-  "max_ammo": 92
+  "max_ammo": 92,
+  "price_credit": 1395000,
+  "price_gold": null
  },
  {
   "id": 12065,
@@ -24853,7 +25827,9 @@
     "rear": 35
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 881,
@@ -24905,7 +25881,9 @@
     "rear": 42
    }
   },
-  "max_ammo": 64
+  "max_ammo": 64,
+  "price_credit": null,
+  "price_gold": 4900
  },
  {
   "id": 65377,
@@ -24957,7 +25935,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 52
+  "max_ammo": 52,
+  "price_credit": null,
+  "price_gold": 2100
  },
  {
   "id": 63553,
@@ -25009,7 +25989,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": 7300
  },
  {
   "id": 2177,
@@ -25056,7 +26038,9 @@
     "rear": 25
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 6000,
+  "price_gold": null
  },
  {
   "id": 10497,
@@ -25103,7 +26087,9 @@
     "rear": 70
    }
   },
-  "max_ammo": 80
+  "max_ammo": 80,
+  "price_credit": 920000,
+  "price_gold": null
  },
  {
   "id": 19489,
@@ -25155,7 +26141,9 @@
     "rear": 51
    }
   },
-  "max_ammo": 42
+  "max_ammo": 42,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 64849,
@@ -25207,7 +26195,9 @@
     "rear": 65
    }
   },
-  "max_ammo": 100
+  "max_ammo": 100,
+  "price_credit": null,
+  "price_gold": 1000
  },
  {
   "id": 10097,
@@ -25259,7 +26249,9 @@
     "rear": 44
    }
   },
-  "max_ammo": 72
+  "max_ammo": 72,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 11793,
@@ -25311,7 +26303,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 905000,
+  "price_gold": null
  },
  {
   "id": 15953,
@@ -25363,7 +26357,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 74
+  "max_ammo": 74,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 22817,
@@ -25415,7 +26411,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 45
+  "max_ammo": 45,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 13089,
@@ -25467,7 +26465,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 27
+  "max_ammo": 27,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 1905,
@@ -25519,7 +26519,9 @@
     "rear": 52
    }
   },
-  "max_ammo": 100
+  "max_ammo": 100,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 10113,
@@ -25571,7 +26573,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 88
+  "max_ammo": 88,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 60417,
@@ -25623,7 +26627,9 @@
     "rear": 62
    }
   },
-  "max_ammo": 30
+  "max_ammo": 30,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 2369,
@@ -25670,7 +26676,9 @@
     "rear": 41
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": null,
+  "price_gold": 950
  },
  {
   "id": 3201,
@@ -25722,7 +26730,9 @@
     "rear": 80
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 11521,
@@ -25774,7 +26784,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 30
+  "max_ammo": 30,
+  "price_credit": 3531000,
+  "price_gold": null
  },
  {
   "id": 337,
@@ -25816,7 +26828,9 @@
     "rear": 8
    }
   },
-  "max_ammo": 80
+  "max_ammo": 80,
+  "price_credit": null,
+  "price_gold": 25
  },
  {
   "id": 1633,
@@ -25868,7 +26882,9 @@
     "rear": 30
    }
   },
-  "max_ammo": 92
+  "max_ammo": 92,
+  "price_credit": 85000,
+  "price_gold": null
  },
  {
   "id": 14113,
@@ -25920,7 +26936,9 @@
     "rear": 37
    }
   },
-  "max_ammo": 57
+  "max_ammo": 57,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 4225,
@@ -25972,7 +26990,9 @@
     "rear": 50
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 3600000,
+  "price_gold": null
  },
  {
   "id": 12545,
@@ -26024,7 +27044,9 @@
     "rear": 100
    }
   },
-  "max_ammo": 51
+  "max_ammo": 51,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 1361,
@@ -26076,7 +27098,9 @@
     "rear": 51
    }
   },
-  "max_ammo": 84
+  "max_ammo": 84,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 13841,
@@ -26128,7 +27152,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 73
+  "max_ammo": 73,
+  "price_credit": 2420000,
+  "price_gold": null
  },
  {
   "id": 18001,
@@ -26180,7 +27206,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 88
+  "max_ammo": 88,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 2657,
@@ -26232,7 +27260,9 @@
     "rear": 25
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": 2550000,
+  "price_gold": null
  },
  {
   "id": 54801,
@@ -26279,7 +27309,9 @@
     "rear": 13
    }
   },
-  "max_ammo": 78
+  "max_ammo": 78,
+  "price_credit": null,
+  "price_gold": 950
  },
  {
   "id": 15137,
@@ -26331,7 +27363,9 @@
     "rear": 22
    }
   },
-  "max_ammo": 70
+  "max_ammo": 70,
+  "price_credit": null,
+  "price_gold": 500
  },
  {
   "id": 3953,
@@ -26383,7 +27417,9 @@
     "rear": 45
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 22305,
@@ -26435,7 +27471,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 1089,
@@ -26487,7 +27525,9 @@
     "rear": 60
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 85000,
+  "price_gold": null
  },
  {
   "id": 5249,
@@ -26539,7 +27579,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 80
+  "max_ammo": 80,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 13569,
@@ -26591,7 +27633,9 @@
     "rear": 52
    }
   },
-  "max_ammo": 35
+  "max_ammo": 35,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 2385,
@@ -26633,7 +27677,9 @@
     "rear": 9
    }
   },
-  "max_ammo": 80
+  "max_ammo": 80,
+  "price_credit": null,
+  "price_gold": 50
  },
  {
   "id": 14865,
@@ -26685,7 +27731,9 @@
     "rear": 25
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": 3450000,
+  "price_gold": null
  },
  {
   "id": 19025,
@@ -26737,7 +27785,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 64
+  "max_ammo": 64,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 3681,
@@ -26789,7 +27839,9 @@
     "rear": 25
    }
   },
-  "max_ammo": 50
+  "max_ammo": 50,
+  "price_credit": 6100000,
+  "price_gold": null
  },
  {
   "id": 817,
@@ -26841,7 +27893,9 @@
     "rear": 62
    }
   },
-  "max_ammo": 45
+  "max_ammo": 45,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 4977,
@@ -26893,7 +27947,9 @@
     "rear": 35
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 7505,
@@ -26940,7 +27996,9 @@
     "rear": 20
    }
   },
-  "max_ammo": 60
+  "max_ammo": 60,
+  "price_credit": 6000,
+  "price_gold": null
  },
  {
   "id": 6273,
@@ -26992,7 +28050,9 @@
     "rear": 45
    }
   },
-  "max_ammo": 56
+  "max_ammo": 56,
+  "price_credit": 1420000,
+  "price_gold": null
  },
  {
   "id": 18753,
@@ -27044,7 +28104,9 @@
     "rear": 40
    }
   },
-  "max_ammo": 40
+  "max_ammo": 40,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 15889,
@@ -27096,7 +28158,9 @@
     "rear": 42
    }
   },
-  "max_ammo": 79
+  "max_ammo": 79,
+  "price_credit": null,
+  "price_gold": 500
  },
  {
   "id": 20049,
@@ -27148,7 +28212,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 80
+  "max_ammo": 80,
+  "price_credit": 2320000,
+  "price_gold": null
  },
  {
   "id": 4705,
@@ -27200,7 +28266,9 @@
     "rear": 38
    }
   },
-  "max_ammo": 77
+  "max_ammo": 77,
+  "price_credit": null,
+  "price_gold": null
  },
  {
   "id": 1841,
@@ -27252,7 +28320,9 @@
     "rear": 47
    }
   },
-  "max_ammo": 34
+  "max_ammo": 34,
+  "price_credit": 3520000,
+  "price_gold": null
  },
  {
   "id": 6001,
@@ -27304,6 +28374,8 @@
     "rear": 45
    }
   },
-  "max_ammo": 90
+  "max_ammo": 90,
+  "price_credit": null,
+  "price_gold": null
  }
 ]

@@ -4205,6 +4205,26 @@ def load_wg_tanks():
 load_wg_tanks()
 
 
+def _wg_price(t):
+    pc = t.get("price_credit")
+    pg = t.get("price_gold")
+    if pc:
+        return f"цена {pc} серебра; "
+    if pg:
+        return f"цена {pg} золота; "
+    return "цена не указана (не продаётся или нет данных); "
+
+
+def _wg_price_short(t):
+    pc = t.get("price_credit")
+    pg = t.get("price_gold")
+    if pc:
+        return f", цена {pc} сер"
+    if pg:
+        return f", цена {pg} зол"
+    return ""
+
+
 def _wg_tank_line(t):
     shells = []
     for s in (t.get("shells") or []):
@@ -4221,6 +4241,7 @@ def _wg_tank_line(t):
         f"- {t.get('name')}: {t.get('tier')} ур., {kind}, "
         f"{t.get('nation')}{prem}; HP {t.get('hp')}; "
         f"скорость {t.get('speed_forward')}/{t.get('speed_backward')}; "
+        f"{_wg_price(t)}"
         f"орудие {t.get('gun')}, перезарядка {t.get('reload_time')} с, "
         f"сведение {t.get('aim_time')} с, разброс {t.get('dispersion')}; "
         f"УВН {t.get('depression')}/{t.get('elevation')}; "
@@ -4250,9 +4271,360 @@ def wg_tanks_context(text):
         "СПРАВОЧНИК ТАНКОВ (международная версия WoT Blitz, стоковая "
         "комплектация, может отличаться от российской). Отвечай только "
         "по этим цифрам и не выдумывай то, чего тут нет. Цен на "
-        "оборудование, серебро и золото ты не знаешь. Не длиннее 170 "
+        "оборудование ты не знаешь. Цену танка называй только если она указана. Не длиннее 170 "
         "символов:\n" + "\n".join(lines)
     )
+
+
+# =========================================================
+# WG TANKS SEARCH — подбор танков по уровню/классу/нации
+# =========================================================
+
+WG_NATIONS = (
+    ("ussr", r"ссср|советск|русск"),
+    ("germany", r"герман|немец|немц"),
+    ("usa", r"сша|америк"),
+    ("france", r"франц"),
+    ("uk", r"британ|англи"),
+    ("japan", r"япон"),
+    ("china", r"китай"),
+    ("european", r"европ"),
+)
+
+WG_CLASSES = (
+    ("lightTank", r"(?<!\w)лт(?!\w)|легк\w*"),
+    ("mediumTank", r"(?<!\w)ст(?!\w)|средн\w*"),
+    ("heavyTank", r"(?<!\w)тт(?!\w)|тяжел\w*"),
+    ("AT-SPG", r"(?<!\w)пт(?!\w)|пт-сау|птс"),
+)
+
+WG_TIER_WORDS = {
+    "перв": 1, "втор": 2, "трет": 3, "четверт": 4, "пят": 5,
+    "шест": 6, "седьм": 7, "восьм": 8, "девят": 9, "десят": 10,
+}
+
+WG_TRIGGER_RE = re.compile(
+    r"танк|качат|прокач|взят|купит|лучш|выбр|посоветуй|подскаж|"
+    r"новичк|с какого|что взять|ветк"
+)
+
+WG_BEGINNER_RE = re.compile(
+    r"новичк|начина|с чего|с какого|что взять|что качать|посоветуй|подскаж"
+)
+
+
+def _wg_find_tier(low):
+    m = re.search(
+        r"(?<!\d)(10|[1-9])\s*-?\s*(?:го|й|ый|ого|ом|ой)?\s*"
+        r"(?:ур|лвл|левел|level|тир|tier)", low
+    )
+    if m:
+        return int(m.group(1))
+    m = re.search(
+        r"(?:ур\w*|лвл|тир|tier|level)\s*(10|[1-9])(?!\d)", low
+    )
+    if m:
+        return int(m.group(1))
+    m = re.search(
+        r"(перв|втор|трет|четверт|пят|шест|седьм|восьм|девят|десят)\w*"
+        r"\s*(?:ур|лвл|тир)", low
+    )
+    if m:
+        return WG_TIER_WORDS.get(m.group(1))
+    return None
+
+
+def _wg_short_line(t):
+    shells = t.get("shells") or []
+    s0 = shells[0] if shells else {}
+    dmg = s0.get("damage")
+    pen = s0.get("penetration")
+    rel = t.get("reload_time")
+    dpm = ""
+    if dmg and rel and (t.get("clip_capacity") or 1) <= 1:
+        dpm = f", ~{int(dmg * 60 / rel)} урона/мин"
+    kind = WG_TYPE_RU.get(t.get("type"), t.get("type"))
+    prem = ", прем" if t.get("premium") else ""
+    return (
+        f"- {t.get('name')}: {t.get('tier')}ур {kind} {t.get('nation')}"
+        f"{prem}, HP {t.get('hp')}, пробитие {pen}, урон {dmg}{dpm}, "
+        f"скорость {t.get('speed_forward')}{_wg_price_short(t)}"
+    )
+
+
+def wg_search_context(text):
+    if not WG_TANKS:
+        return None
+    low = str(text or "").lower().replace("ё", "е")
+    if not WG_TRIGGER_RE.search(low):
+        return None
+    tier = _wg_find_tier(low)
+    cls = next((k for k, p in WG_CLASSES if re.search(p, low)), None)
+    nation = next((k for k, p in WG_NATIONS if re.search(p, low)), None)
+    prem = "прем" in low
+    if tier is None and cls is None and nation is None and not prem:
+        if WG_BEGINNER_RE.search(low) and "танк" in low:
+            return (
+                f"СПРАВОЧНИК ТАНКОВ: в базе {len(WG_TANKS)} танков "
+                "(уровни 1-10, ЛТ/СТ/ТТ/ПТ-САУ, разные нации и премы). "
+                "Рейтинга «лучший» нет. Если человек просит совет, "
+                "коротко спроси, какой уровень, класс или нацию он "
+                "хочет. Не выдумывай характеристики. До 170 символов."
+            )
+        return None
+    rows = [
+        t for _, _, _, t in WG_TANKS
+        if (tier is None or t.get("tier") == tier)
+        and (cls is None or t.get("type") == cls)
+        and (nation is None or t.get("nation") == nation)
+        and (not prem or t.get("premium"))
+    ]
+    if not rows:
+        return None
+    total = len(rows)
+    rows.sort(key=lambda t: (t.get("tier") or 0, t.get("hp") or 0), reverse=True)
+    rows = rows[:14]
+    lines = [_wg_short_line(t) for t in rows]
+    return (
+        "ПОДБОР ИЗ СПРАВОЧНИКА ТАНКОВ (международный WoT Blitz, стоковая "
+        f"комплектация). Найдено {total}, показано {len(rows)}; порядок "
+        "не рейтинг. Советуй только из этого списка, сравнивай по "
+        "цифрам, не выдумывай. Если подходящих много, коротко предложи "
+        "уточнить. Цены в строках, если указаны. До 170 символов:\n" + "\n".join(lines)
+    )
+
+
+# =========================================================
+# WG PROVISIONS — справочник оборудования
+# =========================================================
+
+WG_PROVISIONS = []
+
+
+def _wg_clean(s):
+    s = re.sub(r"%\(\w+\)", "(X)", str(s or ""))
+    s = s.replace("\u200b", "").replace("\ufeff", "")
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def load_wg_provisions():
+    global WG_PROVISIONS
+    try:
+        path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "provisions_compact.json"
+        )
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        items = []
+        for p in data:
+            name = str(p.get("name_i18n") or "").strip()
+            if not name:
+                continue
+            items.append((
+                name.lower().replace("ё", "е"),
+                name,
+                _wg_clean(p.get("description_i18n")),
+            ))
+        WG_PROVISIONS = items
+        print(f"WG PROVISIONS LOADED | {len(items)}", flush=True)
+    except Exception as e:
+        WG_PROVISIONS = []
+        print("WG provisions load error:", e, flush=True)
+
+
+load_wg_provisions()
+
+
+def wg_provisions_context(text):
+    if not WG_PROVISIONS:
+        return None
+    low = str(text or "").lower().replace("ё", "е")
+    hits = [(n, d) for key, n, d in WG_PROVISIONS if key in low]
+    if hits:
+        lines = [f"- {n}: {d}" for n, d in hits[:3]]
+        title = "ОБОРУДОВАНИЕ ИЗ СПРАВОЧНИКА"
+    elif re.search(r"оборудован|обвес|девайс", low):
+        lines = [f"- {n}: {d[:90]}" for _, n, d in WG_PROVISIONS]
+        title = "СПИСОК ОБОРУДОВАНИЯ ИЗ СПРАВОЧНИКА"
+    else:
+        return None
+    return (
+        title + " (международный WoT Blitz). Точные числа бонусов "
+        "в справочнике не указаны, там стоит (X): цифры не называй и не "
+        "выдумывай. Цен в серебре и золоте ты не знаешь. "
+        "До 170 символов:\n" + "\n".join(lines)
+    )
+
+
+# =========================================================
+# WG ACHIEVEMENTS — справочник достижений
+# =========================================================
+
+WG_ACHIEVEMENTS = []
+
+WG_ACH_TRIGGER_RE = re.compile(
+    r"достижени|медал|значок|значк|ачивк|как получить|как дают|за что дают|"
+    r"как заработать"
+)
+
+
+def load_wg_achievements():
+    global WG_ACHIEVEMENTS
+    try:
+        path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "achievements_compact.json"
+        )
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        items = []
+        for a in data:
+            raw = str(a.get("name") or "")
+            clean = re.sub(r"\s*\([A-Za-z0-9_]+\)\s*$", "", raw)
+            clean = clean.strip(" «»\"").strip()
+            key = clean.lower().replace("ё", "е")
+            if len(key) < 4:
+                continue
+            stem = key if len(key) <= 5 else key[:-2]
+            pat = re.compile(r"(?<![\w-])" + re.escape(stem))
+            items.append((
+                len(key), pat, clean,
+                _wg_clean(a.get("description")),
+                _wg_clean(a.get("condition")),
+            ))
+        items.sort(key=lambda x: -x[0])
+        WG_ACHIEVEMENTS = items
+        print(f"WG ACHIEVEMENTS LOADED | {len(items)}", flush=True)
+    except Exception as e:
+        WG_ACHIEVEMENTS = []
+        print("WG achievements load error:", e, flush=True)
+
+
+load_wg_achievements()
+
+
+def wg_achievements_context(text):
+    if not WG_ACHIEVEMENTS:
+        return None
+    low = str(text or "").lower().replace("ё", "е")
+    if not WG_ACH_TRIGGER_RE.search(low):
+        return None
+    lines = []
+    for _, pat, name, desc, cond in WG_ACHIEVEMENTS:
+        m = pat.search(low)
+        if m:
+            lines.append(f"- {name}: {desc} Условия: {cond[:300]}")
+            low = low[:m.start()] + " " * (m.end() - m.start()) + low[m.end():]
+            if len(lines) >= 2:
+                break
+    if not lines:
+        return None
+    return (
+        "ДОСТИЖЕНИЯ ИЗ СПРАВОЧНИКА (международный WoT Blitz). Отвечай "
+        "только по этим данным, не выдумывай. До 170 символов:\n"
+        + "\n".join(lines)
+    )
+
+
+# =========================================================
+# WG STATS + ANNOUNCE — статистика базы и разовое объявление
+# =========================================================
+
+WG_ANNOUNCE_MARK = "WG_ANNOUNCE_V1"
+
+WG_STATS_RE = re.compile(
+    r"сколько (?:у тебя |в базе |тут )?(?:танков|техники)|"
+    r"что в (?:твоей |этой )?базе|база танков|"
+    r"откуда (?:ты )?(?:зна|берешь|брал)|данные про танки|леста|лесте"
+)
+
+
+def wg_counts():
+    res = {}
+    base = os.path.dirname(os.path.abspath(__file__))
+    for k, fn in (
+        ("tanks", "tanks_compact.json"),
+        ("prov", "provisions_compact.json"),
+        ("ach", "achievements_compact.json"),
+    ):
+        try:
+            with open(os.path.join(base, fn), encoding="utf-8") as fh:
+                res[k] = len(json.load(fh))
+        except Exception:
+            res[k] = 0
+    return res
+
+
+def wg_stats_context(text):
+    low = str(text or "").lower().replace("ё", "е")
+    if not WG_STATS_RE.search(low):
+        return None
+    c = wg_counts()
+    if not c.get("tanks"):
+        return None
+    return (
+        "О СВОЕЙ БАЗЕ ТАНКОВ (говори как участник чата, до 170 символов): "
+        "тебе загрузили справочник международного WoT Blitz из API "
+        f"Wargaming: {c['tanks']} танков (уровни 1-10, без тестовых и без "
+        f"11 уровня), {c['prov']} видов оборудования, {c['ach']} "
+        "достижений. Нет: карт, навыков экипажа, цен на оборудование. "
+        "Российская версия Lesta в доступ не пустила (нужен белый "
+        "список), поэтому цифры могут отличаться от российского клиента. "
+        "Не выдумывай того, чего тут нет."
+    )
+
+
+def wg_announce_once():
+    try:
+        time.sleep(30)
+        peer = os.environ.get("BLITZ_VK_PEER", "").strip()
+        if not peer:
+            print("WG announce: BLITZ_VK_PEER не задан", flush=True)
+            return
+        if not SYSTEM_ENABLED:
+            return
+        chat_id = int(peer)
+        done = (
+            supabase.table("bot_chat_memory")
+            .select("speaker_name")
+            .eq("chat_id", db_chat_id(chat_id))
+            .eq("speaker_name", WG_ANNOUNCE_MARK)
+            .limit(1)
+            .execute()
+        )
+        if done.data:
+            return
+        c = wg_counts()
+        if not c.get("tanks"):
+            return
+        fallback = (
+            f"Ураа, мне загрузили базу танков WoT Blitz: {c['tanks']} "
+            "танков, оборудование и достижения. Данные от Wargaming, "
+            "а Леста не дала доступ, жмоты 😂"
+        )
+        reply = ""
+        try:
+            prompt = (
+                f"Объяви в чате: тебе загрузили базу танков WoT Blitz "
+                f"({c['tanks']} шт), данные от Wargaming, а Леста жмоты, "
+                "не дали доступ. Ура!"
+            )
+            reply = ask_ai(chat_id, prompt, str(OWNER_VK_ID), "Владелец")
+        except Exception as e:
+            print("WG announce ask_ai error:", e, flush=True)
+        reply = limit_text(reply or fallback)
+        supabase.table("bot_chat_memory").insert({
+            "chat_id": db_chat_id(chat_id),
+            "speaker_id": None,
+            "speaker_name": WG_ANNOUNCE_MARK,
+            "role": "assistant",
+            "content": reply[:4000],
+        }).execute()
+        send_message(chat_id, reply)
+        print("WG ANNOUNCE sent", flush=True)
+    except Exception as e:
+        print("WG announce error:", e, flush=True)
 
 
 def build_chat_context(
@@ -4354,7 +4726,7 @@ def build_chat_context(
         print("Tank context error:", e, flush=True)
 
     try:
-        wg_block = wg_tanks_context(text)
+        wg_block = wg_tanks_context(text) or wg_search_context(text) or wg_provisions_context(text) or wg_achievements_context(text) or wg_stats_context(text)
         if wg_block:
             messages.append({"role": "system", "content": wg_block})
     except Exception as e:
@@ -6626,6 +6998,8 @@ if __name__ == "__main__":
 
     if TELEGRAM_BOT_TOKEN:
         setup_telegram()
+
+    threading.Thread(target=wg_announce_once, daemon=True).start()
 
     threading.Thread(
         target=activity_loop,

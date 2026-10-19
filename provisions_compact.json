@@ -1,0 +1,218 @@
+[
+ {
+  "price_gold": 0,
+  "provision_id": 27129,
+  "price_credit": 0,
+  "name_i18n": "Стабилизатор вертикальной наводки",
+  "type": "optionalDevice",
+  "description_i18n": "Позволяет точнее стрелять во время движения.\n%(additiveShotDispersionFactor) к точности при движении и повороте башни.",
+  "tanks_count": 543
+ },
+ {
+  "price_gold": 0,
+  "provision_id": 30969,
+  "price_credit": 0,
+  "name_i18n": "Доработанные модули +",
+  "type": "optionalDevice",
+  "description_i18n": "Увеличивает прочность модулей и уменьшает повреждения от тарана.\n%(maxHealthPercentageBonus) к прочности гусениц.\n%(rammingAbsorptionPercent) к урону при таране.\n-10% к полученному урону от осколочно-фугасных снарядов с калибром от 130 мм.",
+  "tanks_count": 543
+ },
+ {
+  "price_gold": 0,
+  "provision_id": 27385,
+  "price_credit": 0,
+  "name_i18n": "Сбалансированное орудие",
+  "type": "optionalDevice",
+  "description_i18n": "Увеличивает шанс попадания.\n%(shotDispersionAngleFactor) к разбросу на 100﻿м.",
+  "tanks_count": 543
+ },
+ {
+  "price_gold": 0,
+  "provision_id": 30201,
+  "price_credit": 0,
+  "name_i18n": "Подкрученные обороты двигателя",
+  "type": "optionalDevice",
+  "description_i18n": "Позволяет быстрее менять направление движения и занимать ключевые позиции на картах.\n%(enginePower) к мощности двигателя.",
+  "tanks_count": 543
+ },
+ {
+  "price_gold": 0,
+  "provision_id": 27641,
+  "price_credit": 0,
+  "name_i18n": "Увеличенный заряд",
+  "type": "optionalDevice",
+  "description_i18n": "Увеличивает шанс попадания и пробития на расстоянии.\n%(projectileSpeedFactor) к скорости полёта снаряда.\n%(piercingPenaltyFactor500m) к падению бронепробиваемости с расстоянием.",
+  "tanks_count": 543
+ },
+ {
+  "price_gold": 0,
+  "provision_id": 27897,
+  "price_credit": 0,
+  "name_i18n": "Доработанные модули",
+  "type": "optionalDevice",
+  "description_i18n": "Увеличивает прочность модулей и уменьшает повреждения от тарана.\n%(maxHealthPercentageBonus) к прочности гусениц.\n%(rammingAbsorptionPercent) к урону при таране.",
+  "tanks_count": 543
+ },
+ {
+  "price_gold": 0,
+  "provision_id": 28153,
+  "price_credit": 0,
+  "name_i18n": "Защитный комплекс",
+  "type": "optionalDevice",
+  "description_i18n": "Уменьшает шансы противника нанести урон модулям и экипажу.\n%(engineEvasionPercentageBonus) к шансу повреждения двигателя.\n%(crewEvasionPercentageBonus) к шансу ранения экипажа.\n%(ammoEvasionPercentageBonus) к шансу подрыва боекомплекта.",
+  "tanks_count": 543
+ },
+ {
+  "price_gold": 0,
+  "provision_id": 31225,
+  "price_credit": 0,
+  "name_i18n": "Защитный комплекс +",
+  "type": "optionalDevice",
+  "description_i18n": "Уменьшает шансы противника нанести урон модулям и экипажу.\n%(engineEvasionPercentageBonus) к шансу повреждения двигателя.\n%(crewEvasionPercentageBonus) к шансу ранения экипажа.\n%(ammoEvasionPercentageBonus) к шансу подрыва боекомплекта.\n-10% к бронепробиваемости осколочно-фугасных снарядов противника с калибром от 130﻿мм.",
+  "tanks_count": 543
+ },
+ {
+  "price_gold": 0,
+  "provision_id": 28665,
+  "price_credit": 0,
+  "name_i18n": "Улучшенная сборка",
+  "type": "optionalDevice",
+  "description_i18n": "Усиливает прочность и увеличивает срок жизни танка в бою.\n%(maxHpBonusPercent) к прочности танка.",
+  "tanks_count": 543
+ },
+ {
+  "price_gold": 0,
+  "provision_id": 30457,
+  "price_credit": 0,
+  "name_i18n": "Система подачи снаряжения",
+  "type": "optionalDevice",
+  "description_i18n": "Позволяет чаще использовать снаряжение и способности в режимах.\n%(equipmentReloadBoost) к скорости перезарядки снаряжения и способностей.",
+  "tanks_count": 543
+ },
+ {
+  "price_gold": 0,
+  "provision_id": 28921,
+  "price_credit": 0,
+  "name_i18n": "Усиленные шарниры ходовой",
+  "type": "optionalDevice",
+  "description_i18n": "Повышает прочность и уменьшает повреждения гусениц.\nПолностью восстанавливает уничтоженные гусеницы в автоматическом режиме.",
+  "tanks_count": 543
+ },
+ {
+  "price_gold": 0,
+  "provision_id": 29177,
+  "price_credit": 0,
+  "name_i18n": "Ящик с инструментами",
+  "type": "optionalDevice",
+  "description_i18n": "%(repairSpeedFactor) к скорости ремонта всех модулей (включая указанный).",
+  "tanks_count": 543
+ },
+ {
+  "price_gold": 0,
+  "provision_id": 29433,
+  "price_credit": 0,
+  "name_i18n": "Улучшенная оптика",
+  "type": "optionalDevice",
+  "description_i18n": "Увеличивает обзор и позволяет раньше обнаружить противника.\n%(circularVisionRadiusFactor) к радиусу обзора.",
+  "tanks_count": 543
+ },
+ {
+  "price_gold": 0,
+  "provision_id": 29689,
+  "price_credit": 0,
+  "name_i18n": "Маскировочная сеть",
+  "type": "optionalDevice",
+  "description_i18n": "Повышает маскировку на расстоянии и увеличивает комфорт игры на большой дистанции.\n%(detectabilityFactor) к маскировке движущегося танка.\nПри неподвижности в течение %(activateWhenStillSec)﻿с. бонус удваивается.",
+  "tanks_count": 543
+ },
+ {
+  "price_gold": 0,
+  "provision_id": 31481,
+  "price_credit": 0,
+  "name_i18n": "Улучшенная вертикальная наводка",
+  "type": "optionalDevice",
+  "description_i18n": "Позволяет удобнее прицеливаться.\n+%(upperPitchLimitIncrease)° к наводке вверх.\n+%(lowerPitchLimitIncrease)° к наводке вниз.",
+  "tanks_count": 543
+ },
+ {
+  "price_gold": 0,
+  "provision_id": 25849,
+  "price_credit": 0,
+  "name_i18n": "Орудийный досылатель",
+  "type": "optionalDevice",
+  "description_i18n": "Увеличивает скорострельность.\n%(gunReloadTimeFactor) ко времени перезарядки.",
+  "tanks_count": 543
+ },
+ {
+  "price_gold": 0,
+  "provision_id": 26617,
+  "price_credit": 0,
+  "name_i18n": "Калиброванные снаряды",
+  "type": "optionalDevice",
+  "description_i18n": "Увеличивает шанс пробития брони противника.\nПовышает бронепробиваемость снарядов:\n%(ARMOR_PIERCING) для бронебойных,\n%(ARMOR_PIERCING_CR) для подкалиберных,\n%(HOLLOW_CHARGE) для кумулятивных,\n%(HIGH_EXPLOSIVE) для осколочно-фугасных.",
+  "tanks_count": 543
+ },
+ {
+  "price_gold": 0,
+  "provision_id": 29945,
+  "price_credit": 0,
+  "name_i18n": "Улучшенное управление",
+  "type": "optionalDevice",
+  "description_i18n": "Позволяет быстрее реагировать на действия противника.\n%(rotationSpeedLimit) к максимальной скорости поворота танка.",
+  "tanks_count": 543
+ },
+ {
+  "price_gold": 0,
+  "provision_id": 26105,
+  "price_credit": 0,
+  "name_i18n": "Первоклассное снаряжение",
+  "type": "optionalDevice",
+  "description_i18n": "Позволяет дольше использовать бонус снаряжения и бонус способностей в режимах.\n%(equipmentDurationFactor) ко времени действия снаряжения и способностей.",
+  "tanks_count": 543
+ },
+ {
+  "price_gold": 0,
+  "provision_id": 26361,
+  "price_credit": 0,
+  "name_i18n": "Улучшенная вентиляция",
+  "type": "optionalDevice",
+  "description_i18n": "Улучшает параметры манёвренности и стрельбы танка.",
+  "tanks_count": 543
+ },
+ {
+  "price_gold": 0,
+  "provision_id": 30713,
+  "price_credit": 0,
+  "name_i18n": "Стереотруба",
+  "type": "optionalDevice",
+  "description_i18n": "%(highlight_start)+%(circularVisionRadiusIncrease)%%(highlight_end) к радиусу обзора из неподвижного танка, но не более 500 м.",
+  "tanks_count": 543
+ },
+ {
+  "price_gold": 0,
+  "provision_id": 28409,
+  "price_credit": 0,
+  "name_i18n": "Усиленная броня",
+  "type": "optionalDevice",
+  "description_i18n": "Усиливает бронирование танка.\n%(armorHomogenizationFactor) к бронированию корпуса и башни.",
+  "tanks_count": 543
+ },
+ {
+  "price_gold": 0,
+  "provision_id": 26873,
+  "price_credit": 0,
+  "name_i18n": "Усиленные приводы наводки",
+  "type": "optionalDevice",
+  "description_i18n": "Сокращает время сведения после движения.\n%(gunAimingTimeFactor) к скорости сведения.",
+  "tanks_count": 543
+ },
+ {
+  "price_gold": 0,
+  "provision_id": 31737,
+  "price_credit": 0,
+  "name_i18n": "Улучшенная подвеска",
+  "type": "optionalDevice",
+  "description_i18n": "Улучшает проходимость по различным поверхностям.\n%(firmGroundPassabilityIncrease) к проходимости по дороге.\n%(mediumGroundPassabilityIncrease) к проходимости по грунту.\n%(softGroundPassabilityIncrease) к проходимости по воде.",
+  "tanks_count": 543
+ }
+]
