@@ -4167,6 +4167,22 @@ def maybe_learn(chat_id):
 
 WG_TANKS = []
 
+_WG_LOOK = str.maketrans("abcehkmoptxy", "авсенкмортху")
+
+
+def _wg_norm(s):
+    s = str(s or "").lower().replace("ё", "е")
+    return s.translate(_WG_LOOK)
+
+
+def _wg_key_regex(key):
+    toks = re.findall(r"[^\W\d_]+|\d+", key)
+    if not toks:
+        return re.escape(key)
+    sep = r"[\s\-_.]*"
+    return r"(?<![\w-])" + sep.join(re.escape(t) for t in toks) + r"(?![\w-])"
+
+
 WG_TYPE_RU = {
     "lightTank": "ЛТ",
     "mediumTank": "СТ",
@@ -4189,9 +4205,9 @@ def load_wg_tanks():
             name = str(t.get("name") or "").strip()
             if len(name) < 3:
                 continue
-            key = name.lower().replace("ё", "е")
+            key = _wg_norm(name)
             pat = re.compile(
-                r"(?<![\w-])" + re.escape(key) + r"(?![\w-])"
+                _wg_key_regex(key)
             )
             items.append((len(key), key, pat, t))
         items.sort(key=lambda x: -x[0])
@@ -4255,7 +4271,7 @@ def _wg_tank_line(t):
 def wg_tanks_context(text):
     if not WG_TANKS:
         return None
-    low = str(text or "").lower().replace("ё", "е")
+    low = _wg_norm(text)
     found = []
     for _, key, pat, t in WG_TANKS:
         m = pat.search(low)
