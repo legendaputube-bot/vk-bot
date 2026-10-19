@@ -5709,7 +5709,7 @@ def mod_is_muted(chat_id, user_id):
     until = 0
     try:
         rows = (
-            supabase.table("bot_moderation").select("muted_until")
+            supabase.table("bot_mod_log").select("muted_until")
             .eq("chat_id", chat_id).eq("user_id", user_id)
             .gt("muted_until", mod_now_utc().isoformat())
             .order("muted_until", desc=True).limit(1).execute().data
@@ -5725,7 +5725,7 @@ def mod_is_muted(chat_id, user_id):
 def mod_history(chat_id, user_id):
     try:
         return (
-            supabase.table("bot_moderation").select("created_at,action,reason")
+            supabase.table("bot_mod_log").select("created_at,action,reason")
             .eq("chat_id", chat_id).eq("user_id", user_id)
             .in_("action", ["warn", "delete", "mute"])
             .order("created_at", desc=True).limit(8).execute().data
@@ -5737,7 +5737,7 @@ def mod_history(chat_id, user_id):
 
 def mod_record(chat_id, user_id, user_name, action, reason, excerpt, muted_iso=None):
     try:
-        supabase.table("bot_moderation").insert({
+        supabase.table("bot_mod_log").insert({
             "chat_id": int(chat_id), "user_id": int(user_id),
             "user_name": str(user_name)[:100], "action": action,
             "reason": reason, "excerpt": str(excerpt)[:200], "muted_until": muted_iso
@@ -5817,7 +5817,7 @@ def mod_parse_decision(raw):
 def mod_permissions(chat_id, user_id):
     try:
         rows = (
-            supabase.table("bot_moderation").select("action,reason")
+            supabase.table("bot_mod_log").select("action,reason")
             .eq("chat_id", int(chat_id)).eq("user_id", int(user_id))
             .in_("action", ["permit", "revoke"])
             .order("created_at", desc=True).limit(20).execute().data
@@ -5937,7 +5937,7 @@ def mod_owner_instruction(chat_id, peer_id, sender_id, text, message):
     elif kind == "unmute":
         try:
             now_iso = mod_now_utc().isoformat()
-            supabase.table("bot_moderation").update({"muted_until": now_iso}) \
+            supabase.table("bot_mod_log").update({"muted_until": now_iso}) \
                 .eq("chat_id", int(chat_id)).eq("user_id", int(target_id)) \
                 .gt("muted_until", now_iso).execute()
         except Exception as e:
@@ -5971,7 +5971,7 @@ def mod_voice_limit(chat_id, peer_id, sender_id, message):
     since = (mod_now_utc() - _dt.timedelta(hours=24)).isoformat()
     try:
         rows = (
-            supabase.table("bot_moderation").select("id")
+            supabase.table("bot_mod_log").select("id")
             .eq("chat_id", int(chat_id)).eq("user_id", sender_id)
             .eq("action", "voice").gte("created_at", since)
             .limit(50).execute().data
