@@ -5952,6 +5952,53 @@ def mod_owner_instruction(chat_id, peer_id, sender_id, text, message):
     return True
 
 
+MOD_VOICE_LIMIT = int(os.environ.get("MOD_VOICE_LIMIT", "5") or 5)
+
+
+def mod_voice_limit(chat_id, peer_id, sender_id, message):
+    if not MODERATION_ENABLED:
+        return False
+    atts = message.get("attachments") or []
+    if not any(isinstance(a, dict) and a.get("type") == "audio_message" for a in atts):
+        return False
+    sender_id = int(sender_id)
+    if sender_id in MOD_EXEMPT_IDS or is_owner(sender_id):
+        return False
+    admins = mod_get_admins(peer_id)
+    if admins is None or sender_id in admins:
+        return False
+    import datetime as _dt
+    since = (mod_now_utc() - _dt.timedelta(hours=24)).isoformat()
+    try:
+        rows = (
+            supabase.table("bot_moderation").select("id")
+            .eq("chat_id", int(chat_id)).eq("user_id", sender_id)
+            .eq("action", "voice").gte("created_at", since)
+            .limit(50).execute().data
+        ) or []
+    except Exception as e:
+        print("MODERATION voice count error:", e, flush=True)
+        return False
+    used = len(rows)
+    if used < MOD_VOICE_LIMIT:
+        if not MOD_DRY_RUN:
+            mod_record(chat_id, sender_id, "", "voice", "голосовое", "voice")
+        return False
+    print("MODERATION voice over limit:", sender_id, "used", used, flush=True)
+    if MOD_DRY_RUN:
+        return False
+    mod_delete_message(peer_id, message)
+    mod_record(chat_id, sender_id, "", "voice", "сверх лимита", "voice")
+    if used == MOD_VOICE_LIMIT:
+        name = get_vk_user_name(sender_id)
+        send_message(
+            peer_id,
+            "[id" + str(sender_id) + "|" + str(name) + "], лимит голосовых на сегодня ("
+            + str(MOD_VOICE_LIMIT) + " в день) закончился, дальше буду удалять."
+        )
+    return True
+
+
 def moderation_check_and_act(chat_id, peer_id, sender_id, user_name, text, message):
     if not MODERATION_ENABLED:
         return False
@@ -6792,6 +6839,13 @@ def callback():
         # результат придёт через Supabase (media_inbox) и обработается
         # отдельно. Здесь такое сообщение пропускаем, чтобы не отвечать
         # дважды.
+        # === AI MODERATION: voice limit ===
+        try:
+            if mod_voice_limit(chat_id, peer_id, sender_id, message):
+                return "ok"
+        except Exception as mod_error:
+            print("MODERATION voice error:", mod_error, flush=True)
+
         if MEDIA_INBOX_ENABLED and vk_has_media_attachment(message):
             return "ok"
 
