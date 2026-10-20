@@ -5717,6 +5717,18 @@ def search_old_history(chat_id, query, max_hits=3):
         return ""
 
 
+def clean_leaked_reasoning(reply):
+    t = str(reply or "")
+    t = re.sub(r"<think>.*?</think>", "", t, flags=re.S | re.I).strip()
+    letters = re.findall(r"[A-Za-zА-Яа-яЁё]", t)
+    if len(letters) > 30:
+        cyr = len(re.findall(r"[А-Яа-яЁё]", t))
+        if cyr / len(letters) < 0.3:
+            print("LEAKED REASONING dropped:", t[:120], flush=True)
+            return "Мысль потерял, повтори ещё раз?"
+    return t
+
+
 CODE_BLOCK_RE = re.compile(r"```.*?```", re.S)
 
 
@@ -5744,6 +5756,7 @@ def ask_ai(chat_id, text, user_id, user_name):
             "откажись коротко и по-человечески.]"
         )
     reply = _ask_ai_history(chat_id, text + extra, user_id, user_name)
+    reply = clean_leaked_reasoning(reply)
     if modes.get("no_code") and reply and "```" in reply:
         reply = CODE_BLOCK_RE.sub("", reply).strip() or "Код писать не буду."
     return reply
@@ -6398,6 +6411,13 @@ def create_text_relay_job(platform, chat_id, sender_id, sender_name, msg_id, tex
     event_key = f"relay:{platform}:{chat_id}:{msg_id}:{int(time.time())}"
 
     try:
+        if msg_id is not None:
+            ex = (supabase.table(MEDIA_INBOX_TABLE).select("id")
+                  .eq("chat_id", int(chat_id)).eq("message_id", int(msg_id))
+                  .eq("kind", kind).limit(1).execute().data)
+            if ex:
+                print("TEXT RELAY duplicate skipped", flush=True)
+                return True
         supabase.table(MEDIA_INBOX_TABLE).insert({
             "event_key": event_key,
             "chat_id": int(chat_id),
