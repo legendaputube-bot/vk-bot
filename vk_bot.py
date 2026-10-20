@@ -190,7 +190,7 @@ OWNER_VK_ID = 948950706
 OPENROUTER_DAILY_LIMIT = 50
 OPENROUTER_BLOCK_SECONDS = 24 * 60 * 60
 
-CHAT_MEMORY_LIMIT = 24
+CHAT_MEMORY_LIMIT = 80
 LEARNING_HISTORY_LIMIT = 60
 
 LEARNING_EVERY_MESSAGES = 40
@@ -5455,7 +5455,107 @@ for _n in ("ask_model", "ask_openrouter_messages", "ask_openrouter"):
 OLD_AI_PAUSE_UNTIL = 1792333912
 
 
+import re
+from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+
+HISTORY_HINT = (
+    "\n\n[Служебно, в ответе об этом не упоминай: если для ответа "
+    "нужна старая история чата, которой нет выше (спрашивают про "
+    "давний разговор, шутку, событие), ответь ТОЛЬКО маркером "
+    "[ИСТОРИЯ: 2-3 ключевых слова для поиска] и больше ничего. "
+    "Если история выше уже всё объясняет, отвечай как обычно.]"
+)
+HISTORY_MARK_RE = re.compile(r"\[ИСТОРИЯ:\s*(.+?)\]", re.IGNORECASE)
+
+
+def _parse_ts(value):
+    value = value.replace("Z", "+00:00")
+    m = re.match(r"^(.*?)(\.(\d+))?([+-]\d\d:\d\d)$", value)
+    frac = ((m.group(3) or "0") + "000000")[:6]
+    return _dt.fromisoformat(m.group(1) + "." + frac + m.group(4))
+
+
+def search_old_history(chat_id, query, max_hits=3):
+    try:
+        dbid = db_chat_id(chat_id)
+        now = _dt.now(_tz.utc)
+        words = re.findall(r"\w{4,}", (query or "").lower())[:3]
+        stamps = []
+        for w in words:
+            stem = w[:max(4, len(w) - 2)]
+            rows = (
+                supabase.table("bot_chat_memory")
+                .select("created_at")
+                .eq("chat_id", dbid)
+                .ilike("content", "%" + stem + "%")
+                .order("created_at", desc=True)
+                .limit(8)
+                .execute()
+            ).data or []
+            for r in rows:
+                stamps.append(_parse_ts(r["created_at"]))
+        stamps.sort(reverse=True)
+        picked = []
+        for t in stamps:
+            if now - t < _td(minutes=2):
+                continue
+            if all(abs((t - p).total_seconds()) > 1800 for p in picked):
+                picked.append(t)
+            if len(picked) >= max_hits:
+                break
+        blocks = []
+        for t in sorted(picked):
+            a = (t - _td(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            b = (t + _td(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            rows = (
+                supabase.table("bot_chat_memory")
+                .select("speaker_name, role, content, created_at")
+                .eq("chat_id", dbid)
+                .gte("created_at", a)
+                .lte("created_at", b)
+                .order("created_at")
+                .limit(40)
+                .execute()
+            ).data or []
+            lines = []
+            for r in rows:
+                name = r.get("speaker_name")
+                if not name:
+                    name = "Бот" if r.get("role") == "assistant" else "Участник"
+                content = (r.get("content") or "")[:300]
+                lines.append(name + ": " + content)
+            if lines:
+                blocks.append(t.strftime("%d.%m %H:%M (UTC)") + "\n" + "\n".join(lines))
+        return "\n---\n".join(blocks)
+    except Exception as e:
+        print("search_old_history error:", e, flush=True)
+        return ""
+
+
 def ask_ai(chat_id, text, user_id, user_name):
+    reply = _ask_ai_core(chat_id, text + HISTORY_HINT, user_id, user_name)
+    m = HISTORY_MARK_RE.search(reply or "")
+    if not m:
+        return reply
+    query = m.group(1)
+    found = search_old_history(chat_id, query)
+    print("History search:", query, "| found:", bool(found), flush=True)
+    if found:
+        extra = (
+            "\n\n[Найденная старая история чата по запросу «" + query
+            + "», используй её для ответа, маркер [ИСТОРИЯ] больше не пиши:\n"
+            + found + "]"
+        )
+    else:
+        extra = (
+            "\n\n[Поиск по старой истории ничего не нашёл. Честно скажи, "
+            "что не нашёл, маркер [ИСТОРИЯ] больше не пиши.]"
+        )
+    reply = _ask_ai_core(chat_id, text + extra, user_id, user_name)
+    return HISTORY_MARK_RE.sub("", reply or "").strip()
+
+
+def _ask_ai_core(chat_id, text, user_id, user_name):
     if astra_active():
         return ask_relay(chat_id, text, user_id, user_name)
     if time.time() < OLD_AI_PAUSE_UNTIL:
