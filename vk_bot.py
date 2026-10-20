@@ -5352,7 +5352,7 @@ def maybe_restore_all_ai():
         print("ALL AI RECOVERED | relay deactivated", flush=True)
 
 
-ASTRA_ONLY_UNTIL = 1792515600  # 20.10.2026 20:00 МСК
+ASTRA_ONLY_UNTIL = 0  # 20.10.2026 20:00 МСК
 ASTRA_MODEL = os.environ.get("ASTRA_MODEL", "gpt-6-astra")
 ASTRA_EFFORT = os.environ.get("ASTRA_EFFORT", "low")
 ASTRA_MAX_CHARS = 4000
