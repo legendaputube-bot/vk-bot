@@ -180,7 +180,7 @@ OPENROUTER_MODEL = "openrouter/free"
 # LIMITS
 # =========================================================
 
-GROQ_MAX_TOKENS = 1800
+GROQ_MAX_TOKENS = 1000
 OPENROUTER_MAX_TOKENS = 1800
 LEARNING_MAX_TOKENS = 600
 
@@ -190,7 +190,7 @@ OWNER_VK_ID = 948950706
 OPENROUTER_DAILY_LIMIT = 50
 OPENROUTER_BLOCK_SECONDS = 24 * 60 * 60
 
-CHAT_MEMORY_LIMIT = 80
+CHAT_MEMORY_LIMIT = 40
 LEARNING_HISTORY_LIMIT = 150
 
 LEARNING_EVERY_MESSAGES = 40
@@ -5018,7 +5018,7 @@ def build_chat_context(
         and personal.get("memory")
     ):
 
-        personal_memory = (personal["memory"] or "").strip()[-6000:]
+        personal_memory = (personal["memory"] or "").strip()[-3000:]
 
         if personal_memory:
 
