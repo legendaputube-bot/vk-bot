@@ -3792,6 +3792,14 @@ def ask_openrouter(
 # =========================================================
 
 def ask_learning_model(messages):
+    try:
+        return ask_relay_messages(messages, 1500, "Relay Learning")
+    except Exception as relay_learning_error:
+        print("Relay learning error:", relay_learning_error, flush=True)
+        raise RuntimeError("Все модели временно недоступны для обучения.")
+
+
+def _ask_learning_model_old(messages):
 
     global main_blocked_until
     global backup_blocked_until
@@ -6884,7 +6892,20 @@ def callback():
             send_clan_message(peer_id, clan_followup)
             return "ok"
 
-        if not should_answer(
+        import gift_troll
+        gift_troll.init(supabase)
+        troll_reply = None
+        try:
+            troll_reply = gift_troll.owner_flow(text, sender_id, is_owner(sender_id))
+        except Exception as troll_error:
+            print("gift_troll error:", troll_error, flush=True)
+        if troll_reply:
+            save_chat_message(chat_id, None, "Бот", "assistant", troll_reply)
+            send_message(peer_id, troll_reply)
+            return "ok"
+        troll_active = gift_troll.is_cheater(sender_id)
+
+        if not troll_active and not should_answer(
             message,
             text,
             "vk"
@@ -6901,10 +6922,12 @@ def callback():
         try:
             reply = ask_ai(
                 chat_id,
-                text,
+                (gift_troll.troll_prompt(sender_id, text) if troll_active else text),
                 str(sender_id),
                 user_name
             )
+            if reply and troll_active:
+                reply = gift_troll.tag(sender_id, user_name) + reply
         except RuntimeError as ai_error:
             if str(ai_error) == "Все текстовые AI временно недоступны.":
                 create_text_relay_job(
