@@ -5537,16 +5537,6 @@ def maybe_restore_all_ai():
         print("ALL AI RECOVERED | relay deactivated", flush=True)
 
 
-ASTRA_ONLY_UNTIL = 0  # 20.10.2026 20:00 МСК
-ASTRA_MODEL = os.environ.get("ASTRA_MODEL", "gpt-6-astra")
-ASTRA_EFFORT = os.environ.get("ASTRA_EFFORT", "low")
-ASTRA_MAX_CHARS = 4000
-ASTRA_MAX_TOKENS = 16000
-ASTRA_TIMEOUT = 600
-
-
-def astra_active():
-    return time.time() < ASTRA_ONLY_UNTIL
 
 
 RELAY_API_KEY = os.environ.get("RELAYMODELS_API_KEY", "")
@@ -5580,13 +5570,12 @@ def ask_relay_messages(messages, max_tokens=RELAY_MAX_TOKENS, label="Relay"):
                 "Content-Type": "application/json"
             },
             json={
-                "model": ASTRA_MODEL if astra_active() else RELAY_MODEL,
+                "model": RELAY_MODEL,
                 "messages": messages,
-                **({} if astra_active() else {"max_tokens": max_tokens}),
+                "max_tokens": max_tokens,
                 "stream": False,
-                **({"reasoning_effort": ASTRA_EFFORT} if (astra_active() and ASTRA_EFFORT) else {})
             },
-            timeout=ASTRA_TIMEOUT if astra_active() else RELAY_TIMEOUT
+            timeout=RELAY_TIMEOUT
         )
     except Exception as e:
         raise RuntimeError(f"{label} request error: {e}")
@@ -5612,7 +5601,7 @@ def ask_relay_messages(messages, max_tokens=RELAY_MAX_TOKENS, label="Relay"):
     reply = clean_model_text(content or "")
     if not reply:
         raise RuntimeError(f"{label} returned empty response.")
-    return limit_text(reply, ASTRA_MAX_CHARS if astra_active() else MAX_MESSAGE_CHARS)
+    return limit_text(reply, MAX_MESSAGE_CHARS)
 
 
 def ask_relay(chat_id, text, user_id, user_name):
@@ -5621,20 +5610,9 @@ def ask_relay(chat_id, text, user_id, user_name):
     result = clean_relay_text(ask_relay_messages(messages, RELAY_MAX_TOKENS, "Relay"))
     if not result:
         raise RuntimeError("Relay returned empty response after cleaning.")
-    return limit_text(result, ASTRA_MAX_CHARS if astra_active() else MAX_MESSAGE_CHARS)
+    return limit_text(result, MAX_MESSAGE_CHARS)
 
 
-def _astra_block(name, f):
-    def wrapper(*a, **k):
-        if astra_active():
-            raise RuntimeError(name + " отключена: режим только Astra 6")
-        return f(*a, **k)
-    return wrapper
-
-
-for _n in ("ask_model", "ask_openrouter_messages", "ask_openrouter"):
-    if _n in globals():
-        globals()[_n] = _astra_block(_n, globals()[_n])
 
 
 OLD_AI_PAUSE_UNTIL = 1792333912
@@ -5786,8 +5764,6 @@ def _ask_ai_history(chat_id, text, user_id, user_name):
 
 
 def _ask_ai_core(chat_id, text, user_id, user_name):
-    if astra_active():
-        return ask_relay(chat_id, text, user_id, user_name)
     if time.time() < OLD_AI_PAUSE_UNTIL:
         try:
             return ask_relay(chat_id, text, user_id, user_name)
@@ -6032,12 +6008,7 @@ def _split_text(text, size=3800):
 def send_message(peer_id, text):
     if not text:
         return
-    if not astra_active():
-        return _send_message_one(peer_id, limit_text(text))
-    result = None
-    for part in _split_text(text):
-        result = _send_message_one(peer_id, part)
-    return result
+    return _send_message_one(peer_id, limit_text(text))
 
 
 def send_clan_message(peer_id, text):
