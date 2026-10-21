@@ -2544,7 +2544,7 @@ def save_explicit_user_memory(
             tank_match = re.search(
                 r"мой\s+любим(?:ый|ая|ое|ые)"
                 r"\s+танк(?:а|ов)?"
-                r"\s*(?:—|-|:|=|это|есть)\s+"
+                r"(?:\s*(?:—|-|:|=)\s*|\s+(?:(?:это|есть)\s+)?)"
                 r"(.+?)\s*$",
                 statement,
                 re.IGNORECASE
@@ -2581,7 +2581,7 @@ def save_explicit_user_memory(
         tank_match = re.search(
             r"мой\s+любим(?:ый|ая|ое|ые)"
             r"\s+танк(?:а|ов)?"
-            r"\s*(?:—|-|:|=|это|есть)\s+"
+            r"(?:\s*(?:—|-|:|=)\s*|\s+(?:(?:это|есть)\s+)?)"
             r"(.+?)\s*$",
             original,
             re.IGNORECASE
