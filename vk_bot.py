@@ -5763,10 +5763,39 @@ def _ask_ai_history(chat_id, text, user_id, user_name):
     return HISTORY_MARK_RE.sub("", reply or "").strip()
 
 
+_relay_err_sent = {}
+
+
+def relay_reason(e):
+    t = str(e).lower()
+    if "quota" in t:
+        return "закончилась квота ключа Relay"
+    if "model" in t and ("not" in t or "404" in t):
+        return "модель не найдена, проверь RELAY_MODEL"
+    if "timeout" in t or "request error" in t or "timed out" in t:
+        return "Relay не ответил вовремя"
+    return "ошибка Relay"
+
+
 def _ask_ai_core(chat_id, text, user_id, user_name):
     if not SYSTEM_ENABLED:
         raise RuntimeError("Система временно отключена.")
-    return ask_relay(chat_id, text, user_id, user_name)
+    last = None
+    for attempt in range(3):
+        try:
+            return ask_relay(chat_id, text, user_id, user_name)
+        except Exception as e:
+            last = e
+            print("Relay попытка", attempt + 1, "ошибка:", e, flush=True)
+            if "quota" in str(e).lower():
+                break
+            time.sleep(2)
+    msg = "Временно не могу ответить: " + relay_reason(last)
+    now = time.time()
+    if now - _relay_err_sent.get(chat_id, 0) > 600:
+        _relay_err_sent[chat_id] = now
+        return msg
+    raise RuntimeError(msg)
 
 def ask_ai_main(chat_id, text, user_id, user_name):
     maybe_restore_all_ai()
