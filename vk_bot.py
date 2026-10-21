@@ -5764,23 +5764,9 @@ def _ask_ai_history(chat_id, text, user_id, user_name):
 
 
 def _ask_ai_core(chat_id, text, user_id, user_name):
-    if time.time() < OLD_AI_PAUSE_UNTIL:
-        try:
-            return ask_relay(chat_id, text, user_id, user_name)
-        except Exception as pause_error:
-            print("Relay (pause mode) error:", pause_error, flush=True)
-    try:
-        return ask_ai_main(chat_id, text, user_id, user_name)
-    except Exception as main_error:
-        if "отключена" in str(main_error):
-            raise
-        print("Main AI failed, trying Relay:", main_error, flush=True)
-        try:
-            return ask_relay(chat_id, text, user_id, user_name)
-        except Exception as relay_error:
-            print("Relay final error:", relay_error, flush=True)
-            raise main_error
-
+    if not SYSTEM_ENABLED:
+        raise RuntimeError("Система временно отключена.")
+    return ask_relay(chat_id, text, user_id, user_name)
 
 def ask_ai_main(chat_id, text, user_id, user_name):
     maybe_restore_all_ai()
@@ -6225,7 +6211,7 @@ def activity_loop():
                         item["peer_id"]
                     )
 
-                    reply = ask_groq(
+                    reply = ask_relay(
                         activity_chat_id,
                         prompt,
                         None,
