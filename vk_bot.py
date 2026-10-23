@@ -6697,6 +6697,64 @@ def app_ask():
 
 
 # =========================================================
+# APP BRIDGE 2 (память, обучение, сам решает отвечать)
+# =========================================================
+
+APP_USER_BASE = 2000000000
+
+
+@app.route("/app_message", methods=["POST"])
+def app_message():
+    try:
+        data = request.get_json(force=True) or {}
+        if not APP_BRIDGE_SECRET or data.get("secret") != APP_BRIDGE_SECRET:
+            return {"ok": False, "error": "forbidden"}, 403
+        if not SYSTEM_ENABLED:
+            return {"ok": True, "reply": None}, 200
+        text = limit_text(str(data.get("text", "")).strip())
+        if not text:
+            return {"ok": True, "reply": None}, 200
+        user_name = str(data.get("name", "Игрок"))[:40]
+        digits = "".join(c for c in str(data.get("blz_id", "")) if c.isdigit())
+        user_id = APP_USER_BASE + (int(digits) if digits else 0)
+        chat_id = APP_CHAT_ID
+
+        message = {"from_id": user_id, "peer_id": chat_id, "text": text}
+        if data.get("reply_to_bot"):
+            message["reply_message"] = {"from_id": -1}
+
+        maybe_save_funny_reaction(chat_id, user_id, user_name, text)
+        save_chat_message(chat_id, user_id, user_name, "user", text)
+        update_bot_emotion(chat_id, text, user_id, user_name, message_targets_bot(message, text, "vk"))
+        save_explicit_user_memory(chat_id, user_id, user_name, text)
+        maybe_save_tank_answer(chat_id, text)
+
+        curiosity = maybe_ask_about_tank(chat_id, user_id, user_name, text)
+        if curiosity is not None:
+            save_chat_message(chat_id, None, "Бот", "assistant", curiosity)
+            return {"ok": True, "reply": curiosity}, 200
+
+        maybe_learn(chat_id)
+
+        if not should_answer(message, text, "vk"):
+            print("APP BOT SILENT:", text[:100], flush=True)
+            return {"ok": True, "reply": None}, 200
+
+        try:
+            reply = ask_ai(chat_id, text, str(user_id), user_name)
+        except RuntimeError as ai_error:
+            print("app_message ai error:", ai_error, flush=True)
+            return {"ok": True, "reply": None}, 200
+
+        if reply:
+            save_chat_message(chat_id, None, "Бот", "assistant", reply)
+        return {"ok": True, "reply": reply or None}, 200
+    except Exception as e:
+        print("app_message error:", e, flush=True)
+        return {"ok": False, "error": "fail"}, 500
+
+
+# =========================================================
 # VK CALLBACK
 # =========================================================
 
