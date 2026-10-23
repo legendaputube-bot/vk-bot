@@ -6672,6 +6672,31 @@ def home():
 
 
 # =========================================================
+# APP BRIDGE (BlitzNet)
+# =========================================================
+
+APP_BRIDGE_SECRET = os.environ.get("APP_BRIDGE_SECRET", "")
+APP_CHAT_ID = 2100000001
+
+
+@app.route("/app_ask", methods=["POST"])
+def app_ask():
+    try:
+        data = request.get_json(force=True) or {}
+        if not APP_BRIDGE_SECRET or data.get("secret") != APP_BRIDGE_SECRET:
+            return {"ok": False, "error": "forbidden"}, 403
+        text = str(data.get("text", "")).strip()[:1000]
+        if not text:
+            return {"ok": False, "error": "empty"}, 400
+        name = str(data.get("name", "Игрок"))[:40]
+        reply = ask_ai(APP_CHAT_ID, text, 0, name)
+        return {"ok": True, "reply": reply}, 200
+    except Exception as e:
+        print("app_ask error:", e, flush=True)
+        return {"ok": False, "error": "fail"}, 500
+
+
+# =========================================================
 # VK CALLBACK
 # =========================================================
 
