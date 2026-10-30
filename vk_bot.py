@@ -2727,7 +2727,7 @@ def maybe_save_funny_reaction(chat_id, sender_id, sender_name, text):
     )
 
 
-def get_user_memory(
+def _get_user_memory_once(
     chat_id,
     user_id
 ):
@@ -2787,6 +2787,8 @@ def get_user_memory(
         return memory
 
     except Exception as e:
+        if 'Errno 11' in str(e):
+            raise
 
         print(
             "User memory load error:",
@@ -2795,6 +2797,17 @@ def get_user_memory(
         )
 
         return None
+
+
+def get_user_memory(chat_id, user_id):
+    import time
+    for _attempt in range(3):
+        try:
+            return _get_user_memory_once(chat_id, user_id)
+        except Exception as e:
+            print("User memory retry:", e, flush=True)
+            time.sleep(0.5)
+    return None
 
 
 # =========================================================
