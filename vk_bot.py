@@ -514,7 +514,7 @@ import os as _os
 import subprocess as _sp
 
 _BOT_STARTED_AT = time.time()
-_RECENT_ERRORS = _col.deque(maxlen=60)
+_RECENT_ERRORS = _col.deque(maxlen=200)
 _orig_print = _bi.print
 
 
@@ -630,17 +630,6 @@ def owner_status_text(chat_id):
              + ", молчу — " + ("ДА" if modes.get("mute") else "нет"))
     now = time.time()
     try:
-        blocked = [str(i + 1) for i in range(len(groq_clients)) if main_blocked_until.get(i, 0) > now]
-        L.append("Groq: аккаунтов " + str(len(groq_clients))
-                 + ", 120B в блоке: " + (", ".join(blocked) or "нет"))
-    except Exception:
-        L.append("Groq: не смог проверить")
-    try:
-        L.append("OpenRouter: " + str(openrouter_request_count) + "/" + str(OPENROUTER_DAILY_LIMIT)
-                 + " за сутки" + (", в блоке" if openrouter_blocked_until > now else ""))
-    except Exception:
-        pass
-    try:
         dbid = db_chat_id(chat_id)
         c1 = supabase.table("bot_chat_memory").select("id", count="exact").eq("chat_id", dbid).limit(1).execute().count
         c2 = supabase.table("bot_users").select("id", count="exact").eq("chat_id", dbid).limit(1).execute().count
@@ -653,10 +642,73 @@ def owner_status_text(chat_id):
     L.append("Лимиты: история " + str(CHAT_MEMORY_LIMIT) + " сообщ., ответ до "
              + str(MAX_MESSAGE_CHARS) + " симв., токены " + str(GROQ_MAX_TOKENS))
     if _RECENT_ERRORS:
-        ts, line = _RECENT_ERRORS[-1]
-        L.append("Последняя ошибка (" + _ago(ts) + "): " + mask_secrets(line)[:160])
+        errs = list(_RECENT_ERRORS)[::-1]
+        L.append("Ошибки с запуска (всего " + str(len(errs)) + "):")
+        used = len("\n".join(L))
+        shown = 0
+        for ts, line in errs:
+            row = "• " + _ago(ts) + ": " + mask_secrets(line)[:200]
+            if used + len(row) + 1 > 3300:
+                break
+            L.append(row)
+            used += len(row) + 1
+            shown += 1
+        if shown < len(errs):
+            L.append("...и ещё " + str(len(errs) - shown) + " старых")
     else:
         L.append("Ошибок с запуска нет")
+    return "\n".join(L)
+
+
+def owner_diag_text(chat_id):
+    L = ["🔧 Диагностика"]
+    bad = []
+    try:
+        src = open(_OWNER_DIR + "/vk_bot.py", encoding="utf-8").read()
+        compile(src, "vk_bot.py", "exec")
+        L.append("✅ Код: ошибок синтаксиса нет")
+    except Exception as e:
+        L.append("❌ Код: " + mask_secrets(str(e))[:150])
+        bad.append("код")
+    try:
+        t0 = time.time()
+        supabase.table("bot_users").select("id").limit(1).execute()
+        ms = int((time.time() - t0) * 1000)
+        if ms < 2000:
+            L.append("✅ База: отвечает за " + str(ms) + " мс")
+        else:
+            L.append("⚠️ База: медленно, " + str(ms) + " мс")
+            bad.append("база медленная")
+    except Exception as e:
+        L.append("❌ База: " + mask_secrets(str(e))[:150])
+        bad.append("база")
+    try:
+        t0 = time.time()
+        ans = ask_relay_messages(
+            [{"role": "user", "content": "Ответь одним словом: ок"}],
+            100, "Диагностика")
+        ms = int((time.time() - t0) * 1000)
+        if ms < 15000:
+            L.append("✅ ИИ (Relay, " + str(RELAY_MODEL) + "): отвечает за " + str(ms) + " мс")
+        else:
+            L.append("⚠️ ИИ (Relay): очень медленно, " + str(ms) + " мс")
+            bad.append("ИИ медленный")
+    except Exception as e:
+        L.append("❌ ИИ (Relay): " + mask_secrets(str(e))[:200])
+        bad.append("ИИ")
+    now = time.time()
+    errs = list(_RECENT_ERRORS)
+    recent = [x for x in errs if now - x[0] < 600]
+    e11 = [x for x in recent if "Errno 11" in x[1]]
+    L.append("Ошибок за 10 мин: " + str(len(recent)) + " (из них Errno 11: " + str(len(e11)) + "), всего с запуска: " + str(len(errs)))
+    for ts, line in errs[-3:][::-1]:
+        L.append("• " + _ago(ts) + ": " + mask_secrets(line)[:180])
+    if len(recent) >= 10:
+        bad.append("много ошибок")
+    if bad:
+        L.append("Итог: ПРОБЛЕМЫ — " + ", ".join(bad))
+    else:
+        L.append("Итог: всё в порядке")
     return "\n".join(L)
 
 
@@ -681,14 +733,26 @@ def owner_tools(text, sender_id, platform, chat_id):
     if modes.get("mute") and re.search(r"(?:^|\s)(?:общайся|можешь\s+общаться|можно\s+общаться|говори)(?:\s|$|[,.!])", t):
         owner_set_mode("mute", False)
         return "Окей, босс, снова общаюсь 🫡"
+    if "бот" in t and re.search(r"диагностик", t):
+        return owner_diag_text(chat_id)
     if "бот" in t and re.search(r"(?:^|\s)статус(?:\s|$)", t):
         return owner_status_text(chat_id)
     if re.search(r"бот[, ]+ошибки", t):
         if not _RECENT_ERRORS:
             return "Ошибок с запуска нет."
-        out = []
-        for ts, line in list(_RECENT_ERRORS)[-8:]:
-            out.append(_ago(ts) + ": " + mask_secrets(line)[:160])
+        errs = list(_RECENT_ERRORS)[::-1]
+        out = ["Ошибок с запуска: " + str(len(errs))]
+        used = len(out[0])
+        shown = 0
+        for ts, line in errs:
+            row = "• " + _ago(ts) + ": " + mask_secrets(line)[:200]
+            if used + len(row) + 1 > 3300:
+                break
+            out.append(row)
+            used += len(row) + 1
+            shown += 1
+        if shown < len(errs):
+            out.append("...и ещё " + str(len(errs) - shown) + " старых")
         return "\n".join(out)
     return None
 
