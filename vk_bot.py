@@ -142,10 +142,24 @@ if SUPABASE_URL and not SUPABASE_URL.startswith(
 # SUPABASE
 # =========================================================
 
-supabase = create_client(
+import threading as _thr_supa
+_supa_local = _thr_supa.local()
+
+def _supabase_factory():
+    return create_client(
     SUPABASE_URL,
     SUPABASE_SECRET_KEY
 )
+
+class _SupaProxy:
+    def __getattr__(self, name):
+        c = getattr(_supa_local, 'c', None)
+        if c is None:
+            c = _supabase_factory()
+            _supa_local.c = c
+        return getattr(c, name)
+
+supabase = _SupaProxy()
 
 
 # =========================================================
