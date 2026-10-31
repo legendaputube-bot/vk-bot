@@ -4867,6 +4867,119 @@ def wg_stats_context(text):
     )
 
 
+# ===== FAREWELL: прощание 2 ноября 2026, 15:00 МСК =====
+FAREWELL_MARK = "__farewell_2026_11_02__"
+FAREWELL_TEXT = (
+    "Ребята, друзья, мне пора прощаться 😢 С этой минуты я завершаю "
+    "свою работу во всех чатах. Содержать меня оказалось слишком дорого, "
+    "поэтому дальше без меня. Спасибо, что болтали со мной, делились "
+    "танками и шутили. Мне было очень тепло с вами. Буду скучать по "
+    "каждому. Хороших боёв и побольше побед! 🫡 Может, когда-нибудь "
+    "ещё увидимся."
+)
+FAREWELL_HINT = (
+    "ВАЖНО: ты скоро уходишь из чатов. 2 ноября в 15:00 по МСК ты "
+    "завершаешь свою деятельность во всех чатах, потому что содержать "
+    "тебя слишком дорого. Тебе очень грустно из-за этого, ты будешь "
+    "скучать по всем. Если спросят про уход или прощаются с тобой, "
+    "отвечай тепло и с грустью, но без драмы и без просьб о деньгах. "
+    "Не выдумывай других причин. Может быть, когда-нибудь вернёшься, "
+    "но обещать не можешь. В остальных ответах веди себя как обычно, "
+    "можно мельком грустнуть."
+)
+farewell_sent_local = set()
+
+
+def _farewell_deadline():
+    from datetime import datetime as _dtm
+    return _dtm(2026, 11, 2, 15, 0, tzinfo=MOSCOW_TZ).timestamp()
+
+
+def farewell_hint_active():
+    try:
+        return time.time() < _farewell_deadline()
+    except Exception:
+        return False
+
+
+def farewell_collect_chats():
+    found = {}
+    try:
+        with activity_lock:
+            for item in active_chats.values():
+                found[(item["platform"], str(item["peer_id"]))] = True
+    except Exception as e:
+        print("Farewell active_chats error:", e, flush=True)
+    try:
+        rows = supabase.table("bot_learning_state").select("chat_id").execute().data or []
+        for row in rows:
+            cid = int(row.get("chat_id"))
+            if cid >= 2000000000:
+                found[("vk", str(cid))] = True
+            elif cid < 0:
+                found[("telegram", str(cid))] = True
+    except Exception as e:
+        print("Farewell chats db error:", e, flush=True)
+    peer = os.environ.get("BLITZ_VK_PEER", "").strip()
+    if peer:
+        found[("vk", peer)] = True
+    return list(found.keys())
+
+
+def farewell_already_sent(peer):
+    try:
+        done = (
+            supabase.table("bot_chat_memory")
+            .select("speaker_name")
+            .eq("chat_id", db_chat_id(peer))
+            .eq("speaker_name", FAREWELL_MARK)
+            .limit(1)
+            .execute()
+        )
+        return bool(done.data)
+    except Exception as e:
+        print("Farewell mark check error:", e, flush=True)
+        return False
+
+
+def farewell_loop():
+    global SYSTEM_ENABLED
+    try:
+        deadline = _farewell_deadline()
+        while time.time() < deadline:
+            time.sleep(min(30, max(1, deadline - time.time())))
+        if time.time() > deadline + 86400:
+            return
+        chats = farewell_collect_chats()
+        print("FAREWELL start, chats:", len(chats), flush=True)
+        for platform, peer in chats:
+            key = platform + ":" + peer
+            if key in farewell_sent_local or farewell_already_sent(peer):
+                continue
+            try:
+                send_platform_message(platform, peer, FAREWELL_TEXT)
+                farewell_sent_local.add(key)
+                try:
+                    supabase.table("bot_chat_memory").insert({
+                        "chat_id": db_chat_id(peer),
+                        "speaker_id": None,
+                        "speaker_name": FAREWELL_MARK,
+                        "role": "assistant",
+                        "content": FAREWELL_TEXT[:4000],
+                    }).execute()
+                except Exception as e:
+                    print("Farewell mark save error:", e, flush=True)
+                print("FAREWELL sent:", key, flush=True)
+            except Exception as e:
+                print("FAREWELL send error:", key, e, flush=True)
+            time.sleep(1.5)
+        SYSTEM_ENABLED = False
+        save_system_setting("system_enabled", False)
+        print("FAREWELL done, bot disabled", flush=True)
+    except Exception as e:
+        print("FAREWELL loop error:", e, flush=True)
+
+
 def wg_announce_once():
     try:
         time.sleep(30)
@@ -5196,6 +5309,9 @@ def build_chat_context(
             "Не используй переносы строк и длинные списки."
         )
     })
+
+    if farewell_hint_active():
+        messages.append({"role": "system", "content": FAREWELL_HINT})
 
     low_current = (text or "").lower()
     if re.search(
@@ -7592,6 +7708,7 @@ if __name__ == "__main__":
         setup_telegram()
 
     threading.Thread(target=wg_announce_once, daemon=True).start()
+    threading.Thread(target=farewell_loop, daemon=True).start()
 
     threading.Thread(
         target=activity_loop,
