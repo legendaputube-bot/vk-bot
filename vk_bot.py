@@ -4943,6 +4943,7 @@ def farewell_already_sent(peer):
 
 
 def farewell_loop():
+    return
     global SYSTEM_ENABLED
     try:
         deadline = _farewell_deadline()
@@ -4978,6 +4979,70 @@ def farewell_loop():
         print("FAREWELL done, bot disabled", flush=True)
     except Exception as e:
         print("FAREWELL loop error:", e, flush=True)
+
+
+# ===== RETURN: возвращение после прощания =====
+RETURN_MARK = "__return_2026_11_03__"
+RETURN_TEXT = (
+    "Ура, я вернулся! 🎉 Помните, я прощался и говорил, что ухожу? "
+    "Оказалось, без вас мне скучно, так что я снова с вами. "
+    "Хороших боёв и побольше побед! 🫡"
+)
+RETURN_HINT = (
+    "ВАЖНО: 2 ноября ты прощался и ушёл из чатов, а потом вернулся. "
+    "Ты помнишь, что уходил, и рад, что снова с ребятами. "
+    "Можешь иногда пошутить, что не смог без них. "
+    "Не выдумывай причин возвращения."
+)
+
+
+def return_already_sent(peer):
+    try:
+        done = (
+            supabase.table("bot_chat_memory")
+            .select("speaker_name")
+            .eq("chat_id", db_chat_id(peer))
+            .eq("speaker_name", RETURN_MARK)
+            .limit(1)
+            .execute()
+        )
+        return bool(done.data)
+    except Exception as e:
+        print("Return mark check error:", e, flush=True)
+        return False
+
+
+def return_loop():
+    global SYSTEM_ENABLED
+    try:
+        time.sleep(45)
+        chats = farewell_collect_chats()
+        todo = [c for c in chats if not return_already_sent(c[1])]
+        print("RETURN start, chats:", len(todo), flush=True)
+        if not todo:
+            return
+        SYSTEM_ENABLED = True
+        save_system_setting("system_enabled", True)
+        for platform, peer in todo:
+            try:
+                send_platform_message(platform, peer, RETURN_TEXT)
+                try:
+                    supabase.table("bot_chat_memory").insert({
+                        "chat_id": db_chat_id(peer),
+                        "speaker_id": None,
+                        "speaker_name": RETURN_MARK,
+                        "role": "assistant",
+                        "content": RETURN_TEXT[:4000],
+                    }).execute()
+                except Exception as e:
+                    print("Return mark save error:", e, flush=True)
+                print("RETURN sent:", platform, peer, flush=True)
+            except Exception as e:
+                print("RETURN send error:", platform, peer, e, flush=True)
+            time.sleep(1.5)
+        print("RETURN done", flush=True)
+    except Exception as e:
+        print("RETURN loop error:", e, flush=True)
 
 
 def wg_announce_once():
@@ -5312,6 +5377,8 @@ def build_chat_context(
 
     if farewell_hint_active():
         messages.append({"role": "system", "content": FAREWELL_HINT})
+    if time.time() < _farewell_deadline() + 14 * 86400:
+        messages.append({"role": "system", "content": RETURN_HINT})
 
     low_current = (text or "").lower()
     if re.search(
@@ -7709,6 +7776,7 @@ if __name__ == "__main__":
 
     threading.Thread(target=wg_announce_once, daemon=True).start()
     threading.Thread(target=farewell_loop, daemon=True).start()
+    threading.Thread(target=return_loop, daemon=True).start()
 
     threading.Thread(
         target=activity_loop,
