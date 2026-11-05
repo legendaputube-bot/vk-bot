@@ -7000,6 +7000,14 @@ def callback():
             data["object"]["message"]
         )
 
+        try:
+            _msg_date = int(message.get("date") or 0)
+            if _msg_date and time.time() - _msg_date > 180:
+                print("VK old message skipped:", int(time.time() - _msg_date), "sec", flush=True)
+                return "ok"
+        except Exception:
+            pass
+
         peer_id = message[
             "peer_id"
         ]
