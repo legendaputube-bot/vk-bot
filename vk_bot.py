@@ -5813,7 +5813,7 @@ def maybe_restore_all_ai():
 
 
 RELAY_API_KEY = os.environ.get("RELAYMODELS_API_KEY", "")
-RELAY_API = "https://api.relaymodels.com/v1/chat/completions"
+RELAY_API = "https://nordrouter.net/v1/chat/completions"
 RELAY_MODEL = os.environ.get("RELAY_MODEL", "gpt-5.6-terra")
 RELAY_MAX_TOKENS = 3000
 RELAY_TIMEOUT = 90
