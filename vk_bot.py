@@ -4232,6 +4232,10 @@ NONE
 
                     name = known_names.get(str(numeric_uid))
 
+                    if re.search(r'\bник(?:ом|а|е|у|нейм\w*)?\b|раньше\s+был|называл\w*\s+себя|прежн\w+\s+ник', fact, re.IGNORECASE):
+                        print('LEARNING REJECTED NICK FACT | uid=' + str(numeric_uid) + ' | fact=' + fact, flush=True)
+                        continue
+
                     if re.match(r'^Любимый танк', fact, re.IGNORECASE):
                         candidate = re.sub(r'^Любимый танк(?:\s*\([^)]*\))?\s*[—:-]\s*', '', fact, flags=re.IGNORECASE).strip()
                         verified = False
